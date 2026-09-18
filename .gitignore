@@ -1,0 +1,12 @@
+node_modules/
+dist/
+shots/
+judge/
+.vite/
+
+# Copyrighted third-party reference screenshots used only for local blind-judging - never redistribute.
+docs/reference/
+docs/judge-key*.json
+
+# Local Claude Code session config, not project source.
+.claude/

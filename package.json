@@ -1,0 +1,23 @@
+{
+  "name": "lego-city",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 5173 --strictPort",
+    "build": "vite build",
+    "preview": "vite preview",
+    "shot": "node tools/shot.mjs",
+    "critic": "node tools/critic.mjs",
+    "status": "node tools/status.mjs"
+  },
+  "dependencies": {
+    "three": "0.186.0"
+  },
+  "devDependencies": {
+    "vite": "8.3.0",
+    "puppeteer": "25.11.0",
+    "pixelmatch": "7.2.0",
+    "pngjs": "7.0.0"
+  }
+}

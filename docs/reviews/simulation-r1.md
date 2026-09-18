@@ -1,0 +1,45 @@
+# simulation — critic review, round 1
+
+**Score: 5.5 / 10 — FAIL** (pass needs ≥ 8.5). Errors: 0. Perf inside budget.
+
+## Numbers
+| run | minFps | maxDrawCalls | maxTriangles | errors |
+|---|---|---|---|---|
+| default (`shots/simulation/r1/`) | 143.2 | 26 | 2,154,632 | [] |
+| boom (`shots/simulation/r1-boom/`) | 143.2 | 26 | 2,117,120 | [] |
+| bust (`shots/simulation/r1-bust/`) | 143.2 | 26 | 2,070,448 | [] |
+| full game `overview` tod 15 (`shots/simulation/r1/fullgame.png`) | 144 | 44 (all modules) | 1,728,740 | [] |
+| 7 extra custom-camera shots (`shots/simulation/r1/extra_*.png`) | 140.2 | 26 | — | [] |
+
+All 47 JSONs have `errors: []`. Full game shows no DOM panel, the core HUD reads the simulation's stats (pop 0, $50,000, 70 %), and the module is data-only there (0 of its own draw calls). Showcase draw calls (26) exceed the "others ≤ 10" line, but that budget is for the full city where this module draws nothing; noted, not penalised. 2.15 M triangles in a single-module showcase is heavy (≈ 24 k window boxes + hi-poly studs): 72 % of the whole-game triangle budget spent by one showcase.
+
+Verified in-page (page.evaluate calling `api.tick()` 2000 times, 246 buildings): **0.15 ms / tick**, so the builder's 0.2 ms claim holds. The 5000-building figure was not re-measured. Determinism: `reset()` + 500 ticks twice → bit-identical stats. No `Math.random` in `src/simulation/` (grep). Folder contains only its own six files.
+
+## Model sanity (model.js)
+- RCI: residential wants a jobs surplus (`wantedPop = jobs/0.55·1.05 + 150`), commercial follows workforce, industrial follows workforce and is crowded out by a commercial glut; pressures clamped to [-1, 1] and smoothed 0.08/tick; demand = clamp01(pressure). Responds to the right inputs: tax 30 % → all demand 0, pop 3741 → 2041; tax 0 % → demand R 0.82, occupancy → 1.0. Good.
+- Happiness = 0.42·employment + 0.23·park + 0.2·(1-traffic) + 0.15·(1-taxPain); bounded [0,1], smoothed. Sane, but tops out at ~0.78 in a fully-employed city because `parkShare` (residents within 5 cells of a park) rarely exceeds 0.3.
+- Traffic = clamp01((0.35·pop + 0.5·jobs) / (110·edges + 100)), smoothed. Bounded. Fine.
+- Money: **unbounded in both directions with zero feedback.** Bust runs to -$258 k after 6 000 ticks with happiness still 71 % and nothing else changing; default earns +$33 k/day on a $58 k treasury. Nothing reacts to debt or wealth (no service cuts, no happiness hit, no bankruptcy). Not a runaway (linear), but a gameplay dead end.
+- `_entry()` seeds a building's fill-rate from `b.seed + list.length·7919`: removing then re-adding buildings changes other buildings' rates order-dependently. Deterministic for a given event sequence, but fragile.
+- `world:cell` → `markDirty()` → `_recomputeStatic` walks all 65 536 cells on the next tick. Bounded (once per tick), fine.
+- `sim:tick` payload `{tick, stats, demand, day}` is a superset of ARCHITECTURE §4 `{tick, stats}`. OK.
+
+## API contract
+`id`, `deps: []`, `order: 60`, `init/update/dispose/showcase`, `showcaseVariants ['default','boom','bust']`, three presets, and every listed api function (`getDemand, getPressure, getStats, getBudget, setTaxRate, getTaxRate, cellDesirability, getHistory, getGrowthCandidates, setPolicy, tick, reset`) exist and behave (all spot-checked live; `sim:levelup` / `sim:reset` emitted from `runTick` / `reset`). `world.setStats` is used for ownership of `stats`. One contract nit: visuals.js adds two `PointLight`s in the showcase; §7 reserves point lights for props/buildings at night. Cosmetic, showcase-only.
+
+## Ranked issues (most damaging first)
+1. **Lighting reads as programmer art in 10 of 12 preset shots.** No visible shadows at 12:00 (sun overhead, shadows hidden under the boxes), none at 6.5/18 (fallback sun intensity ≈ 0 → flat hemisphere light, teal-grey sky, no golden hour), and night (21.5) is as bright as an overcast noon with a flat grey-teal sky. Only my custom 09:00 shot (`extra_chart-9.png`) shows the crisp shadows the scene is capable of. Where: `simulation_default-6h5/18/21h5.png`, `simulation_city-18.png`, every `*-21h5.png`. Why: rubric §3 is the biggest scoring axis; flat/unlit = -2. Fix: declare `deps: ['environment']` so the showcase gets the real sun/sky/exposure (core's fallback rig is deliberately minimal); if that is unacceptable, bias the three preset cameras so the sun is 30–60° off-axis and file a core request for the fallback rig to keep sun intensity/colour at 6.5 and 18 h.
+2. **Night look is wrong.** Two bare `PointLight`s (intensity 1400, no fixture) float 15 m over the chart and burn white hotspots into the ground studs and across "KNOBWICK" (`simulation_default-21h5.png` bottom, `extra_night-low.png`, `simulation_closeup-21h5.png` title). The title board glows uniformly white instead of reading as a lit sign. Fix: drop the point lights or attach them to two Lego lamp-post props with a warm, lower-intensity spot cone, lower `emissiveIntensity` on the printed material to ~0.8, and darken exposure/sky when `isNight`.
+3. **The `simulation:closeup` preset hides the numbers it exists to show.** The 2.3 m title board sits in front of the 1.7 m label wedges, so every value ("3,741", "$58,286", "78 %") is clipped at the bottom in all 12 closeup shots (`simulation_closeup-*.png`, all variants). Fix: move the label wedges in front of the title board, or lower the board to ≤ 1.2 m, or raise the closeup camera ~4 m.
+4. **Windows are floating stickers, not Lego window elements.** 0.7 × 0.62 × 0.1 m boxes stand proud of the brick face with a visible lit top edge and an opaque dark-navy material (`extra_building-3m.png`). At night they become flat yellow squares. Fix: model a 1×2 window brick (frame + trans-clear pane via `materials.glass`), recess it into the wall course, and drive the lit fraction by occupancy (the bust city still shows 62 % lit windows: `r1-bust/simulation_city-21h5.png`).
+5. **Ground studs are 6-sided and clearly hexagonal in any shot below ~20 m** (`extra_night-low.png`, `simulation_closeup-*.png` foreground). Rubric: missing/ugly studs -1. Fix: use `materials.studGeometry()` (or 12 sides) within ~60 m of the chart and keep the low-poly version for the far field, or use the core `materials.studs()` instancer with its LOD.
+6. **The district is a grid of coloured boxes on bare green.** No sidewalks, curbs or stud shoulders on the road plates (§7), no props, no fences/gardens between buildings, and only one park block: citygen's quota `parks.length < 3.6` counts *cells*, so the first 9-cell park exhausts it. "A few parks" never happens; boom's single park lands in the commercial core and the panel reports "Park coverage 0 %" (`r1-boom/*`). Fix: count park *blocks*; add stud sidewalk strips and a lamp post per intersection; vary footprints with 1×2 / 2×1 buildings.
+7. **Variants don't read visually.** Boom and bust differ only in bar heights and slightly shorter buildings; the bust city has fully lit windows and a cheerful palette; the negative treasury simply has no bar (`r1-bust/simulation_default-12.png`). Fix: drive lit-window fraction and roof-cap "for sale" tiles by occupancy; render negative treasury as red bricks (or a red debt bar) below a zero line; in boom show crane props on growth candidates.
+8. **DOM panel is a generic dark debug HUD.** 300 px rgba(9,13,20) card, monospace 12 px, no Lego language, and it paints over the skyline in every shot (top-right). The history chart has no axis labels or time scale, and money is normalised to its own min/max so the line always spans full height (misleading: a flat treasury looks like a crash/boom). Legible, but not designed. Fix: reuse the core UI's plastic-panel style (stud strip, brick-red accent), anchor bottom-left where nothing is behind it, give the chart a time axis and a shared people axis with tick labels, plot money as net/day.
+9. **Model has no money feedback.** See model section. Fix: when money < 0, scale upkeep-funded factors (parkShare, road capacity) down with debt; add a wealth term to happiness; let happiness reach ~0.95 in a good city.
+10. Minor: the 1024² label atlas is redrawn and re-uploaded every tick (24×/s in showcase, `drawAtlas`); only redraw when a formatted value changes. Label text at 256×128 per cell aliases at 2 m (`extra_label-2m.png`); double the cell size or use SDF. `extra_far-15.png`: the baseplate floats in a void with stud moiré; add the §7 stud fade beyond 250 m.
+
+## What already works
+- The Lego bar chart is a genuinely good idea and well built: 1×1 stacks with alternating shades, 4×4 stud caps, a fractional top brick, printed slope tiles sharing one atlas, and it animates smoothly (`extra_live-12.png`: pop 3,780 / treasury bar moved after resume).
+- Bricks have proper bevels and read as ABS at close range (`extra_building-3m.png`), studded roof plates everywhere, and the zoning composition (residential west, commercial core, industrial east) is legible from the city preset.
+- Engineering: deterministic, 0.15 ms/tick, 26 draw calls, zero console errors across 47 captures, clean API surface, data-only in the full game.

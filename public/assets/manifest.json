@@ -1,0 +1,102 @@
+{
+  "sky_day": {
+    "file": "/assets/hdri/kloofendal_48d_partly_cloudy_puresky_1k.hdr",
+    "source": "https://polyhaven.com/a/kloofendal_48d_partly_cloudy_puresky",
+    "license": "CC0"
+  },
+  "sky_noon": {
+    "file": "/assets/hdri/kloofendal_43d_clear_puresky_1k.hdr",
+    "source": "https://polyhaven.com/a/kloofendal_43d_clear_puresky",
+    "license": "CC0"
+  },
+  "sky_sunset": {
+    "file": "/assets/hdri/belfast_sunset_puresky_1k.hdr",
+    "source": "https://polyhaven.com/a/belfast_sunset_puresky",
+    "license": "CC0"
+  },
+  "sky_dawn": {
+    "file": "/assets/hdri/kiara_1_dawn_1k.hdr",
+    "source": "https://polyhaven.com/a/kiara_1_dawn",
+    "license": "CC0"
+  },
+  "sky_overcast": {
+    "file": "/assets/hdri/kloppenheim_06_puresky_1k.hdr",
+    "source": "https://polyhaven.com/a/kloppenheim_06_puresky",
+    "license": "CC0"
+  },
+  "sky_night": {
+    "file": "/assets/hdri/moonless_golf_1k.hdr",
+    "source": "https://polyhaven.com/a/moonless_golf",
+    "license": "CC0"
+  },
+  "asphalt": {
+    "files": {
+      "map": "/assets/tex/asphalt_02/asphalt_02_diff_1k.jpg",
+      "normalMap": "/assets/tex/asphalt_02/asphalt_02_nor_gl_1k.jpg",
+      "roughnessMap": "/assets/tex/asphalt_02/asphalt_02_rough_1k.jpg",
+      "aoMap": "/assets/tex/asphalt_02/asphalt_02_ao_1k.jpg"
+    },
+    "source": "https://polyhaven.com/a/asphalt_02",
+    "license": "CC0"
+  },
+  "concrete": {
+    "files": {
+      "map": "/assets/tex/concrete_floor_worn_001/concrete_floor_worn_001_diff_1k.jpg",
+      "normalMap": "/assets/tex/concrete_floor_worn_001/concrete_floor_worn_001_nor_gl_1k.jpg",
+      "roughnessMap": "/assets/tex/concrete_floor_worn_001/concrete_floor_worn_001_rough_1k.jpg",
+      "aoMap": "/assets/tex/concrete_floor_worn_001/concrete_floor_worn_001_ao_1k.jpg"
+    },
+    "source": "https://polyhaven.com/a/concrete_floor_worn_001",
+    "license": "CC0"
+  },
+  "pavers": {
+    "files": {
+      "map": "/assets/tex/concrete_pavers_02/concrete_pavers_02_diff_1k.jpg",
+      "normalMap": "/assets/tex/concrete_pavers_02/concrete_pavers_02_nor_gl_1k.jpg",
+      "roughnessMap": "/assets/tex/concrete_pavers_02/concrete_pavers_02_rough_1k.jpg",
+      "aoMap": "/assets/tex/concrete_pavers_02/concrete_pavers_02_ao_1k.jpg"
+    },
+    "source": "https://polyhaven.com/a/concrete_pavers_02",
+    "license": "CC0"
+  },
+  "grass": {
+    "files": {
+      "map": "/assets/tex/aerial_grass_rock/aerial_grass_rock_diff_1k.jpg",
+      "normalMap": "/assets/tex/aerial_grass_rock/aerial_grass_rock_nor_gl_1k.jpg",
+      "roughnessMap": "/assets/tex/aerial_grass_rock/aerial_grass_rock_rough_1k.jpg",
+      "aoMap": "/assets/tex/aerial_grass_rock/aerial_grass_rock_ao_1k.jpg"
+    },
+    "source": "https://polyhaven.com/a/aerial_grass_rock",
+    "license": "CC0"
+  },
+  "rock": {
+    "files": {
+      "map": "/assets/tex/rock_06/rock_06_diff_1k.jpg",
+      "normalMap": "/assets/tex/rock_06/rock_06_nor_gl_1k.jpg",
+      "roughnessMap": "/assets/tex/rock_06/rock_06_rough_1k.jpg",
+      "aoMap": "/assets/tex/rock_06/rock_06_ao_1k.jpg"
+    },
+    "source": "https://polyhaven.com/a/rock_06",
+    "license": "CC0"
+  },
+  "sand": {
+    "files": {
+      "map": "/assets/tex/coast_sand_01/coast_sand_01_diff_1k.jpg",
+      "normalMap": "/assets/tex/coast_sand_01/coast_sand_01_nor_gl_1k.jpg",
+      "roughnessMap": "/assets/tex/coast_sand_01/coast_sand_01_rough_1k.jpg",
+      "aoMap": "/assets/tex/coast_sand_01/coast_sand_01_ao_1k.jpg"
+    },
+    "source": "https://polyhaven.com/a/coast_sand_01",
+    "license": "CC0"
+  },
+  "soil": {
+    "files": {
+      "map": "/assets/tex/brown_mud_leaves_01/brown_mud_leaves_01_diff_1k.jpg",
+      "normalMap": "/assets/tex/brown_mud_leaves_01/brown_mud_leaves_01_nor_gl_1k.jpg",
+      "roughnessMap": "/assets/tex/brown_mud_leaves_01/brown_mud_leaves_01_rough_1k.jpg",
+      "aoMap": "/assets/tex/brown_mud_leaves_01/brown_mud_leaves_01_ao_1k.jpg"
+    },
+    "source": "https://polyhaven.com/a/brown_mud_leaves_01",
+    "license": "CC0"
+  }
+}
