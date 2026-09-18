@@ -16,7 +16,8 @@ export const CSS = `
   --lc-green: #5BB55A;
   --lc-radius: 14px;
   --lc-shadow: 0 20px 46px rgba(0, 0, 0, 0.5), 0 4px 10px rgba(0, 0, 0, 0.35);
-  --lc-display: "Arial Rounded MT Bold", "Segoe UI Black", "Arial Black", "Segoe UI", system-ui, sans-serif;
+  --lc-display: "Fredoka", "Arial Rounded MT Bold", "Segoe UI Black", "Arial Black", "Segoe UI", system-ui, sans-serif;
+  --lc-item-font: "Rubik", "Segoe UI", system-ui, sans-serif;
   /* !important: index.html's #ui-root > * { pointer-events: auto } rule targets every direct child of #ui-root
      (including this root), so a plain declaration here loses the cascade and the full-viewport wrapper would
      swallow every click in the game even while closed. Descendants (.lc-menu-backdrop, .lc-modal-backdrop) opt
@@ -62,11 +63,34 @@ export const CSS = `
 .lc-menu-title-tag { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 2.4px; color: var(--lc-muted); text-shadow: 0 2px 6px rgba(0, 0, 0, 0.7); }
 .lc-menu-title-name { font-family: var(--lc-display); font-size: 38px; font-weight: 900; letter-spacing: 0.4px; line-height: 1; text-shadow: 0 3px 0 rgba(0, 0, 0, 0.5), 0 8px 24px rgba(0, 0, 0, 0.65); }
 .lc-menu-title-list .lc-menu-item {
+  position: relative; height: 52px; padding-left: 22px; justify-content: flex-start; gap: 14px;
   background: rgba(18, 20, 25, 0.58); border-color: rgba(0, 0, 0, 0.3);
   -webkit-backdrop-filter: blur(8px) saturate(140%); backdrop-filter: blur(8px) saturate(140%);
+  opacity: 0; transform: translateX(-8px); transition: background 0.12s, transform 0.1s, opacity 0.3s ease, transform 0.3s ease;
 }
+.lc-menu-backdrop--title.open .lc-menu-title-list .lc-menu-item { opacity: 1; transform: none; }
+.lc-menu-backdrop--title.open .lc-menu-title-list .lc-menu-item:disabled { opacity: 0.4; }
 .lc-menu-title-list .lc-menu-item:hover { background: rgba(30, 33, 40, 0.72); }
+.lc-menu-title-list .lc-menu-item:hover, .lc-menu-title-list .lc-menu-item:focus-visible { transform: translateX(3px); }
 .lc-menu-title-list .lc-menu-item.primary { background: linear-gradient(180deg, #ffe37a 0%, #f9cf4f 46%, #e9b224 54%, #f0bd33 100%); }
+.lc-menu-title-list .lc-menu-item:nth-child(1) { transition-delay: 0.05s; }
+.lc-menu-title-list .lc-menu-item:nth-child(2) { transition-delay: 0.1s; }
+.lc-menu-title-list .lc-menu-item:nth-child(3) { transition-delay: 0.15s; }
+.lc-menu-title-list .lc-menu-item:nth-child(4) { transition-delay: 0.2s; }
+.lc-menu-title-list .lc-menu-item:nth-child(5) { transition-delay: 0.25s; }
+.lc-menu-title-list .lc-menu-item::before {
+  content: ""; position: absolute; left: 0; top: 50%; width: 3px; height: 0; border-radius: 2px;
+  background: var(--lc-yellow); transform: translateY(-50%); transition: height 0.18s ease;
+}
+.lc-menu-title-list .lc-menu-item:hover::before, .lc-menu-title-list .lc-menu-item:focus-visible::before { height: 60%; }
+.lc-menu-title-list .lc-menu-item.primary::before { display: none; }
+.lc-menu-title-list .lc-menu-item-icon {
+  width: 20px; height: 20px; flex: none; display: grid; place-items: center; color: var(--lc-muted); transition: color 0.15s;
+}
+.lc-menu-title-list .lc-menu-item-icon svg { width: 100%; height: 100%; }
+.lc-menu-title-list .lc-menu-item:hover .lc-menu-item-icon { color: var(--lc-text); }
+.lc-menu-title-list .lc-menu-item.primary .lc-menu-item-icon { color: #3a2800; }
+.lc-menu-title-list .lc-menu-item-label { font-family: var(--lc-item-font); font-weight: 700; font-size: 15px; letter-spacing: 0.3px; }
 
 /* ui's "Show HUD (H)" pill (src/ui/styles.js) only makes sense as a response to the player's own H-key toggle —
    suppress it while any menu view has hidden the HUD on its own behalf. Targeted via body class rather than a
