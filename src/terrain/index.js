@@ -111,10 +111,15 @@ function onCell({ i, j }) {
 
 function generate(variant) {
   const world = S.ctx.world;
-  const arr = generateHeightField(world, S.rng, variant);
+  // Pinned (fixed plateau/river/coast position) whenever the pre-built demo city will load — its road network
+  // is hardcoded around downtown-at-origin (see demo/citygen.js) and can't follow a seed-varied plateau.
+  const pinned = S.ctx.demoActive !== false;
+  const { heights, params } = generateHeightField(world, S.rng, variant, pinned);
   world.seaLevel = 0;
   S.variant = variant;
-  world.setHeightField(arr); // emits one terrain:changed -> onTerrainChanged sets water cells (world:cell each)
+  S.params = params;
+  world.downtownCenter = { x: params.cx, z: params.cz };
+  world.setHeightField(heights); // emits one terrain:changed -> onTerrainChanged sets water cells (world:cell each)
   flush();
   S.studs.invalidateAll();
 }
@@ -134,7 +139,7 @@ function closeupSpot() {
 }
 
 function waterSpot() {
-  const data = S.data, P = variantParams(S.variant);
+  const data = S.data, P = S.params || variantParams(S.variant);
   if (S.variant === 'water') {
     const z = -60;
     let xc = P.bayX;

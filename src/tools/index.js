@@ -116,14 +116,27 @@ function rectCellCount(world, i0, j0, i1, j1) {
   return n;
 }
 
-function rectBounds(world, i0, j0, i1, j1) {
+/** `ctx.world.cells[].height` is averaged straight off the smooth heightField (see World._refreshCellHeights),
+ * not the terrain module's rendered plate-quantized surface — so a ghost positioned from it can hover visibly
+ * off the ground it's meant to be flush with. Prefer the same terrain.surfaceHeight groundHeightFn() uses for
+ * raycasting, so every ghost's Y matches what's actually on screen; fall back to the cell-height average when
+ * terrain isn't loaded. */
+function rectBounds(ctx, i0, j0, i1, j1) {
+  const world = ctx.world;
   const cs = world.cellSize;
   const x0 = world.minX + i0 * cs, x1 = world.minX + (i1 + 1) * cs;
   const z0 = world.minZ + j0 * cs, z1 = world.minZ + (j1 + 1) * cs;
-  let sum = 0, n = 0;
-  for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) { const c = world.cellAt(i, j); if (c) { sum += c.height; n++; } }
   const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
-  return { i0, j0, i1, j1, x0, x1, z0, z1, cx, cz, w: x1 - x0, d: z1 - z0, y: n ? sum / n : world.getHeight(cx, cz) };
+  const groundFn = groundHeightFn(ctx);
+  let y;
+  if (groundFn) {
+    y = groundFn(cx, cz);
+  } else {
+    let sum = 0, n = 0;
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) { const c = world.cellAt(i, j); if (c) { sum += c.height; n++; } }
+    y = n ? sum / n : world.getHeight(cx, cz);
+  }
+  return { i0, j0, i1, j1, x0, x1, z0, z1, cx, cz, w: x1 - x0, d: z1 - z0, y };
 }
 
 function cellBuildable(ctx, i, j) {
@@ -131,6 +144,16 @@ function cellBuildable(ctx, i, j) {
   if (terr?.status === 'ok' && typeof terr.api?.isBuildable === 'function') { try { return terr.api.isBuildable(i, j); } catch (_) { /* fall through */ } }
   const c = ctx.world.cellAt(i, j);
   return !!c && c.type !== 'water';
+}
+
+/** The terrain module renders a plate-quantized (stepped, "Lego brick") surface, not the smooth bilinear one
+ * world.getHeight() interpolates from — see terrain/data.js surfaceH(). Pointer raycasting must march against
+ * whichever surface is actually on screen, or the resolved ground point (and so the selected cell) can drift
+ * off from the pixel under the cursor wherever the two diverge. Falls back to world's own smooth height when
+ * terrain isn't loaded (matches the cellBuildable guard above). */
+function groundHeightFn(ctx) {
+  const terr = ctx.modules.get('terrain');
+  return terr?.status === 'ok' && typeof terr.api?.surfaceHeight === 'function' ? terr.api.surfaceHeight : null;
 }
 
 function currentMoney(ctx) {
@@ -284,14 +307,14 @@ function updateGhostsForDrag() {
   const { i0, j0, i1, j1 } = normRect(d);
   const count = rectCellCount(ctx.world, i0, j0, i1, j1);
   if (d.group === 'zone' && d.zone) {
-    if (!tryZoningPreview(ctx, i0, j0, i1, j1, d.zone)) applyRect(rectBounds(ctx.world, i0, j0, i1, j1), zoneColorFor(d.zone));
+    if (!tryZoningPreview(ctx, i0, j0, i1, j1, d.zone)) applyRect(rectBounds(ctx, i0, j0, i1, j1), zoneColorFor(d.zone));
     const preview = safeCall(() => zoningApi(ctx)?.costFor?.(i0, j0, i1, j1, d.zone, 1));
     const costTxt = preview ? `, $${preview.cost.toLocaleString()}` : '';
     uiApi(ctx)?.setStatus?.(`${ZONE_LABEL[d.zone]}: ${count} cell${count === 1 ? '' : 's'}${costTxt}`);
     return;
   }
   const color = d.group === 'bulldoze' ? 'transRed' : d.group === 'zone' ? 'transRed' /* dezone */ : 'lime';
-  applyRect(rectBounds(ctx.world, i0, j0, i1, j1), color);
+  applyRect(rectBounds(ctx, i0, j0, i1, j1), color);
   const label = d.group === 'zone' ? 'Dezone' : d.group === 'area' ? AREA_LABEL[d.areaKind] : 'Bulldoze';
   uiApi(ctx)?.setStatus?.(`${label}: ${count} cell${count === 1 ? '' : 's'}`);
 }
@@ -306,11 +329,11 @@ function updateHoverGhost(hit) {
     return;
   }
   if (info.group === 'zone' && info.zone) {
-    if (!tryZoningPreview(ctx, hit.i, hit.j, hit.i, hit.j, info.zone)) applyRect(rectBounds(ctx.world, hit.i, hit.j, hit.i, hit.j), zoneColorFor(info.zone));
+    if (!tryZoningPreview(ctx, hit.i, hit.j, hit.i, hit.j, info.zone)) applyRect(rectBounds(ctx, hit.i, hit.j, hit.i, hit.j), zoneColorFor(info.zone));
     return;
   }
   const color = info.group === 'bulldoze' ? 'transRed' : info.group === 'zone' ? 'transRed' : 'lime';
-  applyRect(rectBounds(ctx.world, hit.i, hit.j, hit.i, hit.j), color);
+  applyRect(rectBounds(ctx, hit.i, hit.j, hit.i, hit.j), color);
 }
 
 function cancelDrag() {
@@ -459,7 +482,7 @@ function handleClick(e) {
   const hit = screenToHit(ctx, e.clientX, e.clientY);
   const api = uiApi(ctx);
   if (!hit) { api?.setInfoPanel?.(null); return; }
-  const buildingId = pickBuildingId(ctx, hit.x, hit.z, hit.i, hit.j);
+  const buildingId = hit.buildingId || pickBuildingId(ctx, hit.x, hit.z, hit.i, hit.j);
   const b = buildingId ? ctx.world.buildings.get(buildingId) : null;
   api?.setInfoPanel?.(b ? buildingInfoHtml(b) : null);
 }
@@ -472,10 +495,10 @@ function screenToHit(ctx, clientX, clientY) {
   const nx = ((clientX - rect.left) / rect.width) * 2 - 1;
   const ny = -(((clientY - rect.top) / rect.height) * 2 - 1);
   S.raycaster.setFromCamera({ x: nx, y: ny }, ctx.camera);
-  const p = ctx.world.raycastGround(S.raycaster.ray);
-  if (!p) return null;
-  const { i, j } = ctx.world.worldToCell(p.x, p.z);
-  return { x: p.x, y: p.y, z: p.z, i, j };
+  const hit = ctx.world.raycastScene(S.raycaster.ray, 6000, groundHeightFn(ctx));
+  if (!hit) return null;
+  const { i, j } = ctx.world.worldToCell(hit.point.x, hit.point.z);
+  return { x: hit.point.x, y: hit.point.y, z: hit.point.z, i, j, buildingId: hit.buildingId };
 }
 
 function onPointerDown(e) {

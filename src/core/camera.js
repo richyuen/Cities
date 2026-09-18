@@ -7,13 +7,16 @@ export class CameraPresets {
     this.presets = new Map();
     const W = world.widthMeters, D = world.depthMeters;
     const gh = (x, z) => world.getHeight(x, z);
-    // Core presets are functions so they track terrain height at apply time.
-    this.register('overview', () => ({ pos: [W * 0.28, W * 0.34, D * 0.42], target: [0, 0, 0] }));
-    this.register('aerial', () => ({ pos: [0, W * 0.6, D * 0.25], target: [0, 0, 0] }));
-    this.register('skyline', () => ({ pos: [W * 0.05, 45 + gh(W * 0.05, D * 0.46), D * 0.46], target: [0, 25, 0] }));
-    this.register('night', () => ({ pos: [W * 0.05, 45 + gh(W * 0.05, D * 0.46), D * 0.46], target: [0, 25, 0] }));
+    // downtown/plateau center — (0,0) unless terrain moved it (only happens when the pre-built demo city, whose
+    // roads are hardcoded around the origin, isn't loaded — see terrain/index.js generate()).
+    const dc = () => world.downtownCenter || { x: 0, z: 0 };
+    // Core presets are functions so they track terrain height (and downtown center) at apply time.
+    this.register('overview', () => ({ pos: [dc().x + W * 0.28, W * 0.34, dc().z + D * 0.42], target: [dc().x, 0, dc().z] }));
+    this.register('aerial', () => ({ pos: [dc().x, W * 0.6, dc().z + D * 0.25], target: [dc().x, 0, dc().z] }));
+    this.register('skyline', () => ({ pos: [dc().x + W * 0.05, 45 + gh(dc().x + W * 0.05, dc().z + D * 0.46), dc().z + D * 0.46], target: [dc().x, 25, dc().z] }));
+    this.register('night', () => ({ pos: [dc().x + W * 0.05, 45 + gh(dc().x + W * 0.05, dc().z + D * 0.46), dc().z + D * 0.46], target: [dc().x, 25, dc().z] }));
     this.register('street', () => ({ pos: [4, 1.7 + gh(4, 60), 60], target: [4, 4, -20] }));
-    this.register('closeup', () => ({ pos: [22, 12 + gh(22, 26), 26], target: [0, 6, 0] }));
+    this.register('closeup', () => ({ pos: [dc().x + 22, 12 + gh(dc().x + 22, dc().z + 26), dc().z + 26], target: [dc().x, 6, dc().z] }));
   }
 
   register(name, p) { this.presets.set(name, p); }

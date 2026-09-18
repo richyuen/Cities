@@ -18,16 +18,47 @@ export function variantParams(variant) {
   return VARIANTS[variant] || VARIANTS.default;
 }
 
+// Original (pre-seed-variation) curve shape, kept as the "pinned" default so a fixed-layout city (see
+// resolveParams below) renders byte-for-byte identical to before this was seed-dependent.
+const PINNED_SHAPE = {
+  cx: 0, cz: 0,
+  riverPhase: 1.3, riverFreq: 1 / 300,
+  coastPhase: 0.4, coastFreq: 1 / 330,
+};
+
+/**
+ * Resolves the per-generation shape parameters (plateau center, river/coast base line, curve phase & frequency)
+ * for a variant. When `pinned` is true (a fixed-layout city, e.g. the pre-built demo whose road network is built
+ * from hardcoded coordinates around downtown-at-origin — see demo/citygen.js) these are the original fixed
+ * values regardless of seed, so that layout keeps working. Otherwise they're derived from `rng`, so different
+ * seeds actually produce different large-scale plateau/river/coast placement, not just fine noise texture.
+ */
+export function resolveParams(rng, P, pinned = true) {
+  const shape = pinned ? PINNED_SHAPE : {
+    cx: rng.range(-300, 300), cz: rng.range(-300, 300),
+    riverZ: P.riverZ + rng.range(-220, 220),
+    riverPhase: rng.range(0, Math.PI * 2), riverFreq: rng.range(1 / 380, 1 / 220),
+    bayX: P.bayX + rng.range(-150, 150),
+    coastPhase: rng.range(0, Math.PI * 2), coastFreq: rng.range(1 / 380, 1 / 220),
+  };
+  return {
+    ...P,
+    cx: shape.cx, cz: shape.cz,
+    riverZ: shape.riverZ ?? P.riverZ, riverPhase: shape.riverPhase, riverFreq: shape.riverFreq,
+    bayX: shape.bayX ?? P.bayX, coastPhase: shape.coastPhase, coastFreq: shape.coastFreq,
+  };
+}
+
 /** River centreline z for a given x. */
 export function riverZ(rng, P, x) {
-  return P.riverZ + 130 * Math.sin(x / 300 + 1.3) + 70 * rng.fbm(x / 260 + 4.2, 7.7, 3);
+  return P.riverZ + 130 * Math.sin(x * P.riverFreq + P.riverPhase) + 70 * rng.fbm(x / 260 + 4.2, 7.7, 3);
 }
 export function riverHalfWidth(rng, x) {
   return 30 + 12 * rng.fbm(x / 220 + 8.8, 2.2, 2);
 }
 /** Coastline x for a given z (water for x > coast). */
 export function coastX(rng, P, z) {
-  return P.bayX + 90 * Math.sin(z / 330 + 0.4) + 80 * rng.fbm(z / 260 + 1.5, 5.1, 3);
+  return P.bayX + 90 * Math.sin(z * P.coastFreq + P.coastPhase) + 80 * rng.fbm(z / 260 + 1.5, 5.1, 3);
 }
 
 /** Continuous (un-quantized) height at world (x, z). */
@@ -49,7 +80,8 @@ export function continuousHeight(rng, P, halfW, x, z) {
 
   // Broad flat central plateau (rounded square) for downtown: a table with a short, steep edge so the rim reads
   // as one or two tall, unmistakable rock terraces (not a gentle ramp) from the air, standing on a lower apron.
-  const r4 = Math.pow(x * x * x * x + z * z * z * z, 0.25);
+  const px = x - P.cx, pz = z - P.cz;
+  const r4 = Math.pow(px * px * px * px + pz * pz * pz * pz, 0.25);
   const pt = smoothstep(P.plateauR, P.plateauR + 14, r4);
   const apron = 1 - smoothstep(P.plateauR + 40, P.plateauR + 260, r4);
   h = mix(h, Math.min(h, P.plateauH - 3.2), apron);
@@ -96,9 +128,15 @@ export function stepFor(h, slope) {
   return PLATE;
 }
 
-/** Builds the full (w+1)*(h+1) vertex height field for a variant. */
-export function generateHeightField(world, rng, variant = 'default') {
-  const P = variantParams(variant);
+/**
+ * Builds the full (w+1)*(h+1) vertex height field for a variant. `pinned` (default true) keeps the plateau/
+ * river/coast at their original fixed positions regardless of seed — required for a fixed-layout city whose
+ * road network is built from hardcoded coordinates (see demo/citygen.js); pass false to let the seed vary them.
+ * Returns `{ heights, params }` — `params` is the resolved per-generation shape (including `cx`/`cz`) so callers
+ * can reuse the exact same values (e.g. camera framing) instead of re-resolving.
+ */
+export function generateHeightField(world, rng, variant = 'default', pinned = true) {
+  const P = resolveParams(rng, variantParams(variant), pinned);
   const { w, h } = world.size;
   const cs = world.cellSize;
   const w1 = w + 1, h1 = h + 1;
@@ -125,5 +163,5 @@ export function generateHeightField(world, rng, variant = 'default') {
       out[k] = quantize(hv, hv < 1.4 ? PLATE : q);
     }
   }
-  return out;
+  return { heights: out, params: P };
 }

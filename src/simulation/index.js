@@ -90,6 +90,23 @@ const api = {
     publish(S.model.stats);
     S.ctx.events.emit('sim:reset', {});
   },
+  /** Full round-trippable state for save/load: policy, tax rates, and the raw stats snapshot. */
+  getState() {
+    return { policy: { ...S.model.policy }, taxRate: { ...S.model.taxRate }, stats: snapshot(S.model.stats) };
+  },
+  /** Restore exactly what getState() returned (used by menu's Load) — no synthetic tick warm-up: a loaded save
+   * should look exactly as it did when saved, unlike a freshly generated city which has no history to restore. */
+  loadState(patch) {
+    if (!patch) return;
+    if (patch.policy) Object.assign(S.model.policy, patch.policy);
+    if (patch.taxRate) S.model.taxRate = { ...patch.taxRate };
+    if (patch.stats) Object.assign(S.model.stats, patch.stats);
+    S.model.syncBuildings(S.ctx.world);
+    S.grid.markDirty();
+    S.acc = 0;
+    publish(S.model.stats);
+    S.ctx.events.emit('sim:reset', {});
+  },
   ticksPerSecond: 1 / TICK_DT,
 };
 

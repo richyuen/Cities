@@ -48,7 +48,7 @@ export default {
   id: 'roads',                 // == folder name
   deps: ['terrain'],           // module ids that must init first (may be empty)
   order: 30,                   // update order (lower first). terrain 10, environment 15, roads 30, zoning 35,
-                               // buildings 40, props 45, traffic 50, simulation 60, tools 70, ui 80, audio 85, effects 90, demo 5
+                               // buildings 40, props 45, traffic 50, simulation 60, tools 70, ui 80, audio 85, effects 90, menu 95, demo 5
   async init(ctx) {},          // build persistent state, subscribe to events, add objects to ctx.scene
   update(dt, ctx) {},          // per frame; dt seconds (clamped ≤ 0.1). Keep it cheap.
   dispose(ctx) {},             // remove objects, unsubscribe
@@ -79,6 +79,7 @@ export default {
 | `params` | `URLSearchParams` | url params |
 | `setRenderFn(fn)` | | `effects` only: replaces the default `renderer.render(scene, camera)` with `fn(dt)` |
 | `stats` | | `{ fps, frameMs, drawCalls, triangles }` updated every frame by core |
+| `paused` | `boolean` | owned by `menu`; when true, main.js skips `clock.update`/`cameraApi.update`/`registry.update` for that frame (rendering still happens, so the last live frame stays visible behind the menu) |
 
 ## 3. World data model (`src/core/world.js`)
 ```
@@ -98,7 +99,12 @@ World {
 ```
 Mutators (all emit events, all deterministic): `setHeight(i,j,h)`, `getHeight(x,z)` (bilinear, meters), `setCell(i,j,patch)`,
 `addRoad(a:{x,z}, b:{x,z}, kind)` → edgeId, `removeRoad(edgeId)`, `setZone(i,j,zone,density)`, `addBuilding(rec)` → id, `removeBuilding(id)`,
-`addProp(rec)` → id, `removeProp(id)`, `setWeather(patch)`, `worldToCell(x,z)`, `cellToWorld(i,j)` (center), `cellAt(i,j)`, `raycastGround(ray)`.
+`addProp(rec)` → id, `removeProp(id)`, `setWeather(patch)`, `worldToCell(x,z)`, `cellToWorld(i,j)` (center), `cellAt(i,j)`, `raycastGround(ray, maxDist?, heightFn?)`
+(terrain heightfield only), `raycastBuildings(ray, maxDist?, heightFn?)` (nearest building footprint AABB), `raycastScene(ray, maxDist?, heightFn?)` →
+`{ point, buildingId }` (whichever of the two the ray reaches first — use this one for pointer picking so a building's facade/roof stops the ray
+instead of the ray passing through to the terrain behind it). `heightFn` defaults to `getHeight` (smooth bilinear); pass the `terrain` module's
+`surfaceHeight` (the actual rendered plate-quantized surface) for pointer picking, or the raycast can settle a visible distance from the rendered
+ground and shift the resolved cell — see `tools/index.js` `groundHeightFn()`.
 Ownership: terrain owns `heightField/height`; roads own `roads`; zoning owns `zone/density`; buildings own `buildings`; props own `props`; simulation owns `stats`; environment owns `weather`.
 
 ## 4. Events (`ctx.events.on(name, fn)` → unsubscribe fn; `emit(name, payload)`)

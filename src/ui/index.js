@@ -48,6 +48,7 @@ function onKey(e) {
   const t = e.target;
   if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
   if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (S.ctx.modules.get('menu')?.api?.isOpen?.()) return; // menu (title/pause) owns input while open
   const clock = S.ctx.clock;
   switch (e.code) {
     case 'Escape':
@@ -80,6 +81,7 @@ const api = {
   /** Select a tool (emits tool:selected). */
   setTool: (tool) => selectTool(tool),
   getTool: () => S.tool,
+  isSettingsOpen: () => S.hud?.isSettingsOpen() ?? false,
   getSettings: () => ({ ...S.settings }),
   setHudVisible: (v) => setHudVisible(v),
   isHudVisible: () => S.hudVisible,

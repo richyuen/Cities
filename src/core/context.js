@@ -44,6 +44,7 @@ export async function createContext({ container, dom, params }) {
     camera: cam.camera, controls: cam.controls, cameraPresets: cam.presets, cameraApi: cam,
     assets, materials, modules: new Map(), dom, container, params,
     showcase: showcase || null,
+    paused: false,
     stats: { fps: 0, frameMs: 0, drawCalls: 0, triangles: 0 },
     frameStats,
     log: (...a) => console.log(...a),

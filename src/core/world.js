@@ -23,6 +23,7 @@ export class World {
     this.stats = { population: 0, jobs: 0, money: 50000, happiness: 0.7, traffic: 0 };
     this._ids = { node: 0, edge: 0, building: 0, prop: 0 };
     this.seaLevel = 0; // meters; terrain may set
+    this.downtownCenter = { x: 0, z: 0 }; // terrain may move this when the plateau isn't pinned to the origin
   }
 
   // ---- geometry helpers -------------------------------------------------
@@ -105,32 +106,94 @@ export class World {
     return out.set(hL - hR, 2 * e, hD - hU).normalize();
   }
 
-  /** Ray-march the ray against the height field; returns THREE.Vector3 point or null */
-  raycastGround(ray, maxDist = 6000) {
+  /** Ray-march the ray against the height field; returns THREE.Vector3 point or null. `heightFn(x,z)` defaults
+   * to this.getHeight (smooth bilinear) — pass the terrain module's surfaceHeight (the actual rendered,
+   * plate-quantized surface — see terrain/data.js surfaceH) when raycasting for pointer picking, since a ray
+   * marched against the smooth field can cross it several tenths of a metre away from where the *rendered*
+   * (stepped) surface actually sits, which on a shallow ray angle shifts the resolved (x,z) — and so the
+   * selected cell — by a visible amount on screen. */
+  raycastGround(ray, maxDist = 6000, heightFn = null) {
+    const getH = heightFn || ((x, z) => this.getHeight(x, z));
     const p = new THREE.Vector3();
-    let t = 0, step = 4;
+    const _loP = new THREE.Vector3();
+    let t = 0, step = 4, stepToHere = 0;
     let prevAbove = null;
     for (let iter = 0; iter < 4000 && t < maxDist; iter++) {
       ray.at(t, p);
-      const h = this.getHeight(p.x, p.z);
+      const h = getH(p.x, p.z);
       const above = p.y > h;
       if (prevAbove === true && !above) {
-        // refine
-        let lo = t - step, hi = t;
+        // refine. Bracket on stepToHere (the step that actually produced this t from the last confirmed-above
+        // sample), not the current `step` variable — by the time a crossing is detected, `step` has usually
+        // already been shrunk for the *next* iteration (the clearance check below fires off the sample that
+        // just got taken), so `t - step` names a point that was never sampled and may already be back on the
+        // wrong side of the ground. That silently handed bisection a bracket whose "lo" end wasn't actually
+        // above ground, so it converged on an arbitrary point — off the ray by tens of metres on a steep,
+        // fast-growing approach (the coarse step ramps up to 64 m while still high above ground).
+        let lo = t - stepToHere, hi = t;
         for (let k = 0; k < 12; k++) {
           const mid = (lo + hi) / 2;
           ray.at(mid, p);
-          if (p.y > this.getHeight(p.x, p.z)) lo = mid; else hi = mid;
+          if (p.y > getH(p.x, p.z)) lo = mid; else hi = mid;
         }
         ray.at(hi, p);
-        p.y = this.getHeight(p.x, p.z);
+        const hHi = getH(p.x, p.z);
+        // A plate-quantized "Lego" ground has vertical riser faces between adjacent cells of different height
+        // (see terrain/mesher.js flatPiece/edgeRisers) — a pure heightfield march can't represent a vertical
+        // face directly (getH is one height per x,z), but the bisection above still converges tightly onto the
+        // (x,z) boundary the riser sits on. If the ray's own y there lands between the two plates' heights, it
+        // punched through the riser face itself, not the flat plate beyond — keep that y instead of snapping
+        // onto the far plate, which can resolve to a cell over from the one the cursor is actually pointing at.
+        ray.at(lo, _loP);
+        const hLo = getH(_loP.x, _loP.z);
+        if (hHi !== hLo && p.y > Math.min(hLo, hHi) && p.y < Math.max(hLo, hHi)) return p.clone();
+        p.y = hHi;
         return p.clone();
       }
       prevAbove = above;
+      stepToHere = step;
       t += step;
       if (p.y - h > 50) step = Math.min(64, step * 1.5); else step = 2;
     }
     return null;
+  }
+
+  /** Ray-vs-building test: approximates each building as its footprint AABB (actual geometry is merged into
+   * shared per-chunk meshes for draw-call budget — see buildings/batching.js — so there's no per-building mesh
+   * to raycast against). Returns the nearest { id, point } or null. Same `heightFn` as raycastGround, for the
+   * same reason — buildings sit on the rendered (plate-quantized) surface, not the smooth interpolated one. */
+  raycastBuildings(ray, maxDist = 6000, heightFn = null) {
+    const getH = heightFn || ((x, z) => this.getHeight(x, z));
+    let bestId = null, bestPoint = null, bestDist = maxDist;
+    const box = new THREE.Box3();
+    const hit = new THREE.Vector3();
+    for (const b of this.buildings.values()) {
+      const x0 = this.minX + b.i * this.cellSize, x1 = this.minX + (b.i + b.w) * this.cellSize;
+      const z0 = this.minZ + b.j * this.cellSize, z1 = this.minZ + (b.j + b.d) * this.cellSize;
+      const baseY = getH((x0 + x1) / 2, (z0 + z1) / 2);
+      box.min.set(x0, baseY, z0);
+      box.max.set(x1, baseY + Math.max(1, b.height || 6), z1);
+      if (!ray.intersectBox(box, hit)) continue;
+      const d = ray.origin.distanceTo(hit);
+      if (d < bestDist) { bestDist = d; bestId = b.id; bestPoint = hit.clone(); }
+    }
+    return bestId ? { id: bestId, point: bestPoint } : null;
+  }
+
+  /** Combined ray-vs-scene pick for pointer interaction (placement ghost, building-info hover): whichever of
+   * the terrain heightfield or a building's footprint box the ray reaches first. raycastGround alone ignores
+   * building height, so aiming at a building's facade/roof let the ray sail past it to wherever it next crossed
+   * the terrain — often nowhere near the screen pixel under the cursor. */
+  raycastScene(ray, maxDist = 6000, heightFn = null) {
+    const groundPoint = this.raycastGround(ray, maxDist, heightFn);
+    const buildingHit = this.raycastBuildings(ray, maxDist, heightFn);
+    if (!buildingHit) return groundPoint ? { point: groundPoint, buildingId: null } : null;
+    if (!groundPoint) return { point: buildingHit.point, buildingId: buildingHit.id };
+    const groundDist = ray.origin.distanceTo(groundPoint);
+    const buildingDist = ray.origin.distanceTo(buildingHit.point);
+    return buildingDist < groundDist
+      ? { point: buildingHit.point, buildingId: buildingHit.id }
+      : { point: groundPoint, buildingId: null };
   }
 
   // ---- cells ----------------------------------------------------------------

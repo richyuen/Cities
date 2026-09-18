@@ -41,6 +41,10 @@ async function boot() {
   const exclude = (params.get('exclude') || '').split(',').filter(Boolean);
   for (const e of exclude) ids.delete(e);
 
+  // terrain needs to know whether the pre-built demo city (fixed-layout roads, see demo/citygen.js) will load,
+  // so it can keep the plateau/river/coast pinned in place for it instead of seed-varying their position.
+  ctx.demoActive = ids.has('demo');
+
   if (!ids.has('environment') || recs.get('environment')?.status !== 'loaded') {
     ctx.log('[boot] environment module not loaded: using fallback lights');
     installFallbackLights(ctx);
@@ -80,9 +84,19 @@ async function boot() {
     last = now;
     if (params.get('fixeddt')) dt = 1 / 60; // deterministic screenshots
     ctx.frameStats.begin();
-    ctx.clock.update(dt);
-    ctx.cameraApi.update();
-    registry.update(dt);
+    if (!ctx.paused) {
+      ctx.clock.update(dt);
+      ctx.cameraApi.update();
+      registry.update(dt);
+    } else {
+      // menu owns ctx.paused and must keep animating its own UI while everything else is frozen — the one
+      // module main.js reaches into by id; every other module goes through registry.update as normal.
+      const menuRec = ctx.modules.get('menu');
+      if (menuRec?.status === 'ok' && menuRec.module.update) {
+        try { menuRec.module.update(dt, ctx); }
+        catch (e) { ctx.error('[main] menu module threw in update while paused:', e); }
+      }
+    }
     ctx.render(dt);
     ctx.frameStats.end();
     Object.assign(ctx.stats, ctx.frameStats.snapshot());
