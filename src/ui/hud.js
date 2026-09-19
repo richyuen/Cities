@@ -25,10 +25,11 @@ export const TOOL_GROUPS = [
   { label: 'Roads', tools: [['road:street', 'Street'], ['road:avenue', 'Avenue'], ['road:highway', 'Highway'], ['road:path', 'Path']] },
   { label: 'Zones', tools: [['zone:r', 'Homes'], ['zone:c', 'Shops'], ['zone:i', 'Industry'], ['zone:none', 'Dezone']] },
   { label: 'Parks', tools: [['park', 'Park'], ['trees', 'Trees'], ['plaza', 'Plaza']] },
-  { label: 'Utilities', tools: [['utility:power', 'Power Plant'], ['utility:water', 'Water Tower']] },
+  { label: 'Utilities', tools: [['utility:power', 'Power Plant'], ['utility:water', 'Water Tower'], ['utility:firedept', 'Fire Department']] },
   { label: 'Tools', tools: [['bulldoze', 'Bulldoze', 'B'], ['select', 'Inspect', 'I']] },
+  { label: 'Hazards', tools: [['hazard:fire', 'Start Fire']] },
 ];
-const DANGER = new Set(['bulldoze', 'zone:none']);
+const DANGER = new Set(['bulldoze', 'zone:none', 'hazard:fire']);
 const MAX_TOASTS_VISIBLE = 3, MAX_TOASTS_KEPT = 8;
 const WEATHER_LABEL = { clear: 'Clear', cloudy: 'Cloudy', rain: 'Rain', fog: 'Fog' };
 const TOAST_ICON = { info: icons.info, success: icons.check, warn: icons.warn, error: icons.close };

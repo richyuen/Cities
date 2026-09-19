@@ -466,6 +466,31 @@ function generateWaterTower(ctx, b, rng, halfW, halfD, cx, cz, groundY) {
   };
 }
 
+// Civic fire department: a low red garage hall with a white door stripe, a small lookout tower, and a beacon.
+// Fixed composition (ignores b.level — utility buildings never grow), small 2x2-cell footprint.
+function generateFireDepartment(ctx, b, rng, halfW, halfD, cx, cz, groundY) {
+  const parts = [];
+  const storyH = 6.2;
+  box(ctx, parts, 'brightRed', halfW * 2, storyH, halfD * 2, cx, groundY + storyH / 2, cz, 0.05);
+  interiorLiner(parts, 'brightRed', halfW * 2, storyH, halfD * 2, cx, groundY, cz);
+  box(ctx, parts, 'darkStoneGrey', halfW * 2 * 1.02, 0.3, halfD * 2 * 1.02, cx, groundY + storyH, cz, 0.03);
+  const roofY = groundY + storyH + 0.3;
+  // garage door stripe on the +z face
+  plainBox(parts, 'white', halfW * 1.1, storyH * 0.55, 0.12, cx, groundY + storyH * 0.32, cz + halfD - 0.06);
+  // lookout tower + beacon, offset toward a back corner
+  const towerR = Math.min(halfW, halfD) * 0.42;
+  const towerH = 3.5 + rng.range(0, 1);
+  const tx = cx - halfW * 0.45, tz = cz - halfD * 0.45;
+  cylinder(parts, 'white', towerR, towerR * 1.05, towerH, 10, tx, roofY, tz);
+  cylinder(parts, 'brightRed', towerR * 0.6, towerR * 0.8, 0.35, 10, tx, roofY + towerH, tz);
+  plainBox(parts, 'beacon', 0.32, 0.32, 0.32, tx, roofY + towerH + 0.5, tz);
+
+  return {
+    parts, studs: roofPerimeterStuds(halfW, halfD, roofY + 0.05, 'darkStoneGrey'),
+    height: storyH + 0.3 + towerH + 0.35, kind: 'fire_department',
+  };
+}
+
 /** Generate a building's world-space geometry parts + roof stud points + computed height/kind. */
 export function generateBuilding(ctx, b, rng) {
   const cs = ctx.world.cellSize;
@@ -482,6 +507,7 @@ export function generateBuilding(ctx, b, rng) {
   let out;
   if (b.kind === 'power_plant') out = generatePowerPlant(ctx, b, rng, halfW, halfD, cx, cz, groundY);
   else if (b.kind === 'water_tower') out = generateWaterTower(ctx, b, rng, halfW, halfD, cx, cz, groundY);
+  else if (b.kind === 'fire_department') out = generateFireDepartment(ctx, b, rng, halfW, halfD, cx, cz, groundY);
   else if (b.zone === 'c') out = generateCommercial(ctx, b, rng, halfW, halfD, cx, cz, groundY);
   else if (b.zone === 'i') out = generateIndustrial(ctx, b, rng, halfW, halfD, cx, cz, groundY);
   else out = generateResidential(ctx, b, rng, halfW, halfD, cx, cz, groundY);

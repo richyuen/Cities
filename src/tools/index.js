@@ -26,6 +26,7 @@ const MIN_ROAD_LEN = 4; // meters — shorter drags are treated as a no-op tap, 
 const UTILITY_DEF = {
   power: { kind: 'power_plant', label: 'Power Plant', w: 3, d: 3, cost: 8000 },
   water: { kind: 'water_tower', label: 'Water Tower', w: 2, d: 2, cost: 4000 },
+  firedept: { kind: 'fire_department', label: 'Fire Department', w: 2, d: 2, cost: 6000 },
 };
 
 const S = {
@@ -63,6 +64,7 @@ function toolKindOf(tool) {
   if (tool.startsWith('utility:')) { const k = tool.slice(8); return UTILITY_DEF[k] ? { group: 'stamp', utilKind: k } : null; }
   if (tool === 'bulldoze') return { group: 'bulldoze' };
   if (tool === 'select') return { group: 'select' };
+  if (tool === 'hazard:fire') return { group: 'hazard' };
   return null;
 }
 
@@ -210,7 +212,8 @@ function prettyKind(kind) {
 function buildingInfoHtml(ctx, b) {
   const zone = b.zone || null;
   const isUtility = UTILITY_KINDS.has(b.kind);
-  const tag = isUtility ? `<span class="lc-tag" style="background:#666">Utility</span>`
+  const isCivic = isUtility || b.kind === 'fire_department';
+  const tag = isCivic ? `<span class="lc-tag" style="background:#666">${isUtility ? 'Utility' : 'Civic'}</span>`
     : zone ? `<span class="lc-tag ${zone}">${ZONE_LABEL[zone] || zone}</span>` : `<span class="lc-tag" style="background:#666">Unzoned</span>`;
   const cells = (b.w || 1) * (b.d || 1);
   const kind = prettyKind(b.kind);
@@ -229,6 +232,10 @@ function buildingInfoHtml(ctx, b) {
       <span>Powered</span><span>${cov.powered ? 'Yes' : 'No'}</span>
       <span>Watered</span><span>${cov.watered ? 'Yes' : 'No'}</span>`;
     }
+  }
+  if (b.onFire || b.damage > 0) {
+    rows += `<span>On Fire</span><span>${b.onFire ? 'Yes' : 'No'}</span>
+      <span>Damage</span><span>${Math.round((b.damage || 0) * 100)}%</span>`;
   }
   return `${tag}<h2>${kind} #${b.id}</h2>
     <div class="lc-kv">
@@ -381,6 +388,7 @@ function updateHoverGhost(hit) {
   const ctx = S.ctx;
   const info = toolKindOf(S.tool);
   if (!info || info.group === 'select') { hideGhosts(); return; }
+  if (info.group === 'hazard') { applyRect(rectBounds(ctx, hit.i, hit.j, hit.i, hit.j), 'transRed'); return; }
   if (info.group === 'road') {
     const p = snapRoadPoint(ctx, hit.x, hit.z);
     applyPoint({ x: p.x, z: p.z }, 'lime');
@@ -570,6 +578,22 @@ function handleClick(e) {
   if (b) showCoverageRing(ctx, b); else hideCoverageRing();
 }
 
+// ---- hazard: start fire ------------------------------------------------------------------------------------
+
+function handleFireClick(e) {
+  const ctx = S.ctx;
+  const hit = screenToHit(ctx, e.clientX, e.clientY);
+  const buildingId = hit ? (hit.buildingId || pickBuildingId(ctx, hit.x, hit.z, hit.i, hit.j)) : null;
+  if (!buildingId) { fail('No building here', hit); return; }
+  const sim = ctx.modules.get('simulation');
+  const ok = sim?.status === 'ok' ? safeCall(() => sim.api.igniteBuilding(buildingId), false) : false;
+  if (!ok) { fail('Already on fire', hit); return; }
+  const b = ctx.world.buildings.get(buildingId);
+  notify(`\u{1F525} ${prettyKind(b?.kind)} is on fire!`, 'warn');
+  const audio = ctx.modules.get('audio');
+  if (audio?.status === 'ok') safeCall(() => audio.api?.play?.('error', hit));
+}
+
 // ---- pointer plumbing ------------------------------------------------------------------------------------
 
 function screenToHit(ctx, clientX, clientY) {
@@ -590,7 +614,7 @@ function onPointerDown(e) {
   if (e.button === 2) { if (S.drag) cancelDrag(); return; } // right click: cancel in-progress gesture only
   if (e.button !== 0) return;
   const info = toolKindOf(S.tool);
-  if (!info || info.group === 'select') { S.clickStart = { x: e.clientX, y: e.clientY }; return; }
+  if (!info || info.group === 'select' || info.group === 'hazard') { S.clickStart = { x: e.clientX, y: e.clientY }; return; }
   const hit = screenToHit(ctx, e.clientX, e.clientY);
   if (!hit) return;
   if (ctx.controls) ctx.controls.enabled = false; // suspend MapControls' left-drag pan while paint-dragging
@@ -621,7 +645,7 @@ function onPointerUp(e) {
   if (S.clickStart) {
     const dx = e.clientX - S.clickStart.x, dy = e.clientY - S.clickStart.y;
     S.clickStart = null;
-    if (Math.hypot(dx, dy) < 6) handleClick(e);
+    if (Math.hypot(dx, dy) < 6) { if (S.tool === 'hazard:fire') handleFireClick(e); else handleClick(e); }
   }
 }
 

@@ -104,6 +104,14 @@ export const icons = {
   'utility:water': svg(`<path d="M6.5 21 9 12" stroke="${GREY}" stroke-width="2.3" stroke-linecap="round"/><path d="M17.5 21 15 12" stroke="${GREY}" stroke-width="2.3" stroke-linecap="round"/>
     <path d="M8 16.5h8" stroke="${GREY}" stroke-width="2" stroke-linecap="round"/>
     <rect x="6.5" y="6" width="11" height="7.5" rx="2" fill="${BLUE}" ${O}/><ellipse cx="12" cy="6" rx="5.5" ry="2.1" fill="#6fb7ff" ${O}/>`),
+  'utility:firedept': svg(`<rect x="3.5" y="9" width="17" height="11" rx="1.5" fill="${RED}" ${O}/>
+    <path d="M3 9 12 3l9 6" fill="${RED}" ${O}/>
+    <rect x="9.4" y="13" width="5.2" height="7" rx="0.8" fill="${WHITE}" ${O}/>
+    <circle cx="12" cy="6.2" r="1.3" fill="${YEL}" ${O}/>`),
+
+  // ---- tools: hazards ----
+  'hazard:fire': svg(`<path d="M12 2c-1 3-4.5 4.7-4.5 9A4.5 4.5 0 0 0 12 15.5 4.5 4.5 0 0 0 16.5 11c0-1.6-1-2.6-1.7-3.4.2 1.4-.5 2.2-1.2 2.2-1 0-1-1-.6-2 .5-1.6-.2-3.6-1-5.8z" fill="${ORANGE}" ${O}/>
+    <path d="M12 9.5c-.4 1.3-2 2-2 3.8a2 2 0 0 0 4 0c0-.7-.3-1.1-.6-1.5.05.6-.2 1-.5 1-.5 0-.4-.5-.2-.9.3-.7 0-1.6-.7-2.4z" fill="${YEL}"/>`),
 
   // ---- tools: misc ----
   bulldoze: svg(`<rect x="8" y="9" width="10" height="7.5" rx="1.6" fill="${YEL}" ${O}/><rect x="10" y="5.5" width="6" height="4.5" rx="1" fill="${YEL}" ${O}/><rect x="11" y="6.6" width="4" height="2.3" fill="#a6d8ec"/>

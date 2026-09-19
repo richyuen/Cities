@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { generateBuilding } from './generator.js';
 import { BuildingBatcher } from './batching.js';
-import { UnservedIndicators } from './indicators.js';
+import { UnservedIndicators, FireIndicators, FireDrones } from './indicators.js';
 import { stageDefault, stageLevels, stageNight } from './showcase.js';
 
 // buildings — procedurally generates and renders Lego-style buildings for world.buildings records, and (in the
@@ -41,7 +41,7 @@ const REBUILD_BUDGET_MS = 2.5;
 const LEVEL_UP_BUDGET_MS = 2;
 
 const S = {
-  ctx: null, group: null, batcher: null, indicators: null, dynMats: null, rng: null, unsub: [],
+  ctx: null, group: null, batcher: null, indicators: null, fireIndicators: null, fireDrones: null, dynMats: null, rng: null, unsub: [],
   pendingDirty: false, lastEvent: 0, growthAcc: 0, growthTick: 0, growthRng: null,
   tweens: [], variant: null, closeupTarget: null,
   levelUpQueue: [], levelUpQueued: null, // null placeholder; set() in init() (needs a real Set instance)
@@ -299,6 +299,10 @@ export default {
     S.batcher = new BuildingBatcher(ctx, S.group, S.dynMats);
     S.indicators = new UnservedIndicators();
     S.group.add(S.indicators.group);
+    S.fireIndicators = new FireIndicators();
+    S.group.add(S.fireIndicators.group);
+    S.fireDrones = new FireDrones();
+    S.group.add(S.fireDrones.group);
     S.pendingDirty = false; S.growthAcc = 0; S.growthTick = 0; S.tweens.length = 0; S.closeupTarget = null; S.stageBounds = null;
     S.levelUpQueue.length = 0; S.levelUpQueued = new Set();
 
@@ -308,6 +312,11 @@ export default {
       const sim = ctx.modules.get('simulation');
       if (sim?.status === 'ok' && typeof sim.api?.getUnservedBuildings === 'function') {
         S.indicators.sync(sim.api.getUnservedBuildings() || [], S.batcher);
+      }
+      if (sim?.status === 'ok' && typeof sim.api?.getBurningBuildings === 'function') {
+        const burning = sim.api.getBurningBuildings() || [];
+        S.fireIndicators.sync(burning, S.batcher);
+        S.fireDrones.sync(burning, sim.api.getFireDispatch, S.batcher);
       }
     }));
     S.unsub.push(ctx.events.on('time:changed', ({ isNight, daylight }) => updateNight(ctx, isNight, daylight)));
@@ -339,6 +348,8 @@ export default {
       drainLevelUps(ctx, LEVEL_UP_BUDGET_MS);
     }
     updateTweens(dt);
+    S.fireIndicators?.update(dt);
+    S.fireDrones?.update(dt);
     if (ctx.showcase) return; // auto-growth only runs in the full game
     S.growthAcc += dt;
     if (S.growthAcc >= GROWTH_INTERVAL) {
@@ -356,6 +367,10 @@ export default {
     S.batcher = null;
     S.indicators?.dispose();
     S.indicators = null;
+    S.fireIndicators?.dispose();
+    S.fireIndicators = null;
+    S.fireDrones?.dispose();
+    S.fireDrones = null;
     S.levelUpQueue.length = 0;
     S.levelUpQueued = null;
     if (S.group) ctx.scene.remove(S.group);

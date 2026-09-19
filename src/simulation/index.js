@@ -82,6 +82,12 @@ const api = {
   getUnservedBuildings() { return S.model.getUnservedBuildings(); },
   /** utility coverage radius in cells (Chebyshev; multiply by ctx.world.cellSize for meters). */
   getUtilityRadii() { return { power: POWER_RADIUS, water: WATER_RADIUS }; },
+  /** Ignite a building by id (any kind). Returns false if not found or already on fire. */
+  igniteBuilding(id) { return S.model.igniteBuilding(id); },
+  /** ids of buildings currently on fire. */
+  getBurningBuildings() { return S.model.getBurningBuildings(); },
+  /** { stationId, elapsed, duration } dispatch info for a burning building, or null. */
+  getFireDispatch(id) { return S.model.getFireDispatch(id); },
   /** 0..1 desirability of cell (i,j) for `zone` ('r'|'c'|'i'; default: the cell's zone, else 'r') */
   cellDesirability(i, j, zone) { S.grid.ensure(S.frame); return S.grid.get(i, j, zone); },
   /** chronological copy of the last ≤300 ticks */

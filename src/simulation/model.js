@@ -21,7 +21,28 @@ export const UNSERVED_OCC_CAP = 0.45;          // occupancy ceiling for a buildi
 // needs roughly one utility pair per suburb block plus a denser grid elsewhere — ~1.7x as many utility buildings
 // as the old, gap-riddled anchor scheme this was originally tuned against. Left at the old rate, the extra upkeep
 // alone pushed a warmed-up demo city's treasury steadily negative even at healthy occupancy (verified in-browser).
-export const UPKEEP_UTILITY = { power_plant: 1.5, water_tower: 0.75 };  // money/tick, each
+export const UPKEEP_UTILITY = { power_plant: 1.5, water_tower: 0.75, fire_department: 1.0 };  // money/tick, each
+
+// Fire simulation. Response time is straight-line Chebyshev distance to the nearest fire_department (no road
+// pathfinding exists anywhere in this codebase) — closer station → shorter, less damaging fire. Numbers below are
+// starting points, tuned the same way every other constant in this file is: retune in-browser against playtesting.
+export const FIRE_IGNITION_BASE = 4e-6;      // per-tick ignition chance per eligible building at occ=1 (halved at occ=0)
+// Chebyshev cells; purely a severity-scaling reference and the assumed distance when the city has zero fire
+// departments — NOT a "must be within range" cutoff. Any fire department on the map is always dispatched
+// (however far), it just scales toward FIRE_MAX_SEVERITY/a longer burn the farther away it is.
+export const FIRE_MAX_RESPONSE_DIST = 60;
+export const FIRE_BASE_DURATION_TICKS = 40;  // ~20 game-sec minimum burn even with a station right next door
+export const FIRE_DURATION_PER_CELL = 3;     // extra ticks of burn per Chebyshev cell of response distance
+export const FIRE_MIN_SEVERITY = 0.15;       // final damage added, best case (station adjacent)
+export const FIRE_MAX_SEVERITY = 0.75;       // final damage added, worst case (no fire department in the city)
+export const FIRE_DAMAGE_CAP_LOSS = 0.8;     // a fully damaged (damage=1) building keeps only 20% of its capacity
+// Passive repair once a building isn't actively burning: full repair from FIRE_MAX_SEVERITY (0.75) takes ~2250
+// ticks (~19 game-min at normal speed) — slow enough to matter, not permanent like the old no-repair design.
+export const FIRE_REPAIR_RATE = 1 / 3000;    // damage/tick
+export const FIRE_ACTIVE_OCC_CAP = 0.1;      // occupancy target ceiling while a building is actively burning (evacuation)
+export const FIRE_PRESSURE_SATURATION = 5;   // simultaneous fires at which the happiness penalty maxes out
+export const FIRE_HAPPINESS_WEIGHT = 0.15;   // weight of fire pressure in hTarget (debt's weight is 0.3, for scale)
+export const DRONE_SPEED = 10;               // fire-drone travel speed, cells/game-second (visual layer only)
 /** money feedback: debt of DEBT_SCALE = full service degradation; wealth of WEALTH_SCALE = full wealth bonus */
 export const DEBT_SCALE = 120000;
 export const WEALTH_SCALE = 250000;
@@ -93,6 +114,8 @@ export class SimModel {
     this.wealth = 0;                                  // 0..1 bonus from a healthy treasury
     this.bankruptTicks = 0;                            // consecutive ticks with debt saturated at 1.0
     this.bankrupt = false;                             // true once that has held for BANKRUPT_HOLD_TICKS
+    this.burning = new Map();                          // id -> raw building record, currently on fire
+    this.firePressure = 0;                             // 0..1, saturates at FIRE_PRESSURE_SATURATION simultaneous fires
   }
 
   _blankStats() {
@@ -114,6 +137,7 @@ export class SimModel {
     return {
       b, occ: this.startOccupancy, rate: 0.005 + 0.012 * hashInt(seed), level: clamp(b.level | 0, 1, 3),
       mature: 0, nearPark: false, powered: false, watered: false, roadConnected: false, notified: false, cap: 0,
+      fireSeed: seed ^ 0x5bd1e995,
     };
   }
 
@@ -127,11 +151,39 @@ export class SimModel {
     return false;
   }
 
-  _isUtilityKind(kind) { return kind === 'power_plant' || kind === 'water_tower'; }
+  /** { dist, stationId } to the nearest fire_department (Chebyshev cells, center-to-center), however far —
+   * only { dist: FIRE_MAX_RESPONSE_DIST, stationId: null } when the city has literally zero fire departments. */
+  _nearestFireDept(b) {
+    const bi = b.i + ((b.w || 1) >> 1), bj = b.j + ((b.d || 1) >> 1);
+    let best = Infinity, bestId = null;
+    for (const u of this.utilities) {
+      if (u.kind !== 'fire_department') continue;
+      const ui = u.i + ((u.w || 1) >> 1), uj = u.j + ((u.d || 1) >> 1);
+      const d = Math.max(Math.abs(ui - bi), Math.abs(uj - bj));
+      if (d < best) { best = d; bestId = u.id; }
+    }
+    return bestId == null ? { dist: FIRE_MAX_RESPONSE_DIST, stationId: null } : { dist: best, stationId: bestId };
+  }
+
+  /** Stamp fire state directly onto a raw building record (RCI or utility) and track it in `this.burning`. */
+  _startFire(b) {
+    const { dist, stationId } = this._nearestFireDept(b);
+    const t = clamp01(dist / FIRE_MAX_RESPONSE_DIST);
+    b.onFire = true;
+    b.fireElapsed = 0;
+    b.fireDuration = FIRE_BASE_DURATION_TICKS + FIRE_DURATION_PER_CELL * dist;
+    b.fireSeverity = FIRE_MIN_SEVERITY + (FIRE_MAX_SEVERITY - FIRE_MIN_SEVERITY) * t;
+    b.fireDamageStart = b.damage || 0;
+    b.fireStationId = stationId;
+    this.burning.set(b.id, b);
+  }
+
+  _isUtilityKind(kind) { return kind === 'power_plant' || kind === 'water_tower' || kind === 'fire_department'; }
 
   syncBuildings(world) {
-    this.list.length = 0; this.byId.clear(); this.utilities.length = 0;
+    this.list.length = 0; this.byId.clear(); this.utilities.length = 0; this.burning.clear();
     for (const b of world.buildings.values()) {
+      if (b.onFire) this.burning.set(b.id, b);
       if (this._isUtilityKind(b.kind)) { this.utilities.push(b); continue; }
       if (!CAPACITY[b.zone]) continue;
       const s = this._entry(b);
@@ -156,6 +208,7 @@ export class SimModel {
   }
 
   removeBuilding(id) {
+    this.burning.delete(id);
     if (this._isUtilityKind(this.utilities.find((u) => u.id === id)?.kind)) {
       this.utilities = this.utilities.filter((u) => u.id !== id);
       this.markDirty();
@@ -239,16 +292,32 @@ export class SimModel {
     const occT = (p) => clamp(0.8 + 0.5 * p, 0.08, 1);
     const tR = occT(P.r), tC = occT(P.c), tI = occT(P.i);
 
+    // fire progression — independent of the RCI list loop below since a burning entry can be an RCI or a utility
+    // building (e.g. a manually-ignited fire department); resolved fires leave a permanent `damage` scar (see
+    // FIRE_DAMAGE_CAP_LOSS below) but stop suppressing happiness/occupancy the instant they're out.
+    for (const b of this.burning.values()) {
+      b.fireElapsed = (b.fireElapsed || 0) + 1;
+      const progress = clamp01(b.fireElapsed / b.fireDuration);
+      b.damage = clamp01(b.fireDamageStart + b.fireSeverity * progress);
+      if (progress >= 1) { b.onFire = false; this.burning.delete(b.id); }
+    }
+    this.firePressure = clamp01(this.burning.size / FIRE_PRESSURE_SATURATION);
+
     for (let k = 0, n = list.length; k < n; k++) {
       const s = list[k], b = s.b, zone = b.zone;
       const lvl = b.level < 1 ? 1 : b.level > 3 ? 3 : (b.level | 0);
       if (lvl !== s.level) { s.level = lvl; s.notified = false; s.mature = 0; s.occ *= 0.6; }
-      const cap = CAPACITY[zone][lvl] * b.w * b.d;
+      if (!b.onFire) {
+        if (b.damage > 0) b.damage = Math.max(0, b.damage - FIRE_REPAIR_RATE);
+        if (hashInt(s.fireSeed ^ Math.imul(this.tick, 0x9e3779b1)) < FIRE_IGNITION_BASE * (0.4 + 0.6 * s.occ)) this._startFire(b);
+      }
+      const cap = CAPACITY[zone][lvl] * b.w * b.d * (1 - FIRE_DAMAGE_CAP_LOSS * (b.damage || 0));
       s.cap = cap;
       const served = s.powered && s.watered;
       totalCap += cap; if (s.powered) poweredCap += cap; if (s.watered) wateredCap += cap;
       let target = zone === 'r' ? tR : zone === 'c' ? tC : tI;
       if (!served) target = Math.min(target, UNSERVED_OCC_CAP);
+      if (b.onFire) target = Math.min(target, FIRE_ACTIVE_OCC_CAP);
       s.occ += (target - s.occ) * s.rate;
       const filled = cap * s.occ;
       if (zone === 'r') { pop += filled; capR += cap; if (s.nearPark) parkW += filled; }
@@ -289,7 +358,7 @@ export class SimModel {
     const taxPain = clamp01((avgTax - 0.09) * 5);
     // a fully employed, park-rich, uncongested, low-tax, solvent city tops out around 0.95
     const hTarget = 0.42 * employment + 0.22 * Math.min(1, parkShare * 1.6) + 0.18 * (1 - this.traffic)
-      + 0.1 * (1 - taxPain) + 0.08 * wealth - 0.3 * debt;
+      + 0.1 * (1 - taxPain) + 0.08 * wealth - 0.3 * debt - FIRE_HAPPINESS_WEIGHT * this.firePressure;
     this.happiness += (clamp01(hTarget) - this.happiness) * 0.05;
 
     // RCI demand pressures (SimCity-style): residential wants a jobs surplus + happiness; commercial follows the
@@ -314,7 +383,10 @@ export class SimModel {
     const expRoads = roads * UPKEEP.road * pol.upkeepMul;
     const expBld = list.length * UPKEEP.building * pol.upkeepMul;
     let expUtil = 0;
-    for (const u of this.utilities) expUtil += (UPKEEP_UTILITY[u.kind] || 0) * pol.upkeepMul;
+    for (const u of this.utilities) {
+      expUtil += (UPKEEP_UTILITY[u.kind] || 0) * pol.upkeepMul;
+      if (!u.onFire && u.damage > 0) u.damage = Math.max(0, u.damage - FIRE_REPAIR_RATE);
+    }
     const income = incR + incC + incI, expenses = expRoads + expBld + expUtil;
     this.money += income - expenses;
     if (this.bankrupt && this.money < BANKRUPT_FLOOR) this.money += (BANKRUPT_FLOOR - this.money) * BANKRUPT_SPRING;
@@ -403,4 +475,22 @@ export class SimModel {
 
   /** Ids of tracked (non-utility) buildings currently missing road, power, or water. */
   getUnservedBuildings() { return this.unserved.slice(); }
+
+  /** Ignite a building by id (any kind, RCI or utility). No-op if not found or already on fire. Returns success. */
+  igniteBuilding(id) {
+    const b = this.byId.get(id)?.b ?? this.utilities.find((u) => u.id === id);
+    if (!b || b.onFire) return false;
+    this._startFire(b);
+    return true;
+  }
+
+  /** Ids of buildings currently on fire. */
+  getBurningBuildings() { return [...this.burning.keys()]; }
+
+  /** { stationId, elapsed, duration } for a burning building's dispatch (for the drone visual), or null. */
+  getFireDispatch(id) {
+    const b = this.burning.get(id);
+    if (!b) return null;
+    return { stationId: b.fireStationId ?? null, elapsed: b.fireElapsed || 0, duration: b.fireDuration || 1 };
+  }
 }
