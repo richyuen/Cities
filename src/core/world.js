@@ -17,6 +17,7 @@ export class World {
     }
     this.heightField = new Float32Array((w + 1) * (h + 1));
     this.roads = { nodes: new Map(), edges: new Map() };
+    this._nodeGrid = new Map(); // spatial hash for _findOrCreateNode — see there for why
     this.buildings = new Map();
     this.props = new Map();
     this.weather = { kind: 'clear', intensity: 0, wind: [1, 0] };
@@ -217,13 +218,32 @@ export class World {
   }
 
   // ---- roads ----------------------------------------------------------------
+  // A linear scan over every existing node here made addRoad-heavy generation (e.g. the demo city's many short
+  // interior alley segments) effectively O(edges^2) — fine for a hand-drawn road or two, not for a few hundred
+  // procedural ones. `_nodeGrid` buckets nodes by their rounded (x,z); since the only caller uses the default
+  // tol=0.5, a match can only ever be in the query point's own 1m bucket or one of its 8 neighbours (a node just
+  // past a bucket boundary, e.g. x=4.6 vs a query at x=4.4, still rounds into an adjacent bucket), so checking that
+  // fixed 3x3 window is enough — no accuracy is traded away, only the wasted full-map scan.
+  _nodeGridKey(x, z) { return `${Math.round(x)},${Math.round(z)}`; }
+
   _findOrCreateNode(x, z, tol = 0.5) {
-    for (const n of this.roads.nodes.values()) {
-      if (Math.abs(n.x - x) <= tol && Math.abs(n.z - z) <= tol) return n;
+    const gx = Math.round(x), gz = Math.round(z);
+    for (let dz = -1; dz <= 1; dz++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const bucket = this._nodeGrid.get(`${gx + dx},${gz + dz}`);
+        if (!bucket) continue;
+        for (const n of bucket) {
+          if (Math.abs(n.x - x) <= tol && Math.abs(n.z - z) <= tol) return n;
+        }
+      }
     }
     const id = `n${this._ids.node++}`;
     const n = { id, x, z, y: this.getHeight(x, z), edges: [] };
     this.roads.nodes.set(id, n);
+    const key = this._nodeGridKey(x, z);
+    let bucket = this._nodeGrid.get(key);
+    if (!bucket) { bucket = []; this._nodeGrid.set(key, bucket); }
+    bucket.push(n);
     return n;
   }
 
@@ -284,7 +304,16 @@ export class World {
       const n = this.roads.nodes.get(nid);
       if (!n) continue;
       n.edges = n.edges.filter((e) => e !== edgeId);
-      if (n.edges.length === 0) this.roads.nodes.delete(nid);
+      if (n.edges.length === 0) {
+        this.roads.nodes.delete(nid);
+        const key = this._nodeGridKey(n.x, n.z);
+        const bucket = this._nodeGrid.get(key);
+        if (bucket) {
+          const idx = bucket.indexOf(n);
+          if (idx >= 0) bucket.splice(idx, 1);
+          if (bucket.length === 0) this._nodeGrid.delete(key);
+        }
+      }
     }
     this.events.emit('road:removed', { edgeId, edge });
     return true;

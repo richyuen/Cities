@@ -10,14 +10,18 @@ export const CAPACITY = { r: [0, 16, 48, 140], c: [0, 6, 20, 60], i: [0, 10, 24,
 export const LEVEL_NAMES = ['Hamlet', 'Village', 'Town', 'City', 'Metropolis', 'Megalopolis'];
 export const LEVEL_POP = [0, 400, 2000, 8000, 30000, 100000];
 /** money per tick per unit (person / job) at 100% tax */
-export const TAX_YIELD = { r: 0.08, c: 0.18, i: 0.15 };
-export const UPKEEP = { road: 0.15, building: 0.08 };
+export const TAX_YIELD = { r: 0.10, c: 0.20, i: 0.17 };
+export const UPKEEP = { road: 0.10, building: 0.05 };
 export const WORKFORCE_SHARE = 0.55;
 export const PARK_RADIUS = 6;                 // cells (Chebyshev)
 export const POWER_RADIUS = 18;                // cells (Chebyshev) — one plant covers a real district
 export const WATER_RADIUS = 14;                // cells (Chebyshev)
-export const UNSERVED_OCC_CAP = 0.22;          // occupancy ceiling for a building missing power or water
-export const UPKEEP_UTILITY = { power_plant: 4.5, water_tower: 2 };  // money/tick, each
+export const UNSERVED_OCC_CAP = 0.45;          // occupancy ceiling for a building missing power or water
+// Halved from {3.0, 1.5}: fully covering the demo city's power/water (see src/demo/citygen.js's utilityStride)
+// needs roughly one utility pair per suburb block plus a denser grid elsewhere — ~1.7x as many utility buildings
+// as the old, gap-riddled anchor scheme this was originally tuned against. Left at the old rate, the extra upkeep
+// alone pushed a warmed-up demo city's treasury steadily negative even at healthy occupancy (verified in-browser).
+export const UPKEEP_UTILITY = { power_plant: 1.5, water_tower: 0.75 };  // money/tick, each
 /** money feedback: debt of DEBT_SCALE = full service degradation; wealth of WEALTH_SCALE = full wealth bonus */
 export const DEBT_SCALE = 120000;
 export const WEALTH_SCALE = 250000;
@@ -82,6 +86,8 @@ export class SimModel {
     this.roadCells = 0;
     this.growth = [];                                 // building ids that should level up (refreshed per tick)
     this.newCandidates = [];                          // ids that became candidates this tick
+    this.roadAdjCoverage = null;
+    this.unserved = [];                                // building ids missing road, power, or water
     this.budget = { income: { r: 0, c: 0, i: 0, total: 0 }, expenses: { roads: 0, buildings: 0, utilities: 0, total: 0 }, net: 0 };
     this.debt = 0;                                    // 0..1 service degradation from a negative treasury
     this.wealth = 0;                                  // 0..1 bonus from a healthy treasury
@@ -107,8 +113,18 @@ export class SimModel {
     const seed = ((b.seed | 0) ^ Math.imul(idh, 0x27d4eb2f)) | 0;
     return {
       b, occ: this.startOccupancy, rate: 0.005 + 0.012 * hashInt(seed), level: clamp(b.level | 0, 1, 3),
-      mature: 0, nearPark: false, powered: false, watered: false, notified: false, cap: 0,
+      mature: 0, nearPark: false, powered: false, watered: false, roadConnected: false, notified: false, cap: 0,
     };
+  }
+
+  /** Whether any cell of the building's full footprint is orthogonally adjacent to a road cell. */
+  _roadConnectedFor(b) {
+    const cov = this.roadAdjCoverage;
+    if (!cov) return false;
+    const w = this._w, h = this._h;
+    const i1 = Math.min(w, b.i + (b.w || 1)), j1 = Math.min(h, b.j + (b.d || 1));
+    for (let jj = b.j; jj < j1; jj++) for (let ii = b.i; ii < i1; ii++) if (cov[jj * w + ii]) return true;
+    return false;
   }
 
   _isUtilityKind(kind) { return kind === 'power_plant' || kind === 'water_tower'; }
@@ -134,6 +150,8 @@ export class SimModel {
       s.nearPark = this.parkCoverage[b.j * this._w + b.i] === 1;
       s.powered = this.powerCoverage ? this.powerCoverage[b.j * this._w + b.i] === 1 : false;
       s.watered = this.waterCoverage ? this.waterCoverage[b.j * this._w + b.i] === 1 : false;
+      s.roadConnected = this._roadConnectedFor(b);
+      if (!s.powered || !s.watered || !s.roadConnected) this.unserved.push(b.id);
     } else this.dirtyStatic = true;
   }
 
@@ -148,6 +166,8 @@ export class SimModel {
     this.byId.delete(id);
     const k = this.list.indexOf(s);
     if (k >= 0) this.list.splice(k, 1);
+    const uk = this.unserved.indexOf(id);
+    if (uk >= 0) this.unserved.splice(uk, 1);
   }
 
   markDirty() { this.dirtyStatic = true; }
@@ -162,20 +182,26 @@ export class SimModel {
   /** Recompute park/power/water coverage (cells within radius of a source) and per-building flags. */
   _recomputeStatic(world) {
     const w = world.size.w, h = world.size.h, n = w * h;
-    this._w = w;
+    this._w = w; this._h = h;
     const parkCov = (this.parkCoverage && this.parkCoverage.length === n) ? this.parkCoverage : new Uint8Array(n);
     parkCov.fill(0);
+    const roadAdj = (this.roadAdjCoverage && this.roadAdjCoverage.length === n) ? this.roadAdjCoverage : new Uint8Array(n);
+    roadAdj.fill(0);
     const cells = world.cells;
     const R = PARK_RADIUS;
     let roadCells = 0;
     for (let k = 0; k < n; k++) {
       const t = cells[k].type;
-      if (t === 'road') roadCells++;
-      if (t !== 'park') continue;
+      if (t !== 'road') { if (t === 'park') { const ci = k % w, cj = (k / w) | 0; SimModel._stampRadius(parkCov, w, h, ci, cj, R); } continue; }
+      roadCells++;
       const ci = k % w, cj = (k / w) | 0;
-      SimModel._stampRadius(parkCov, w, h, ci, cj, R);
+      if (ci > 0) roadAdj[k - 1] = 1;
+      if (ci < w - 1) roadAdj[k + 1] = 1;
+      if (cj > 0) roadAdj[k - w] = 1;
+      if (cj < h - 1) roadAdj[k + w] = 1;
     }
     this.parkCoverage = parkCov;
+    this.roadAdjCoverage = roadAdj;
     this.roadCells = roadCells;
 
     const powerCov = (this.powerCoverage && this.powerCoverage.length === n) ? this.powerCoverage : new Uint8Array(n);
@@ -189,11 +215,14 @@ export class SimModel {
     this.powerCoverage = powerCov;
     this.waterCoverage = waterCov;
 
+    const unserved = this.unserved; unserved.length = 0;
     for (const s of this.list) {
       const idx = s.b.j * w + s.b.i;
       s.nearPark = parkCov[idx] === 1;
       s.powered = powerCov[idx] === 1;
       s.watered = waterCov[idx] === 1;
+      s.roadConnected = this._roadConnectedFor(s.b);
+      if (!s.powered || !s.watered || !s.roadConnected) unserved.push(s.b.id);
     }
     this.dirtyStatic = false;
   }
@@ -365,10 +394,13 @@ export class SimModel {
   /** 0..1 fraction of RCI building capacity currently within power/water coverage. */
   getUtilityCoverage() { return { power: this.stats.powerCoverage || 0, water: this.stats.waterCoverage || 0 }; }
 
-  /** { powered, watered } for any tracked building id; utility buildings themselves always read as served. */
+  /** { powered, watered, roadConnected } for any tracked building id; utilities themselves always read as served. */
   getBuildingCoverage(id) {
-    if (this._isUtilityKind(this.utilities.find((u) => u.id === id)?.kind)) return { powered: true, watered: true };
+    if (this._isUtilityKind(this.utilities.find((u) => u.id === id)?.kind)) return { powered: true, watered: true, roadConnected: true };
     const s = this.byId.get(id);
-    return s ? { powered: s.powered, watered: s.watered } : null;
+    return s ? { powered: s.powered, watered: s.watered, roadConnected: s.roadConnected } : null;
   }
+
+  /** Ids of tracked (non-utility) buildings currently missing road, power, or water. */
+  getUnservedBuildings() { return this.unserved.slice(); }
 }

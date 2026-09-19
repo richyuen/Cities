@@ -53,7 +53,7 @@ export default {
     ctx.log(`[demo] city seeded in ${ms} ms: ${stats.roadEdges} road edges (incl. ${stats.highwayEdges} highway), `
       + `${stats.totalBuildings} buildings (downtown ${stats.downtown.buildings}, industrial ${stats.industrial.buildings}, `
       + `waterfront ${stats.waterfront.buildings}, suburb ${stats.suburb.buildings}), ${stats.totalParkCells} park cells, `
-      + `warmed-up population ${pop}`);
+      + `${stats.utilities.power} power plants + ${stats.utilities.water} water towers, warmed-up population ${pop}`);
   },
 
   dispose() {

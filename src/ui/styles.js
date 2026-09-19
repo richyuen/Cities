@@ -215,6 +215,28 @@ export const CSS = `
 .lc-info-body .lc-swatch::before { content: ""; position: absolute; left: 4px; right: 4px; top: 0; height: 60px;
   background: url("data:image/svg+xml,${SWATCH_STUD}") left top / 20px 20px space; }
 
+/* ---------- clickable stat pill (Treasury / Population / Jobs) ---------- */
+.lc-stat.clickable { cursor: pointer; transition: background 0.12s; }
+.lc-stat.clickable:hover, .lc-stat.clickable:focus-visible { background: var(--lc-bg-hover); }
+
+/* ---------- generic modal (Treasury/Population/Jobs status windows) ---------- */
+.lc-modal-overlay { position: absolute; inset: 0; z-index: 6; display: none; align-items: center; justify-content: center;
+  background: rgba(10, 13, 18, 0.55); pointer-events: none; }
+.lc-modal-overlay.open { display: flex; pointer-events: auto; }
+.lc-modal { position: static; width: 380px; max-height: 74vh; display: flex; flex-direction: column; }
+.lc-modal .lc-info-body { overflow: auto; }
+.lc-info-body .lc-bar.debt > i { background: linear-gradient(180deg, #ff8078, var(--lc-red) 55%, #a81812); }
+.lc-slider-row { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; }
+.lc-slider-row > .lc-slider-head { display: flex; justify-content: space-between; font-weight: 700; }
+.lc-slider-row input[type=range] {
+  -webkit-appearance: none; appearance: none; width: 100%; height: 10px; border-radius: 5px; margin: 0; cursor: pointer;
+  background: rgba(0,0,0,0.4); box-shadow: inset 0 1px 2px rgba(0,0,0,0.6), 0 1px 0 rgba(255,255,255,0.1); border: 1px solid rgba(0,0,0,0.5);
+}
+.lc-slider-row input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: radial-gradient(circle at 40% 32%, #fff, #ffe27a 45%, #e0a51c);
+  border: 2px solid rgba(50,32,0,0.85); box-shadow: 0 2px 4px rgba(0,0,0,0.5), inset 0 -2px 0 rgba(120,75,0,0.35);
+}
+
 /* ---------- RCI demand (bottom-left) ---------- */
 .lc-rci { left: 16px; bottom: 16px; width: 124px; padding: 12px 12px 10px; display: flex; flex-direction: column; gap: 8px; }
 .lc-rci-title { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1.3px; color: var(--lc-muted); text-align: center; }

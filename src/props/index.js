@@ -251,7 +251,16 @@ function maybeSignalIntersections() {
   }
 }
 
-function onRoadAdded({ edgeId }) {
+function onRoadAdded({ edgeId, edge }) {
+  // A 'path' (pedestrian, lanes: 0) edge is a park crossing or a service alley, not a real street — it gets no
+  // streetlamps (populateAlongRoad) and never forms a vehicle-signalled intersection (maybeSignalIntersections),
+  // so skip both. This isn't just cosmetic: every lamp placement resolves its height via roads.snapToRoad(), which
+  // rebuilds the *entire* road network graph if dirty (which this same road:added event just made it) and then
+  // linearly scans every edge in it — so on a city with hundreds of short path segments (e.g. the demo city's
+  // interior alleys, added purely so every lot is road-adjacent — see src/demo/citygen.js's paveAlleyRow), that
+  // cost was being paid per lamp, on every alley, and dominated generation time.
+  const kind = edge?.kind ?? S.ctx.world.roads.edges.get(edgeId)?.kind;
+  if (kind === 'path') return;
   populateAlongRoad(S.ctx, api.addProp, S.rng, edgeId);
   maybeSignalIntersections();
 }

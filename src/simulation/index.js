@@ -1,7 +1,7 @@
 // simulation — deterministic, cheap city economy (RCI). Owns world.stats. Emits sim:tick at 2 Hz of game time.
 // Visuals exist only in showcase mode (Lego bar chart + DOM panel); in the full game this module is data-only.
 
-import { SimModel, TICK_DT, cityNameFor } from './model.js';
+import { SimModel, TICK_DT, cityNameFor, POWER_RADIUS, WATER_RADIUS } from './model.js';
 import { DesirabilityGrid } from './desirability.js';
 import { stageCity } from './citygen.js';
 import { createVisuals } from './visuals.js';
@@ -76,8 +76,12 @@ const api = {
   spend(amount) { return S.model.spend(amount); },
   /** 0..1 fraction of RCI capacity within power/water coverage. */
   getUtilityCoverage() { return S.model.getUtilityCoverage(); },
-  /** { powered, watered } for a building id, or null if untracked. */
+  /** { powered, watered, roadConnected } for a building id, or null if untracked. */
   getBuildingCoverage(id) { return S.model.getBuildingCoverage(id); },
+  /** ids of tracked buildings currently missing road, power, or water. */
+  getUnservedBuildings() { return S.model.getUnservedBuildings(); },
+  /** utility coverage radius in cells (Chebyshev; multiply by ctx.world.cellSize for meters). */
+  getUtilityRadii() { return { power: POWER_RADIUS, water: WATER_RADIUS }; },
   /** 0..1 desirability of cell (i,j) for `zone` ('r'|'c'|'i'; default: the cell's zone, else 'r') */
   cellDesirability(i, j, zone) { S.grid.ensure(S.frame); return S.grid.get(i, j, zone); },
   /** chronological copy of the last ≤300 ticks */

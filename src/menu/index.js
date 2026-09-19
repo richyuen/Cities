@@ -123,7 +123,7 @@ function onKey(e) {
   }
   const uiApi = modApi(ctx, 'ui');
   const toolsApi = modApi(ctx, 'tools');
-  if (uiApi?.isSettingsOpen?.() || uiApi?.getTool?.() || toolsApi?.getGhostState?.()?.dragging) return; // not ours — let it fall through
+  if (uiApi?.isSettingsOpen?.() || uiApi?.isModalOpen?.() || uiApi?.isInfoPanelOpen?.() || uiApi?.getTool?.() || toolsApi?.getGhostState?.()?.dragging) return; // not ours — let it fall through
   openMenu('pause');
   e.preventDefault(); e.stopPropagation();
 }

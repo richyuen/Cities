@@ -30,7 +30,7 @@ const UTILITY_DEF = {
 
 const S = {
   ctx: null, rng: null, group: null, raycaster: null, ghosts: null,
-  tool: null, drag: null, pointerId: null, clickStart: null,
+  tool: null, drag: null, pointerId: null, clickStart: null, selectedBuildingId: null,
   pointer: { over: false, lastClient: null },
   showcaseExtra: null,
   unsub: [], onPointerDown: null, onPointerMove: null, onPointerUp: null, onPointerLeave: null, onKeyDown: null,
@@ -217,11 +217,16 @@ function buildingInfoHtml(ctx, b) {
   let rows = `<span>Level</span><span>${b.level ?? 1}</span>
       <span>Height</span><span>${Number.isFinite(b.height) ? b.height.toFixed(1) : b.height} m</span>
       <span>Footprint</span><span>${b.w}&times;${b.d} (${cells} cell${cells === 1 ? '' : 's'})</span>`;
-  if (!isUtility && zone) {
-    const sim = ctx.modules.get('simulation');
+  const sim = ctx.modules.get('simulation');
+  if (isUtility) {
+    const radii = sim?.status === 'ok' ? safeCall(() => sim.api?.getUtilityRadii?.()) : null;
+    const cellsR = radii ? (b.kind === 'power_plant' ? radii.power : radii.water) : null;
+    if (cellsR != null) rows += `<span>Coverage radius</span><span>${Math.round(cellsR * ctx.world.cellSize)} m</span>`;
+  } else if (zone) {
     const cov = sim?.status === 'ok' ? safeCall(() => sim.api?.getBuildingCoverage?.(b.id)) : null;
     if (cov) {
-      rows += `<span>Powered</span><span>${cov.powered ? 'Yes' : 'No'}</span>
+      rows += `<span>Road</span><span>${cov.roadConnected ? 'Yes' : 'No'}</span>
+      <span>Powered</span><span>${cov.powered ? 'Yes' : 'No'}</span>
       <span>Watered</span><span>${cov.watered ? 'Yes' : 'No'}</span>`;
     }
   }
@@ -299,6 +304,8 @@ function hideGhosts() {
   if (S.ghosts) { S.ghosts.ribbon.visible = false; S.ghosts.rect.visible = false; S.ghosts.point.visible = false; }
   if (S.ctx) { safeCall(() => zoningApi(S.ctx)?.hidePreview?.()); uiApi(S.ctx)?.setStatus?.(null); }
 }
+
+function hideCoverageRing() { if (S.ghosts) S.ghosts.coverage.visible = false; }
 
 // ---- gesture state machine --------------------------------------------------------------------------------
 
@@ -549,14 +556,18 @@ function finishBulldoze(d) {
 // ---- select/inspect ------------------------------------------------------------------------------------
 
 function handleClick(e) {
-  if (S.tool !== 'select') return;
+  // Reached only when S.tool is null (no tool) or 'select' — onPointerDown only sets S.clickStart in those two
+  // cases (every other tool takes the startDrag/paint path instead), so no extra tool check is needed here: a
+  // plain click with no tool selected inspects a building exactly like the dedicated "Inspect" tool does.
   const ctx = S.ctx;
   const hit = screenToHit(ctx, e.clientX, e.clientY);
   const api = uiApi(ctx);
-  if (!hit) { api?.setInfoPanel?.(null); return; }
+  if (!hit) { api?.setInfoPanel?.(null); S.selectedBuildingId = null; hideCoverageRing(); return; }
   const buildingId = hit.buildingId || pickBuildingId(ctx, hit.x, hit.z, hit.i, hit.j);
   const b = buildingId ? ctx.world.buildings.get(buildingId) : null;
   api?.setInfoPanel?.(b ? buildingInfoHtml(ctx, b) : null);
+  S.selectedBuildingId = b?.id ?? null;
+  if (b) showCoverageRing(ctx, b); else hideCoverageRing();
 }
 
 // ---- pointer plumbing ------------------------------------------------------------------------------------
@@ -622,6 +633,7 @@ function onToolSelected(p) {
   if (S.drag) cancelDrag();
   S.tool = next;
   hideGhosts();
+  if (next !== 'select') { S.selectedBuildingId = null; hideCoverageRing(); }
 }
 
 function onKeyDown(e) {
@@ -634,7 +646,28 @@ function buildGhosts(ctx) {
   const boxGeo = new THREE.BoxGeometry(1, 1, 1);
   const cylGeo = new THREE.CylinderGeometry(1, 1, 1, 16);
   const mk = (geo, name) => { const m = new THREE.Mesh(geo, ctx.materials.glass('lime')); m.name = name; m.visible = false; m.renderOrder = 10; m.castShadow = false; m.receiveShadow = false; return m; };
-  return { ribbon: mk(boxGeo, 'tools-ghost-road'), rect: mk(boxGeo, 'tools-ghost-rect'), point: mk(cylGeo, 'tools-ghost-point'), boxGeo, cylGeo };
+  return {
+    ribbon: mk(boxGeo, 'tools-ghost-road'), rect: mk(boxGeo, 'tools-ghost-rect'), point: mk(cylGeo, 'tools-ghost-point'),
+    coverage: mk(boxGeo, 'tools-ghost-coverage'), boxGeo, cylGeo,
+  };
+}
+
+/** Utility coverage (see simulation/model.js _stampRadius) is a Chebyshev square, not a circle — show a flat
+ * square plate sized to match, or it would misrepresent the real covered area. */
+function showCoverageRing(ctx, b) {
+  const mesh = S.ghosts?.coverage;
+  if (!mesh) return;
+  const isUtility = b && UTILITY_KINDS.has(b.kind);
+  const sim = isUtility ? ctx.modules.get('simulation') : null;
+  const radii = sim?.status === 'ok' ? safeCall(() => sim.api?.getUtilityRadii?.()) : null;
+  const cellsR = radii ? (b.kind === 'power_plant' ? radii.power : b.kind === 'water_tower' ? radii.water : null) : null;
+  if (cellsR == null) { mesh.visible = false; return; }
+  const ci = b.i + ((b.w || 1) >> 1), cj = b.j + ((b.d || 1) >> 1);
+  const bounds = rectBounds(ctx, ci - cellsR, cj - cellsR, ci + cellsR, cj + cellsR);
+  mesh.position.set(bounds.cx, bounds.y + 0.15, bounds.cz);
+  mesh.scale.set(bounds.w, 0.15, bounds.d);
+  mesh.material = ghostMat(ctx, b.kind === 'power_plant' ? 'transYellow' : 'transBlue');
+  mesh.visible = true;
 }
 
 // ---- public api -------------------------------------------------------------------------------------------
@@ -692,7 +725,7 @@ export default {
     S.group.name = 'tools';
     ctx.scene.add(S.group);
     S.ghosts = buildGhosts(ctx);
-    S.group.add(S.ghosts.ribbon, S.ghosts.rect, S.ghosts.point);
+    S.group.add(S.ghosts.ribbon, S.ghosts.rect, S.ghosts.point, S.ghosts.coverage);
 
     const el = ctx.renderer.domElement;
     S.onPointerDown = onPointerDown; S.onPointerMove = onPointerMove; S.onPointerUp = onPointerUp; S.onPointerLeave = onPointerLeave; S.onKeyDown = onKeyDown;
@@ -703,6 +736,10 @@ export default {
     window.addEventListener('keydown', S.onKeyDown);
     S.unsub.push(ctx.events.on('tool:selected', onToolSelected));
     S.unsub.push(ctx.events.on('time:changed', refreshGhostEmissiveForTime));
+    S.unsub.push(ctx.events.on('inspect:closed', () => { S.selectedBuildingId = null; hideCoverageRing(); }));
+    S.unsub.push(ctx.events.on('building:removed', ({ building }) => {
+      if (building?.id === S.selectedBuildingId) { S.selectedBuildingId = null; hideCoverageRing(); uiApi(ctx)?.setInfoPanel?.(null); }
+    }));
   },
 
   update(dt, ctx) {
@@ -730,7 +767,7 @@ export default {
     if (S.ghosts) { S.ghosts.boxGeo.dispose(); S.ghosts.cylGeo.dispose(); }
     if (S.group) ctx.scene.remove(S.group);
     Object.assign(S, {
-      ctx: null, group: null, ghosts: null, tool: null, drag: null, pointerId: null, clickStart: null,
+      ctx: null, group: null, ghosts: null, tool: null, drag: null, pointerId: null, clickStart: null, selectedBuildingId: null,
       pointer: { over: false, lastClient: null }, showcaseExtra: null, unsub: [],
       onPointerDown: null, onPointerMove: null, onPointerUp: null, onPointerLeave: null, onKeyDown: null,
     });

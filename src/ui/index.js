@@ -1,6 +1,6 @@
 // UI module: AAA-style Lego city-builder HUD rendered into ctx.dom (#ui-root). DOM only — zero draw calls in the game.
 import { CSS } from './styles.js';
-import { Hud } from './hud.js';
+import { Hud, h, fmtMoney } from './hud.js';
 import { Minimap } from './minimap.js';
 import { stageBackdrop, sampleInfoCard } from './showcase.js';
 
@@ -21,6 +21,77 @@ function applyStats(stats) {
   if (stats.powerCoverage !== undefined || stats.waterCoverage !== undefined) {
     S.hud.setUtilities(stats.powerCoverage || 0, stats.waterCoverage || 0);
   }
+}
+
+function simApi(ctx) { const m = ctx.modules.get('simulation'); return m?.status === 'ok' ? m.api : null; }
+const pct = (v) => `${Math.round(Math.max(0, Math.min(1, v || 0)) * 100)}%`;
+const num = (v) => Math.round(v || 0).toLocaleString('en-US');
+
+function buildTreasuryModal(ctx) {
+  const sim = simApi(ctx);
+  if (!sim) return h('p', {}, 'Simulation unavailable.');
+  const st = sim.getStats(), bud = sim.getBudget(), tax = sim.getTaxRate();
+  const body = h('div', {},
+    h('div', { class: 'lc-kv' },
+      h('span', {}, 'Treasury'), h('span', {}, fmtMoney(st.money)),
+      h('span', {}, 'Income / day'), h('span', {}, fmtMoney(bud.perDay.income.total)),
+      h('span', {}, 'Expenses / day'), h('span', {}, fmtMoney(bud.perDay.expenses.total)),
+      h('span', {}, 'Net / day'), h('span', {}, fmtMoney(bud.perDay.net))),
+    h('h4', {}, 'Debt'),
+    h('div', { class: 'lc-bar debt' }, h('i', { style: `width:${Math.round(st.debt * 100)}%` })),
+    h('h4', {}, 'Tax rates'));
+  for (const [zone, label] of [['r', 'Residential'], ['c', 'Commercial'], ['i', 'Industrial']]) {
+    const pctLbl = h('span', {}, `${Math.round(tax[zone] * 100)}%`);
+    const slider = h('input', { type: 'range', min: '0', max: '0.3', step: '0.01', value: String(tax[zone]) });
+    slider.addEventListener('input', () => {
+      sim.setTaxRate(zone, parseFloat(slider.value));
+      pctLbl.textContent = `${Math.round(parseFloat(slider.value) * 100)}%`;
+    });
+    body.append(h('div', { class: 'lc-slider-row' }, h('div', { class: 'lc-slider-head' }, h('span', {}, label), pctLbl), slider));
+  }
+  return body;
+}
+
+function buildPopulationModal(ctx) {
+  const sim = simApi(ctx);
+  if (!sim) return h('p', {}, 'Simulation unavailable.');
+  const st = sim.getStats();
+  return h('div', {},
+    h('div', { class: 'lc-kv' },
+      h('span', {}, 'Population'), h('span', {}, num(st.population)),
+      h('span', {}, 'Housing capacity'), h('span', {}, num(st.capacity.r)),
+      h('span', {}, 'Occupancy'), h('span', {}, pct(st.occupancy.r)),
+      h('span', {}, 'Housing demand'), h('span', {}, pct(st.demand.r)),
+      h('span', {}, 'Happiness'), h('span', {}, pct(st.happiness)),
+      h('span', {}, 'Park access'), h('span', {}, pct(st.parkShare)),
+      h('span', {}, 'City level'), h('span', {}, st.cityLevelName)));
+}
+
+function buildJobsModal(ctx) {
+  const sim = simApi(ctx);
+  if (!sim) return h('p', {}, 'Simulation unavailable.');
+  const st = sim.getStats();
+  return h('div', {},
+    h('div', { class: 'lc-kv' },
+      h('span', {}, 'Total jobs'), h('span', {}, num(st.jobs)),
+      h('span', {}, 'Workforce'), h('span', {}, num(st.workforce)),
+      h('span', {}, 'Employment'), h('span', {}, pct(st.employment))),
+    h('h4', {}, 'Commercial'),
+    h('div', { class: 'lc-kv' },
+      h('span', {}, 'Jobs'), h('span', {}, num(st.jobsC)),
+      h('span', {}, 'Capacity'), h('span', {}, num(st.capacity.c)),
+      h('span', {}, 'Occupancy'), h('span', {}, pct(st.occupancy.c))),
+    h('h4', {}, 'Industrial'),
+    h('div', { class: 'lc-kv' },
+      h('span', {}, 'Jobs'), h('span', {}, num(st.jobsI)),
+      h('span', {}, 'Capacity'), h('span', {}, num(st.capacity.i)),
+      h('span', {}, 'Occupancy'), h('span', {}, pct(st.occupancy.i))));
+}
+
+function openStatModal(key) {
+  if (key === 'money') S.hud.openModal('Treasury', buildTreasuryModal(S.ctx));
+  else if (key === 'pop') S.hud.openModal('Population', buildPopulationModal(S.ctx));
+  else if (key === 'jobs') S.hud.openModal('Jobs', buildJobsModal(S.ctx));
 }
 
 function setSpeed(mode) {
@@ -48,6 +119,11 @@ function moveCameraTo(x, z) {
 }
 
 function onKey(e) {
+  // Escape must close the stat modal even while a tax slider inside it has focus (the INPUT guard below exists so
+  // typing in a form field doesn't trigger game shortcuts, but Escape-to-close is the standard form-field
+  // convention anyway, and without this carve-out closing the modal by keyboard is impossible right after
+  // dragging a slider).
+  if (e.code === 'Escape' && S.hud?.isModalOpen()) { S.hud.closeModal(); return; }
   const t = e.target;
   if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
   if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -55,6 +131,7 @@ function onKey(e) {
   const clock = S.ctx.clock;
   switch (e.code) {
     case 'Escape':
+      if (S.hud.isModalOpen()) { S.hud.closeModal(); break; } // stat window takes priority, same as the settings popover
       if (S.hud.isSettingsOpen()) { S.hud.toggleSettings(false); break; } // first Esc only closes the popover
       selectTool(null); S.hud.setInfoPanel(null); break;
     case 'Space': clock.paused = !clock.paused; e.preventDefault(); break;
@@ -85,6 +162,8 @@ const api = {
   setTool: (tool) => selectTool(tool),
   getTool: () => S.tool,
   isSettingsOpen: () => S.hud?.isSettingsOpen() ?? false,
+  isModalOpen: () => S.hud?.isModalOpen() ?? false,
+  isInfoPanelOpen: () => S.hud?.isInfoPanelOpen() ?? false,
   getSettings: () => ({ ...S.settings }),
   setHudVisible: (v) => setHudVisible(v),
   isHudVisible: () => S.hudVisible,
@@ -120,6 +199,7 @@ export default {
       quality: (q) => { S.settings.quality = q; S.hud.setQuality(q); ctx.events.emit('settings:changed', { quality: q }); },
       studs: (on) => { S.settings.studs = !!on; S.hud.setStuds(on); ctx.events.emit('settings:changed', { studs: !!on }); },
       toggleUi: () => setHudVisible(!S.hudVisible),
+      statClick: (key) => openStatModal(key),
     });
     dom.appendChild(S.hud.el);
     S.hud.setQuality(S.settings.quality);

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { generateBuilding } from './generator.js';
 import { BuildingBatcher } from './batching.js';
+import { UnservedIndicators } from './indicators.js';
 import { stageDefault, stageLevels, stageNight } from './showcase.js';
 
 // buildings — procedurally generates and renders Lego-style buildings for world.buildings records, and (in the
@@ -40,7 +41,7 @@ const REBUILD_BUDGET_MS = 2.5;
 const LEVEL_UP_BUDGET_MS = 2;
 
 const S = {
-  ctx: null, group: null, batcher: null, dynMats: null, rng: null, unsub: [],
+  ctx: null, group: null, batcher: null, indicators: null, dynMats: null, rng: null, unsub: [],
   pendingDirty: false, lastEvent: 0, growthAcc: 0, growthTick: 0, growthRng: null,
   tweens: [], variant: null, closeupTarget: null,
   levelUpQueue: [], levelUpQueued: null, // null placeholder; set() in init() (needs a real Set instance)
@@ -296,11 +297,19 @@ export default {
     ctx.scene.add(S.group);
     S.dynMats = makeDynMats(ctx);
     S.batcher = new BuildingBatcher(ctx, S.group, S.dynMats);
+    S.indicators = new UnservedIndicators();
+    S.group.add(S.indicators.group);
     S.pendingDirty = false; S.growthAcc = 0; S.growthTick = 0; S.tweens.length = 0; S.closeupTarget = null; S.stageBounds = null;
     S.levelUpQueue.length = 0; S.levelUpQueued = new Set();
 
     S.unsub.push(ctx.events.on('building:spawned', ({ building }) => regenerateBuilding(ctx, building)));
     S.unsub.push(ctx.events.on('building:removed', ({ building }) => { S.batcher.remove(building.id); markDirty(); }));
+    S.unsub.push(ctx.events.on('sim:tick', () => {
+      const sim = ctx.modules.get('simulation');
+      if (sim?.status === 'ok' && typeof sim.api?.getUnservedBuildings === 'function') {
+        S.indicators.sync(sim.api.getUnservedBuildings() || [], S.batcher);
+      }
+    }));
     S.unsub.push(ctx.events.on('time:changed', ({ isNight, daylight }) => updateNight(ctx, isNight, daylight)));
     updateNight(ctx, ctx.clock.isNight, ctx.clock.daylight);
 
@@ -345,6 +354,8 @@ export default {
     S.tweens.length = 0;
     S.batcher?.dispose();
     S.batcher = null;
+    S.indicators?.dispose();
+    S.indicators = null;
     S.levelUpQueue.length = 0;
     S.levelUpQueued = null;
     if (S.group) ctx.scene.remove(S.group);

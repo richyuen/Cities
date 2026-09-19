@@ -58,15 +58,17 @@ export class Hud {
     const root = this.el = h('div', { class: 'lc-hud', style: 'pointer-events:none' });
 
     // ---- top-left: brand + stats ----
-    const stat = (key, label, icon) => {
+    const stat = (key, label, icon, onClick) => {
       const value = h('div', { class: 'lc-stat-value lc-num' }, '—');
       const ico = h('div', { class: `lc-stat-ico ${key}`, html: icon });
-      const el = h('div', { class: 'lc-stat' }, ico, h('div', { class: 'lc-stat-txt' }, h('div', { class: 'lc-stat-label' }, label), value));
+      const attrs = { class: `lc-stat${onClick ? ' clickable' : ''}` };
+      if (onClick) { attrs.onclick = onClick; attrs.tabIndex = '0'; attrs.title = `${label} details`; }
+      const el = h('div', attrs, ico, h('div', { class: 'lc-stat-txt' }, h('div', { class: 'lc-stat-label' }, label), value));
       return { el, value, ico };
     };
-    this.money = stat('money', 'Treasury', icons.money);
-    this.pop = stat('pop', 'Population', icons.pop);
-    this.jobs = stat('jobs', 'Jobs', icons.jobs);
+    this.money = stat('money', 'Treasury', icons.money, () => this.on.statClick?.('money'));
+    this.pop = stat('pop', 'Population', icons.pop, () => this.on.statClick?.('pop'));
+    this.jobs = stat('jobs', 'Jobs', icons.jobs, () => this.on.statClick?.('jobs'));
     this.happy = stat('happy', 'Happiness', icons.happy(2));
     root.append(h('div', { class: 'lc-panel lc-top-left' },
       h('div', { class: 'lc-studs' }),
@@ -128,12 +130,23 @@ export class Hud {
     this.info = h('div', { class: 'lc-panel lc-info' },
       h('div', { class: 'lc-studs' }),
       h('div', { class: 'lc-info-head' }, h('div', { class: 'lc-info-title' }, 'Inspect'),
-        h('button', { class: 'lc-close', html: icons.close, title: 'Close', onclick: () => this.setInfoPanel(null) })),
+        h('button', { class: 'lc-close', html: icons.close, title: 'Close', onclick: () => { this.setInfoPanel(null); this.ctx.events.emit('inspect:closed'); } })),
       this.infoBody);
     this.tooltip = h('div', { class: 'lc-tooltip' });
     this.statusTxt = h('span', {});
     this.status = h('div', { class: 'lc-status' }, this.statusTxt);
     root.append(this.toasts, this.info, this.tooltip, this.status);
+
+    // ---- generic modal (Treasury/Population/Jobs status windows) ----
+    this.modalTitle = h('div', { class: 'lc-info-title' }, '');
+    this.modalBody = h('div', { class: 'lc-info-body' });
+    this.modalCard = h('div', { class: 'lc-panel lc-modal' },
+      h('div', { class: 'lc-studs' }),
+      h('div', { class: 'lc-info-head' }, this.modalTitle,
+        h('button', { class: 'lc-close', html: icons.close, title: 'Close', onclick: () => this.closeModal() })),
+      this.modalBody);
+    this.modalOverlay = h('div', { class: 'lc-modal-overlay', onclick: (e) => { if (e.target === this.modalOverlay) this.closeModal(); } }, this.modalCard);
+    root.append(this.modalOverlay);
 
     // ---- RCI ----
     this.rci = {};
@@ -300,6 +313,15 @@ export class Hud {
     if (this.infoBody._html !== html) { this.infoBody._html = html; this.infoBody.innerHTML = html; }
     this.info.classList.add('open');
   }
+
+  openModal(title, bodyNode) {
+    setText(this.modalTitle, title);
+    this.modalBody.replaceChildren(bodyNode);
+    this.modalOverlay.classList.add('open');
+  }
+  closeModal() { this.modalOverlay.classList.remove('open'); }
+  isModalOpen() { return this.modalOverlay.classList.contains('open'); }
+  isInfoPanelOpen() { return this.info.classList.contains('open'); }
 
   setStatus(text) {
     if (!text) { this.status.classList.remove('open'); return; }
