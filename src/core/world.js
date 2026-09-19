@@ -2,6 +2,11 @@ import * as THREE from 'three';
 
 // Shared world data model. All mutations go through methods here and emit events. Deterministic ids.
 
+// Road-overlap guard (see World.roadOverlapFraction): a new road is only blocked when it runs alongside an
+// existing one for most of its length — a crossing/T-intersection is nowhere near parallel, so it's let through.
+const PARALLEL_COS_TOL = Math.cos((20 * Math.PI) / 180);
+const ROAD_OVERLAP_BLOCK_FRACTION = 0.6;
+
 export class World {
   constructor(events, { w = 256, h = 256, cellSize = 8 } = {}) {
     this.events = events;
@@ -63,6 +68,13 @@ export class World {
     const w1 = this.size.w + 1;
     if (i < 0 || j < 0 || i > this.size.w || j > this.size.h) return;
     this.heightField[j * w1 + i] = h;
+  }
+
+  /** Mirrors terrain/data.js TerrainData.isWaterCell (same heightField, same -0.01 threshold) — kept here too so
+   * road removal can tell water apart from dry land without a core -> terrain module dependency. */
+  _isWaterCell(i, j) {
+    const w1 = this.size.w + 1, hf = this.heightField, k = j * w1 + i;
+    return (hf[k] + hf[k + 1] + hf[k + w1] + hf[k + w1 + 1]) * 0.25 < -0.01;
   }
 
   /** Bulk set heightField (terrain module), then emits terrain:changed for the whole map. */
@@ -254,8 +266,41 @@ export class World {
     path: { lanes: 0, width: 3 },
   };
 
-  addRoad(a, b, kind = 'street') {
+  /** Fraction (0..1) of segment a->b that runs alongside (not merely crosses) an existing road of the given
+   * kind's width. Parallel-ish edges within lateral reach of each other contribute their along-axis overlap
+   * length; a crossing edge (near-perpendicular) contributes nothing, however many cells it shares. */
+  roadOverlapFraction(a, b, kind = 'street') {
     const spec = World.ROAD_SPECS[kind] || World.ROAD_SPECS.street;
+    const dx = b.x - a.x, dz = b.z - a.z, len = Math.hypot(dx, dz);
+    if (!(len > 1e-6)) return 0;
+    const dirx = dx / len, dirz = dz / len;
+    let overlapLen = 0;
+    for (const e of this.roads.edges.values()) {
+      const na = this.roads.nodes.get(e.a), nb = this.roads.nodes.get(e.b);
+      if (!na || !nb) continue;
+      const edx = nb.x - na.x, edz = nb.z - na.z, elen = Math.hypot(edx, edz);
+      if (!(elen > 1e-6)) continue;
+      const edirx = edx / elen, ediz = edz / elen;
+      const cosA = Math.abs(dirx * edirx + dirz * ediz);
+      if (cosA < PARALLEL_COS_TOL) continue; // crossing, not running alongside — never blocks
+      const nx = -ediz, nz = edirx; // unit normal to the existing edge
+      const distA = (a.x - na.x) * nx + (a.z - na.z) * nz;
+      const distB = (b.x - na.x) * nx + (b.z - na.z) * nz;
+      const maxLateral = (spec.width + e.width) / 2 + 1; // +1m slack
+      if (Math.min(Math.abs(distA), Math.abs(distB)) > maxLateral) continue;
+      const ta = (a.x - na.x) * edirx + (a.z - na.z) * ediz;
+      const tb = (b.x - na.x) * edirx + (b.z - na.z) * ediz;
+      const lo = Math.max(0, Math.min(ta, tb)), hi = Math.min(elen, Math.max(ta, tb));
+      if (hi > lo) overlapLen += hi - lo;
+    }
+    return Math.min(1, overlapLen / len);
+  }
+
+  roadOverlapBlocked(a, b, kind) { return this.roadOverlapFraction(a, b, kind) > ROAD_OVERLAP_BLOCK_FRACTION; }
+
+  addRoad(a, b, kind = 'street', { bridge = false } = {}) {
+    const spec = World.ROAD_SPECS[kind] || World.ROAD_SPECS.street;
+    if (this.roadOverlapBlocked(a, b, kind)) return null;
     const na = this._findOrCreateNode(a.x, a.z);
     const nb = this._findOrCreateNode(b.x, b.z);
     if (na === nb) return null;
@@ -264,7 +309,7 @@ export class World {
       if (e && ((e.a === na.id && e.b === nb.id) || (e.a === nb.id && e.b === na.id))) return eid;
     }
     const id = `e${this._ids.edge++}`;
-    const edge = { id, a: na.id, b: nb.id, kind, lanes: spec.lanes, width: spec.width };
+    const edge = { id, a: na.id, b: nb.id, kind, lanes: spec.lanes, width: spec.width, bridge: !!bridge };
     this.roads.edges.set(id, edge);
     na.edges.push(id); nb.edges.push(id);
     this._markRoadCells(edge, id);
@@ -289,7 +334,7 @@ export class World {
         if (roadId) {
           if (c.type !== 'road') { c.type = 'road'; c.zone = null; c.density = 0; c.roadId = roadId; }
         } else if (c.roadId === edge.id) {
-          c.type = 'none'; c.roadId = null;
+          c.type = this._isWaterCell(i, j) ? 'water' : 'none'; c.roadId = null;
         }
       }
     }
@@ -343,7 +388,11 @@ export class World {
     for (let j = b.j; j < b.j + b.d; j++) {
       for (let i = b.i; i < b.i + b.w; i++) {
         const c = this.cellAt(i, j);
-        if (c) { c.buildingId = id; if (c.type === 'none' || c.type === 'zone') c.type = 'building'; }
+        if (c) {
+          c.buildingId = id;
+          if (c.type === 'none' || c.type === 'zone') c.type = 'building';
+          if (!b.zone && c.zone) { c.zone = null; c.density = 0; } // non-RCI building consumes any prior zoning
+        }
       }
     }
     this.events.emit('building:spawned', { building: b });

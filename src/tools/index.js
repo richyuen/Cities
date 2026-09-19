@@ -22,6 +22,8 @@ const ROAD_LABEL = { street: 'Street', avenue: 'Avenue', highway: 'Highway', pat
 const ZONE_LABEL = { r: 'Residential', c: 'Commercial', i: 'Industrial' };
 const AREA_LABEL = { park: 'Park', trees: 'Trees', plaza: 'Plaza' };
 const MIN_ROAD_LEN = 4; // meters — shorter drags are treated as a no-op tap, not an error
+const BRIDGE_MAX_SPAN_M = 200; // longest contiguous run of water a bridge may cross in one drag
+const BRIDGE_COST_MULTIPLIER = 3; // construction premium applied to a road drag that crosses water
 // Fixed-footprint civic structures, placed with a single click (not drag-painted like roads/zones/areas).
 const UTILITY_DEF = {
   power: { kind: 'power_plant', label: 'Power Plant', w: 3, d: 3, cost: 8000 },
@@ -89,17 +91,34 @@ function snapRoadPoint(ctx, x, z) {
   return gridSnap(ctx.world, x, z);
 }
 
-function roadPathBuildable(ctx, a, b) {
+/** Samples a-b every ~8m. A path may cross water as a bridge, but only if both ends anchor on dry land and no
+ * single contiguous water run is longer than BRIDGE_MAX_SPAN_M — otherwise it's rejected like any other water
+ * block. `crossesWater` tells the caller whether to mark the resulting edge as a bridge / charge the premium. */
+function roadCrossingInfo(ctx, a, b) {
   const world = ctx.world;
   const dx = b.x - a.x, dz = b.z - a.z, len = Math.hypot(dx, dz) || 1;
   const steps = Math.max(1, Math.ceil(len / 8));
+  const stepLen = len / steps;
+  let crossesWater = false, ok = true, waterRun = 0, maxWaterRun = 0;
   for (let s = 0; s <= steps; s++) {
     const t = s / steps;
     const c = world.cellAtWorld(a.x + dx * t, a.z + dz * t);
-    if (!c || c.type === 'water') return false;
+    if (!c) { ok = false; break; }
+    const isWater = c.type === 'water';
+    if (isWater) {
+      crossesWater = true;
+      waterRun += s === 0 ? 0 : stepLen;
+      maxWaterRun = Math.max(maxWaterRun, waterRun);
+      if (s === 0 || s === steps) ok = false; // must anchor on dry land at both ends
+    } else {
+      waterRun = 0;
+    }
   }
-  return true;
+  if (maxWaterRun > BRIDGE_MAX_SPAN_M) ok = false;
+  return { ok, crossesWater };
 }
+
+function roadPathBuildable(ctx, a, b) { return roadCrossingInfo(ctx, a, b).ok; }
 
 function roadGhostGeom(ctx, kind, a, b) {
   const dx = b.x - a.x, dz = b.z - a.z;
@@ -111,8 +130,9 @@ function roadGhostGeom(ctx, kind, a, b) {
   let midy;
   if (roads?.status === 'ok' && typeof roads.api?.heightAt === 'function') { try { midy = roads.api.heightAt(midx, midz); } catch (_) { midy = ctx.world.getHeight(midx, midz); } }
   else midy = ctx.world.getHeight(midx, midz);
-  const valid = length >= MIN_ROAD_LEN && roadPathBuildable(ctx, a, b);
-  const cost = Math.round(length * (PRICE_PER_M[kind] ?? 100));
+  const crossing = roadCrossingInfo(ctx, a, b);
+  const valid = length >= MIN_ROAD_LEN && crossing.ok && !ctx.world.roadOverlapBlocked(a, b, kind);
+  const cost = Math.round(length * (PRICE_PER_M[kind] ?? 100) * (crossing.crossesWater ? BRIDGE_COST_MULTIPLIER : 1));
   return { length, width, mid: { x: midx, y: midy + 0.25, z: midz }, angle: Math.atan2(dz, dx), valid, cost };
 }
 
@@ -154,13 +174,14 @@ function cellBuildable(ctx, i, j) {
   return !!c && c.type !== 'water';
 }
 
-/** A fixed-footprint civic structure needs every cell empty (not road/zone/park/building), unlike zone painting
- * which may overwrite bare terrain freely — this is a permanent, non-zoned placement. */
+/** A fixed-footprint civic structure needs every cell free of an existing building — bare 'none' land or
+ * zoned-but-unbuilt 'zone' land are both fine (placing here uses up any prior zoning, see World.addBuilding),
+ * matching how RCI auto-growth treats zoned-empty cells as available. Road/park/building cells still block. */
 function stampBuildable(ctx, i0, j0, w, d) {
   for (let j = j0; j < j0 + d; j++) {
     for (let i = i0; i < i0 + w; i++) {
       const c = ctx.world.cellAt(i, j);
-      if (!c || c.type !== 'none' || !cellBuildable(ctx, i, j)) return false;
+      if (!c || c.buildingId || !(c.type === 'none' || c.type === 'zone') || !cellBuildable(ctx, i, j)) return false;
     }
   }
   return true;
@@ -437,11 +458,13 @@ function finishRoad(d) {
   const { a, b, kind } = d;
   const length = Math.hypot(b.x - a.x, b.z - a.z);
   if (length < MIN_ROAD_LEN) return; // a tap, not a drag: silent no-op
-  if (!roadPathBuildable(ctx, a, b)) { fail('Cannot build there — blocked by water', a); return; }
-  const cost = Math.round(length * (PRICE_PER_M[kind] ?? 100));
+  const crossing = roadCrossingInfo(ctx, a, b);
+  if (!crossing.ok) { fail('Cannot build there — blocked by water', a); return; }
+  if (ctx.world.roadOverlapBlocked(a, b, kind)) { fail('A road already runs along this path', a); return; }
+  const cost = Math.round(length * (PRICE_PER_M[kind] ?? 100) * (crossing.crossesWater ? BRIDGE_COST_MULTIPLIER : 1));
   if (currentMoney(ctx) < cost) { fail(`Insufficient funds — need $${cost.toLocaleString()}`, a); return; }
   let edgeId;
-  try { edgeId = ctx.world.addRoad({ x: a.x, z: a.z }, { x: b.x, z: b.z }, kind); }
+  try { edgeId = ctx.world.addRoad({ x: a.x, z: a.z }, { x: b.x, z: b.z }, kind, { bridge: crossing.crossesWater }); }
   catch (e) { ctx.error('[tools] addRoad failed:', e); fail('Road placement failed', a); return; }
   if (!edgeId) { fail('Road placement failed', a); return; }
   spendMoney(ctx, cost);

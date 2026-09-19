@@ -58,6 +58,7 @@ export function kindSpec(kind) { return KINDS[kind] || KINDS.street; }
 const STATION = 4;            // metres between profile samples along an edge
 const ARC_N = 8;              // points per fillet arc
 const TRIM_PAD = 0.02;
+const BRIDGE_CLEARANCE = 1.5; // metres above sea level a bridge deck's endpoints are held to at minimum
 
 function num(v, fallback = 0) { return Number.isFinite(v) ? v : fallback; }
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -95,6 +96,7 @@ export function buildNetwork(world, groundAt) {
     edges.set(e.id, {
       id: e.id, kind: e.kind, spec, a: e.a, b: e.b, ax: na.x, az: na.z, bx: nb.x, bz: nb.z, d, right, L,
       w: spec.width / 2, sw: spec.sidewalk, trimA: 0, trimB: 0, stations: null, ys: null, ya: 0, yb: 0,
+      bridge: !!e.bridge,
     });
   }
 
@@ -129,7 +131,7 @@ export function buildNetwork(world, groundAt) {
   }
 
   // --- pass 3: edge profiles ------------------------------------------------------------
-  for (const f of edges.values()) buildProfile(ground, f);
+  for (const f of edges.values()) buildProfile(ground, f, world.seaLevel);
 
   return { edges, nodes };
 }
@@ -390,11 +392,21 @@ function footOnLine(O, node, A, off, side) {
   return { x: P.x + A.d.x * t, z: P.z + A.d.z * t };
 }
 
-/** Edge profile: never below the rendered terrain anywhere under the footprint, smoothed, blended into node heights. */
-function buildProfile(ground, f) {
+/** Edge profile: never below the rendered terrain anywhere under the footprint, smoothed, blended into node heights.
+ * A bridge edge skips terrain-following entirely: its two endpoint heights (f.ya/f.yb, the real shore heights —
+ * bridges are only ever placed with both ends on dry land) are held to at least BRIDGE_CLEARANCE above sea level
+ * and linearly interpolated, which is always >= that floor at every point in between since both ends are. */
+function buildProfile(ground, f, seaLevel = 0) {
   const L = f.L;
   let s0 = Math.min(f.trimA, L * 0.5), s1 = Math.max(L - f.trimB, L * 0.5);
   if (s1 - s0 < 0.5) { s0 = L * 0.5 - 0.25; s1 = L * 0.5 + 0.25; }
+  if (f.bridge) {
+    const minY = seaLevel + BRIDGE_CLEARANCE;
+    f.stations = [s0, s1];
+    f.ys = [Math.max(f.ya, minY), Math.max(f.yb, minY)];
+    f.s0 = s0; f.s1 = s1;
+    return;
+  }
   const st = [s0];
   for (let s = Math.ceil(s0 / STATION) * STATION; s < s1 - 0.5; s += STATION) if (s > s0 + 0.5) st.push(s);
   st.push(s1);
