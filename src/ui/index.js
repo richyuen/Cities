@@ -18,6 +18,9 @@ function applyStats(stats) {
   if (stats.population !== undefined) S.hud.setPop(stats.population);
   if (stats.jobs !== undefined) S.hud.setJobs(stats.jobs);
   if (stats.happiness !== undefined) S.hud.setHappiness(stats.happiness);
+  if (stats.powerCoverage !== undefined || stats.waterCoverage !== undefined) {
+    S.hud.setUtilities(stats.powerCoverage || 0, stats.waterCoverage || 0);
+  }
 }
 
 function setSpeed(mode) {

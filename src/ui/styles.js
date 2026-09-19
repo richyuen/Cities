@@ -228,6 +228,12 @@ export const CSS = `
 .lc-rci-lbl { font-family: var(--lc-display); font-size: 12px; font-weight: 900; text-shadow: 0 1px 0 rgba(0,0,0,0.6); }
 .lc-rci-col.r .lc-rci-lbl { color: #8ad989; } .lc-rci-col.c .lc-rci-lbl { color: #74b9f2; } .lc-rci-col.i .lc-rci-lbl { color: #ffb46a; }
 
+/* ---------- utilities coverage (stacked above RCI, bottom-left) ---------- */
+.lc-utilities { left: 16px; bottom: 168px; width: 124px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.lc-util-row { display: flex; align-items: center; justify-content: space-between; font-size: 12px; font-weight: 700; }
+.lc-util-lbl { color: var(--lc-muted); }
+.lc-util-pct { font-family: var(--lc-display); font-weight: 900; }
+
 /* ---------- status line: bottom-centre, directly above the toolbar (never under it) ---------- */
 .lc-status { position: absolute; left: 50%; bottom: 126px; transform: translateX(-50%); pointer-events: auto; display: none; align-items: center; gap: 8px; height: 32px; padding: 0 14px 0 10px;
   max-width: min(640px, calc(100vw - 420px)); background: linear-gradient(180deg, rgba(70, 76, 87, 0.95), rgba(34, 39, 47, 0.96)); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);

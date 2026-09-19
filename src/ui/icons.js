@@ -98,6 +98,13 @@ export const icons = {
     <rect x="3.5" y="3.5" width="8" height="8" rx="1" fill="${TAN}"/><rect x="12.5" y="3.5" width="8" height="8" rx="1" fill="${TAN}"/><rect x="3.5" y="12.5" width="8" height="8" rx="1" fill="${TAN}"/><rect x="12.5" y="12.5" width="8" height="8" rx="1" fill="${TAN}"/>
     <circle cx="12" cy="12" r="4.2" fill="#6fb7ff" ${O}/><circle cx="12" cy="12" r="1.8" fill="#dff1ff"/>`),
 
+  // ---- tools: utilities ----
+  'utility:power': svg(`<rect x="3.5" y="11" width="17" height="9.5" rx="1.5" fill="${GREY}" ${O}/><rect x="14.5" y="4.5" width="3.2" height="7.5" rx="1" fill="${GREY}" ${O}/>
+    <path d="M12.6 10.5 9 16h2.6L10 21l5.4-6.8h-2.7l2.3-3.7z" fill="${YEL}" ${O}/>`),
+  'utility:water': svg(`<path d="M6.5 21 9 12" stroke="${GREY}" stroke-width="2.3" stroke-linecap="round"/><path d="M17.5 21 15 12" stroke="${GREY}" stroke-width="2.3" stroke-linecap="round"/>
+    <path d="M8 16.5h8" stroke="${GREY}" stroke-width="2" stroke-linecap="round"/>
+    <rect x="6.5" y="6" width="11" height="7.5" rx="2" fill="${BLUE}" ${O}/><ellipse cx="12" cy="6" rx="5.5" ry="2.1" fill="#6fb7ff" ${O}/>`),
+
   // ---- tools: misc ----
   bulldoze: svg(`<rect x="8" y="9" width="10" height="7.5" rx="1.6" fill="${YEL}" ${O}/><rect x="10" y="5.5" width="6" height="4.5" rx="1" fill="${YEL}" ${O}/><rect x="11" y="6.6" width="4" height="2.3" fill="#a6d8ec"/>
     <path d="M8 12.5H5.2V18" stroke="${GREY}" stroke-width="2.4" stroke-linecap="round"/><rect x="2.4" y="11.5" width="3" height="7.5" fill="#8d9296" ${O}/>

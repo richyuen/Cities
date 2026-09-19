@@ -14,6 +14,10 @@ export const TAX_YIELD = { r: 0.08, c: 0.18, i: 0.15 };
 export const UPKEEP = { road: 0.15, building: 0.08 };
 export const WORKFORCE_SHARE = 0.55;
 export const PARK_RADIUS = 6;                 // cells (Chebyshev)
+export const POWER_RADIUS = 18;                // cells (Chebyshev) — one plant covers a real district
+export const WATER_RADIUS = 14;                // cells (Chebyshev)
+export const UNSERVED_OCC_CAP = 0.22;          // occupancy ceiling for a building missing power or water
+export const UPKEEP_UTILITY = { power_plant: 4.5, water_tower: 2 };  // money/tick, each
 /** money feedback: debt of DEBT_SCALE = full service degradation; wealth of WEALTH_SCALE = full wealth bonus */
 export const DEBT_SCALE = 120000;
 export const WEALTH_SCALE = 250000;
@@ -72,10 +76,13 @@ export class SimModel {
     this.byId = new Map();
     this.dirtyStatic = true;
     this.parkCoverage = null;
+    this.powerCoverage = null;
+    this.waterCoverage = null;
+    this.utilities = [];                               // { id, kind: 'power_plant'|'water_tower', i, j, w, d }
     this.roadCells = 0;
     this.growth = [];                                 // building ids that should level up (refreshed per tick)
     this.newCandidates = [];                          // ids that became candidates this tick
-    this.budget = { income: { r: 0, c: 0, i: 0, total: 0 }, expenses: { roads: 0, buildings: 0, total: 0 }, net: 0 };
+    this.budget = { income: { r: 0, c: 0, i: 0, total: 0 }, expenses: { roads: 0, buildings: 0, utilities: 0, total: 0 }, net: 0 };
     this.debt = 0;                                    // 0..1 service degradation from a negative treasury
     this.wealth = 0;                                  // 0..1 bonus from a healthy treasury
     this.bankruptTicks = 0;                            // consecutive ticks with debt saturated at 1.0
@@ -87,7 +94,7 @@ export class SimModel {
       population: 0, jobs: 0, money: this.money, happiness: this.happiness, traffic: 0, employment: 1,
       workforce: 0, capacity: { r: 0, c: 0, i: 0 }, occupancy: { r: 0, c: 0, i: 0 }, jobsC: 0, jobsI: 0,
       demand: { r: 0, c: 0, i: 0 }, parkShare: 0, income: 0, expenses: 0, buildings: 0, roads: 0, net: 0, debt: 0, wealth: 0, services: 1,
-      bankrupt: false, bankruptTicks: 0,
+      bankrupt: false, bankruptTicks: 0, powerCoverage: 0, waterCoverage: 0,
       day: 1, tick: 0, cityName: this.cityName, cityLevel: 0, cityLevelName: LEVEL_NAMES[0],
     };
   }
@@ -100,13 +107,16 @@ export class SimModel {
     const seed = ((b.seed | 0) ^ Math.imul(idh, 0x27d4eb2f)) | 0;
     return {
       b, occ: this.startOccupancy, rate: 0.005 + 0.012 * hashInt(seed), level: clamp(b.level | 0, 1, 3),
-      mature: 0, nearPark: false, notified: false, cap: 0,
+      mature: 0, nearPark: false, powered: false, watered: false, notified: false, cap: 0,
     };
   }
 
+  _isUtilityKind(kind) { return kind === 'power_plant' || kind === 'water_tower'; }
+
   syncBuildings(world) {
-    this.list.length = 0; this.byId.clear();
+    this.list.length = 0; this.byId.clear(); this.utilities.length = 0;
     for (const b of world.buildings.values()) {
+      if (this._isUtilityKind(b.kind)) { this.utilities.push(b); continue; }
       if (!CAPACITY[b.zone]) continue;
       const s = this._entry(b);
       this.list.push(s); this.byId.set(b.id, s);
@@ -115,14 +125,24 @@ export class SimModel {
   }
 
   addBuilding(b) {
-    if (!b || !CAPACITY[b.zone] || this.byId.has(b.id)) return;
+    if (!b || this.byId.has(b.id)) return;
+    if (this._isUtilityKind(b.kind)) { this.utilities.push(b); this.markDirty(); return; }
+    if (!CAPACITY[b.zone]) return;
     const s = this._entry(b);
     this.list.push(s); this.byId.set(b.id, s);
-    if (this.parkCoverage) s.nearPark = this.parkCoverage[b.j * this._w + b.i] === 1;
-    else this.dirtyStatic = true;
+    if (this.parkCoverage) {
+      s.nearPark = this.parkCoverage[b.j * this._w + b.i] === 1;
+      s.powered = this.powerCoverage ? this.powerCoverage[b.j * this._w + b.i] === 1 : false;
+      s.watered = this.waterCoverage ? this.waterCoverage[b.j * this._w + b.i] === 1 : false;
+    } else this.dirtyStatic = true;
   }
 
   removeBuilding(id) {
+    if (this._isUtilityKind(this.utilities.find((u) => u.id === id)?.kind)) {
+      this.utilities = this.utilities.filter((u) => u.id !== id);
+      this.markDirty();
+      return;
+    }
     const s = this.byId.get(id);
     if (!s) return;
     this.byId.delete(id);
@@ -132,12 +152,19 @@ export class SimModel {
 
   markDirty() { this.dirtyStatic = true; }
 
-  /** Recompute park coverage (cells within PARK_RADIUS of a park cell) and per-building flags. */
+  /** Stamp a 1 within `radius` (Chebyshev cells) of (ci,cj) into `cov` (w×h grid, in-place). */
+  static _stampRadius(cov, w, h, ci, cj, radius) {
+    const i0 = Math.max(0, ci - radius), i1 = Math.min(w - 1, ci + radius);
+    const j0 = Math.max(0, cj - radius), j1 = Math.min(h - 1, cj + radius);
+    for (let j = j0; j <= j1; j++) { const row = j * w; for (let i = i0; i <= i1; i++) cov[row + i] = 1; }
+  }
+
+  /** Recompute park/power/water coverage (cells within radius of a source) and per-building flags. */
   _recomputeStatic(world) {
     const w = world.size.w, h = world.size.h, n = w * h;
     this._w = w;
-    const cov = (this.parkCoverage && this.parkCoverage.length === n) ? this.parkCoverage : new Uint8Array(n);
-    cov.fill(0);
+    const parkCov = (this.parkCoverage && this.parkCoverage.length === n) ? this.parkCoverage : new Uint8Array(n);
+    parkCov.fill(0);
     const cells = world.cells;
     const R = PARK_RADIUS;
     let roadCells = 0;
@@ -146,12 +173,28 @@ export class SimModel {
       if (t === 'road') roadCells++;
       if (t !== 'park') continue;
       const ci = k % w, cj = (k / w) | 0;
-      const i0 = Math.max(0, ci - R), i1 = Math.min(w - 1, ci + R), j0 = Math.max(0, cj - R), j1 = Math.min(h - 1, cj + R);
-      for (let j = j0; j <= j1; j++) { const row = j * w; for (let i = i0; i <= i1; i++) cov[row + i] = 1; }
+      SimModel._stampRadius(parkCov, w, h, ci, cj, R);
     }
-    this.parkCoverage = cov;
+    this.parkCoverage = parkCov;
     this.roadCells = roadCells;
-    for (const s of this.list) s.nearPark = cov[s.b.j * w + s.b.i] === 1;
+
+    const powerCov = (this.powerCoverage && this.powerCoverage.length === n) ? this.powerCoverage : new Uint8Array(n);
+    const waterCov = (this.waterCoverage && this.waterCoverage.length === n) ? this.waterCoverage : new Uint8Array(n);
+    powerCov.fill(0); waterCov.fill(0);
+    for (const b of this.utilities) {
+      const ci = Math.min(w - 1, b.i + ((b.w || 1) >> 1)), cj = Math.min(h - 1, b.j + ((b.d || 1) >> 1));
+      if (b.kind === 'power_plant') SimModel._stampRadius(powerCov, w, h, ci, cj, POWER_RADIUS);
+      else if (b.kind === 'water_tower') SimModel._stampRadius(waterCov, w, h, ci, cj, WATER_RADIUS);
+    }
+    this.powerCoverage = powerCov;
+    this.waterCoverage = waterCov;
+
+    for (const s of this.list) {
+      const idx = s.b.j * w + s.b.i;
+      s.nearPark = parkCov[idx] === 1;
+      s.powered = powerCov[idx] === 1;
+      s.watered = waterCov[idx] === 1;
+    }
     this.dirtyStatic = false;
   }
 
@@ -160,6 +203,7 @@ export class SimModel {
     if (this.dirtyStatic) this._recomputeStatic(world);
     const P = this.pressure, list = this.list;
     let pop = 0, jobsC = 0, jobsI = 0, capR = 0, capC = 0, capI = 0, parkW = 0;
+    let poweredCap = 0, wateredCap = 0, totalCap = 0;
     const growth = this.growth; growth.length = 0;
     const fresh = this.newCandidates; fresh.length = 0;
     // neutral demand → ~80% occupied; strong negative demand empties buildings, positive fills them
@@ -172,7 +216,10 @@ export class SimModel {
       if (lvl !== s.level) { s.level = lvl; s.notified = false; s.mature = 0; s.occ *= 0.6; }
       const cap = CAPACITY[zone][lvl] * b.w * b.d;
       s.cap = cap;
-      const target = zone === 'r' ? tR : zone === 'c' ? tC : tI;
+      const served = s.powered && s.watered;
+      totalCap += cap; if (s.powered) poweredCap += cap; if (s.watered) wateredCap += cap;
+      let target = zone === 'r' ? tR : zone === 'c' ? tC : tI;
+      if (!served) target = Math.min(target, UNSERVED_OCC_CAP);
       s.occ += (target - s.occ) * s.rate;
       const filled = cap * s.occ;
       if (zone === 'r') { pop += filled; capR += cap; if (s.nearPark) parkW += filled; }
@@ -181,7 +228,7 @@ export class SimModel {
       if (s.occ >= 0.9) {
         s.mature++;
         const pz = zone === 'r' ? P.r : zone === 'c' ? P.c : P.i;
-        if (lvl < 3 && s.mature >= 20 && pz > 0.15) {
+        if (served && lvl < 3 && s.mature >= 20 && pz > 0.15) {
           growth.push(b.id);
           if (!s.notified) { s.notified = true; fresh.push(b.id); }
         }
@@ -237,12 +284,14 @@ export class SimModel {
     const incI = jobsI * tax.i * TAX_YIELD.i * pol.incomeMul;
     const expRoads = roads * UPKEEP.road * pol.upkeepMul;
     const expBld = list.length * UPKEEP.building * pol.upkeepMul;
-    const income = incR + incC + incI, expenses = expRoads + expBld;
+    let expUtil = 0;
+    for (const u of this.utilities) expUtil += (UPKEEP_UTILITY[u.kind] || 0) * pol.upkeepMul;
+    const income = incR + incC + incI, expenses = expRoads + expBld + expUtil;
     this.money += income - expenses;
     if (this.bankrupt && this.money < BANKRUPT_FLOOR) this.money += (BANKRUPT_FLOOR - this.money) * BANKRUPT_SPRING;
     const bg = this.budget;
     bg.income.r = incR; bg.income.c = incC; bg.income.i = incI; bg.income.total = income;
-    bg.expenses.roads = expRoads; bg.expenses.buildings = expBld; bg.expenses.total = expenses;
+    bg.expenses.roads = expRoads; bg.expenses.buildings = expBld; bg.expenses.utilities = expUtil; bg.expenses.total = expenses;
     bg.net = income - expenses;
 
     // time
@@ -261,6 +310,7 @@ export class SimModel {
     st.parkShare = parkShare; st.income = income; st.expenses = expenses; st.buildings = list.length; st.roads = roads;
     st.net = income - expenses; st.debt = debt; st.wealth = wealth; st.services = services;
     st.bankrupt = this.bankrupt; st.bankruptTicks = this.bankruptTicks;
+    st.powerCoverage = totalCap ? poweredCap / totalCap : 0; st.waterCoverage = totalCap ? wateredCap / totalCap : 0;
     st.day = this.day; st.tick = this.tick; st.cityName = this.cityName; st.cityLevel = cityLevel; st.cityLevelName = LEVEL_NAMES[cityLevel];
 
     // history ring
@@ -287,7 +337,10 @@ export class SimModel {
       perTick: { income: { ...bg.income }, expenses: { ...bg.expenses }, net: bg.net },
       perDay: {
         income: { r: bg.income.r * perDay, c: bg.income.c * perDay, i: bg.income.i * perDay, total: bg.income.total * perDay },
-        expenses: { roads: bg.expenses.roads * perDay, buildings: bg.expenses.buildings * perDay, total: bg.expenses.total * perDay },
+        expenses: {
+          roads: bg.expenses.roads * perDay, buildings: bg.expenses.buildings * perDay,
+          utilities: bg.expenses.utilities * perDay, total: bg.expenses.total * perDay,
+        },
         net: bg.net * perDay,
       },
       money: this.money, taxRate: { ...this.taxRate },
@@ -298,5 +351,24 @@ export class SimModel {
     if (!(zone in this.taxRate)) return false;
     this.taxRate[zone] = clamp(Number(rate) || 0, 0, 0.3);
     return true;
+  }
+
+  /** One-time capital spend (e.g. placing a utility building): debits the treasury iff affordable. */
+  spend(amount) {
+    const cost = Number(amount) || 0;
+    if (cost <= 0) return true;
+    if (this.money < cost) return false;
+    this.money -= cost;
+    return true;
+  }
+
+  /** 0..1 fraction of RCI building capacity currently within power/water coverage. */
+  getUtilityCoverage() { return { power: this.stats.powerCoverage || 0, water: this.stats.waterCoverage || 0 }; }
+
+  /** { powered, watered } for any tracked building id; utility buildings themselves always read as served. */
+  getBuildingCoverage(id) {
+    if (this._isUtilityKind(this.utilities.find((u) => u.id === id)?.kind)) return { powered: true, watered: true };
+    const s = this.byId.get(id);
+    return s ? { powered: s.powered, watered: s.watered } : null;
   }
 }

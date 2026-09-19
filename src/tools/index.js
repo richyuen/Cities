@@ -22,6 +22,11 @@ const ROAD_LABEL = { street: 'Street', avenue: 'Avenue', highway: 'Highway', pat
 const ZONE_LABEL = { r: 'Residential', c: 'Commercial', i: 'Industrial' };
 const AREA_LABEL = { park: 'Park', trees: 'Trees', plaza: 'Plaza' };
 const MIN_ROAD_LEN = 4; // meters — shorter drags are treated as a no-op tap, not an error
+// Fixed-footprint civic structures, placed with a single click (not drag-painted like roads/zones/areas).
+const UTILITY_DEF = {
+  power: { kind: 'power_plant', label: 'Power Plant', w: 3, d: 3, cost: 8000 },
+  water: { kind: 'water_tower', label: 'Water Tower', w: 2, d: 2, cost: 4000 },
+};
 
 const S = {
   ctx: null, rng: null, group: null, raycaster: null, ghosts: null,
@@ -55,6 +60,7 @@ function toolKindOf(tool) {
   if (tool.startsWith('road:')) return { group: 'road', kind: tool.slice(5) };
   if (tool.startsWith('zone:')) { const z = tool.slice(5); return { group: 'zone', zone: z === 'none' ? null : z }; }
   if (tool === 'park' || tool === 'trees' || tool === 'plaza') return { group: 'area', areaKind: tool };
+  if (tool.startsWith('utility:')) { const k = tool.slice(8); return UTILITY_DEF[k] ? { group: 'stamp', utilKind: k } : null; }
   if (tool === 'bulldoze') return { group: 'bulldoze' };
   if (tool === 'select') return { group: 'select' };
   return null;
@@ -146,6 +152,18 @@ function cellBuildable(ctx, i, j) {
   return !!c && c.type !== 'water';
 }
 
+/** A fixed-footprint civic structure needs every cell empty (not road/zone/park/building), unlike zone painting
+ * which may overwrite bare terrain freely — this is a permanent, non-zoned placement. */
+function stampBuildable(ctx, i0, j0, w, d) {
+  for (let j = j0; j < j0 + d; j++) {
+    for (let i = i0; i < i0 + w; i++) {
+      const c = ctx.world.cellAt(i, j);
+      if (!c || c.type !== 'none' || !cellBuildable(ctx, i, j)) return false;
+    }
+  }
+  return true;
+}
+
 /** The terrain module renders a plate-quantized (stepped, "Lego brick") surface, not the smooth bilinear one
  * world.getHeight() interpolates from — see terrain/data.js surfaceH(). Pointer raycasting must march against
  * whichever surface is actually on screen, or the resolved ground point (and so the selected cell) can drift
@@ -182,16 +200,34 @@ function pickBuildingId(ctx, x, z, i, j) {
   return ctx.world.cellAt(i, j)?.buildingId || null;
 }
 
-function buildingInfoHtml(b) {
+const UTILITY_KINDS = new Set(['power_plant', 'water_tower']);
+
+function prettyKind(kind) {
+  if (!kind) return 'Building';
+  return kind.replace(/[_-]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function buildingInfoHtml(ctx, b) {
   const zone = b.zone || null;
-  const tag = zone ? `<span class="lc-tag ${zone}">${ZONE_LABEL[zone] || zone}</span>` : `<span class="lc-tag" style="background:#666">Unzoned</span>`;
+  const isUtility = UTILITY_KINDS.has(b.kind);
+  const tag = isUtility ? `<span class="lc-tag" style="background:#666">Utility</span>`
+    : zone ? `<span class="lc-tag ${zone}">${ZONE_LABEL[zone] || zone}</span>` : `<span class="lc-tag" style="background:#666">Unzoned</span>`;
   const cells = (b.w || 1) * (b.d || 1);
-  const kind = b.kind ? b.kind[0].toUpperCase() + b.kind.slice(1) : 'Building';
+  const kind = prettyKind(b.kind);
+  let rows = `<span>Level</span><span>${b.level ?? 1}</span>
+      <span>Height</span><span>${Number.isFinite(b.height) ? b.height.toFixed(1) : b.height} m</span>
+      <span>Footprint</span><span>${b.w}&times;${b.d} (${cells} cell${cells === 1 ? '' : 's'})</span>`;
+  if (!isUtility && zone) {
+    const sim = ctx.modules.get('simulation');
+    const cov = sim?.status === 'ok' ? safeCall(() => sim.api?.getBuildingCoverage?.(b.id)) : null;
+    if (cov) {
+      rows += `<span>Powered</span><span>${cov.powered ? 'Yes' : 'No'}</span>
+      <span>Watered</span><span>${cov.watered ? 'Yes' : 'No'}</span>`;
+    }
+  }
   return `${tag}<h2>${kind} #${b.id}</h2>
     <div class="lc-kv">
-      <span>Level</span><span>${b.level ?? 1}</span>
-      <span>Height</span><span>${Number.isFinite(b.height) ? b.height.toFixed(1) : b.height} m</span>
-      <span>Footprint</span><span>${b.w}&times;${b.d} (${cells} cell${cells === 1 ? '' : 's'})</span>
+      ${rows}
     </div>`;
 }
 
@@ -272,6 +308,9 @@ function startDrag(hit) {
   if (info.group === 'road') {
     const p = snapRoadPoint(S.ctx, hit.x, hit.z);
     S.drag = { group: 'road', kind: info.kind, a: p, b: p };
+  } else if (info.group === 'stamp') {
+    const def = UTILITY_DEF[info.utilKind];
+    S.drag = { group: 'stamp', utilKind: info.utilKind, i0: hit.i, j0: hit.j, i1: hit.i + def.w - 1, j1: hit.j + def.d - 1 };
   } else {
     S.drag = { group: info.group, zone: info.zone, areaKind: info.areaKind, i0: hit.i, j0: hit.j, i1: hit.i, j1: hit.j };
   }
@@ -281,7 +320,10 @@ function startDrag(hit) {
 function updateDrag(hit) {
   if (!S.drag) return;
   if (S.drag.group === 'road') S.drag.b = snapRoadPoint(S.ctx, hit.x, hit.z);
-  else { S.drag.i1 = hit.i; S.drag.j1 = hit.j; }
+  else if (S.drag.group === 'stamp') {
+    const def = UTILITY_DEF[S.drag.utilKind];
+    S.drag.i0 = hit.i; S.drag.j0 = hit.j; S.drag.i1 = hit.i + def.w - 1; S.drag.j1 = hit.j + def.d - 1;
+  } else { S.drag.i1 = hit.i; S.drag.j1 = hit.j; }
   updateGhostsForDrag();
 }
 
@@ -302,6 +344,15 @@ function updateGhostsForDrag() {
     const g = roadGhostGeom(ctx, d.kind, d.a, d.b);
     applyRibbon(g);
     uiApi(ctx)?.setStatus?.(`${ROAD_LABEL[d.kind] || d.kind}: ${Math.round(g.length)} m, $${g.cost.toLocaleString()}`);
+    return;
+  }
+  if (d.group === 'stamp') {
+    const def = UTILITY_DEF[d.utilKind];
+    const valid = stampBuildable(ctx, d.i0, d.j0, def.w, def.d);
+    applyRect(rectBounds(ctx, d.i0, d.j0, d.i1, d.j1), valid ? 'lime' : 'transRed');
+    const afford = currentMoney(ctx) >= def.cost;
+    const txt = !valid ? 'Blocked' : afford ? `$${def.cost.toLocaleString()}` : 'Insufficient funds';
+    uiApi(ctx)?.setStatus?.(`${def.label}: ${txt}`);
     return;
   }
   const { i0, j0, i1, j1 } = normRect(d);
@@ -332,6 +383,12 @@ function updateHoverGhost(hit) {
     if (!tryZoningPreview(ctx, hit.i, hit.j, hit.i, hit.j, info.zone)) applyRect(rectBounds(ctx, hit.i, hit.j, hit.i, hit.j), zoneColorFor(info.zone));
     return;
   }
+  if (info.group === 'stamp') {
+    const def = UTILITY_DEF[info.utilKind];
+    const valid = stampBuildable(ctx, hit.i, hit.j, def.w, def.d);
+    applyRect(rectBounds(ctx, hit.i, hit.j, hit.i + def.w - 1, hit.j + def.d - 1), valid ? 'lime' : 'transRed');
+    return;
+  }
   const color = info.group === 'bulldoze' ? 'transRed' : info.group === 'zone' ? 'transRed' : 'lime';
   applyRect(rectBounds(ctx, hit.i, hit.j, hit.i, hit.j), color);
 }
@@ -356,6 +413,7 @@ function finishDrag() {
   if (d.group === 'road') finishRoad(d);
   else if (d.group === 'zone') finishZone(d);
   else if (d.group === 'area') finishArea(d);
+  else if (d.group === 'stamp') finishStamp(d);
   else if (d.group === 'bulldoze') finishBulldoze(d);
 }
 
@@ -439,6 +497,20 @@ function finishArea(d) {
   } else fail('Nothing to place here');
 }
 
+function finishStamp(d) {
+  const ctx = S.ctx;
+  const def = UTILITY_DEF[d.utilKind];
+  if (!def) return;
+  if (!stampBuildable(ctx, d.i0, d.j0, def.w, def.d)) { fail('Cannot build here'); return; }
+  const sim = ctx.modules.get('simulation');
+  const hasLedger = sim?.status === 'ok' && typeof sim.api?.spend === 'function';
+  if (hasLedger && !sim.api.spend(def.cost)) { fail(`Insufficient funds — need $${def.cost.toLocaleString()}`); return; }
+  ctx.world.addBuilding({ i: d.i0, j: d.j0, w: def.w, d: def.d, zone: null, kind: def.kind, level: 1 });
+  notify(`${def.label} built${hasLedger ? `, $${def.cost.toLocaleString()}` : ''}`, 'success');
+  const audio = ctx.modules.get('audio');
+  if (audio?.status === 'ok') { try { audio.api?.play?.('zone'); } catch (_) { /* ignore */ } }
+}
+
 function finishBulldoze(d) {
   const ctx = S.ctx, world = ctx.world;
   const { i0, j0, i1, j1 } = normRect(d);
@@ -484,7 +556,7 @@ function handleClick(e) {
   if (!hit) { api?.setInfoPanel?.(null); return; }
   const buildingId = hit.buildingId || pickBuildingId(ctx, hit.x, hit.z, hit.i, hit.j);
   const b = buildingId ? ctx.world.buildings.get(buildingId) : null;
-  api?.setInfoPanel?.(b ? buildingInfoHtml(b) : null);
+  api?.setInfoPanel?.(b ? buildingInfoHtml(ctx, b) : null);
 }
 
 // ---- pointer plumbing ------------------------------------------------------------------------------------

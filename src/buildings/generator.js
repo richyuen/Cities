@@ -394,6 +394,78 @@ function generateIndustrial(ctx, b, rng, halfW, halfD, cx, cz, groundY) {
   };
 }
 
+// Civic power plant: a squat industrial hall with two cooling towers, a glowing smokestack, and a small
+// transformer yard. Fixed composition (ignores b.level — utility buildings never grow) styled off
+// generateIndustrial's corrugated-body look so it reads as "the same city's" architecture.
+function generatePowerPlant(ctx, b, rng, halfW, halfD, cx, cz, groundY) {
+  const parts = [];
+  const bodyA = pick(rng, IND_BODY_A);
+  const bodyB = pick(rng, IND_BODY_B);
+  const accent = pick(rng, IND_ACCENT);
+  const storyH = 9.5;
+  const stripH = storyH / 7;
+  for (let i = 0; i < 7; i++) {
+    box(ctx, parts, i % 2 === 0 ? bodyA : bodyB, halfW * 2, stripH * 1.02, halfD * 2, cx, groundY + i * stripH, cz, 0.02);
+  }
+  interiorLiner(parts, bodyA, halfW * 2, storyH, halfD * 2, cx, groundY, cz);
+  box(ctx, parts, 'darkStoneGrey', halfW * 2 * 1.02, 0.35, halfD * 2 * 1.02, cx, groundY + storyH, cz, 0.03);
+  const roofY = groundY + storyH + 0.35;
+
+  const towerR = Math.min(halfW, halfD) * 0.4;
+  const towerH = 9 + rng.range(0, 2);
+  const towers = [{ x: cx - halfW * 0.5, z: cz - halfD * 0.5 }, { x: cx + halfW * 0.45, z: cz + halfD * 0.4 }];
+  for (const t of towers) {
+    cylinder(parts, 'lightStoneGrey', towerR * 0.78, towerR, towerH, 14, t.x, roofY, t.z);
+    cylinder(parts, 'mediumStoneGrey', towerR * 0.6, towerR * 0.8, towerH * 0.1, 14, t.x, roofY + towerH, t.z);
+  }
+  const chimneyH = 7.5 + rng.range(0, 2), chx = cx + halfW * 0.1, chz = cz - halfD * 0.1;
+  cylinder(parts, 'darkStoneGrey', 0.8, 1.0, chimneyH, 12, chx, roofY, chz);
+  if (rng.chance(0.7)) plainBox(parts, 'chimneyGlow', 0.7, 0.28, 0.7, chx, roofY + chimneyH, chz);
+  plainBox(parts, 'beacon', 0.3, 0.3, 0.3, chx, roofY + chimneyH + 0.35, chz);
+  // transformer yard along the +z edge
+  for (let k = -1; k <= 1; k += 2) plainBox(parts, accent, 1.1, 1.7, 1.1, cx + k * halfW * 0.7, groundY, cz + halfD - 1.0);
+
+  return {
+    parts, studs: roofPerimeterStuds(halfW, halfD, roofY + 0.05, 'darkStoneGrey'),
+    height: storyH + 0.35 + towerH, kind: 'power_plant',
+  };
+}
+
+// Civic water tower: a tank raised on four lattice legs with cross-bracing. Fixed composition, small footprint.
+function generateWaterTower(ctx, b, rng, halfW, halfD, cx, cz, groundY) {
+  const parts = [];
+  const accent = pick(rng, IND_ACCENT);
+  const legR = 0.32, legH = 8.5 + rng.range(0, 1.5);
+  const inset = Math.min(halfW, halfD) * 0.55;
+  const legs = [
+    { x: cx - inset, z: cz - inset }, { x: cx + inset, z: cz - inset },
+    { x: cx - inset, z: cz + inset }, { x: cx + inset, z: cz + inset },
+  ];
+  for (const p of legs) cylinder(parts, 'darkStoneGrey', legR, legR * 1.35, legH, 8, p.x, groundY, p.z);
+  for (const yFrac of [0.35, 0.72]) {
+    const y = groundY + legH * yFrac;
+    for (let k = 0; k < 4; k++) {
+      const a = legs[k], bp = legs[(k + 1) % 4];
+      const dx = bp.x - a.x, dz = bp.z - a.z, len = Math.hypot(dx, dz);
+      const g = ctx.materials.bevelBox(Math.max(0.3, quant(len)), 0.15, 0.15, 0.02).clone();
+      g.rotateY(-Math.atan2(dz, dx));
+      g.translate((a.x + bp.x) / 2, y, (a.z + bp.z) / 2);
+      parts.push({ mat: 'darkStoneGrey', geom: g });
+    }
+  }
+  const tankR = Math.min(halfW, halfD) * 0.85, tankH = tankR * 1.3, tankY = groundY + legH;
+  cylinder(parts, accent, tankR * 0.3, tankR, tankH * 0.22, 16, cx, tankY, cz);
+  cylinder(parts, accent, tankR, tankR, tankH * 0.6, 16, cx, tankY + tankH * 0.22, cz);
+  cylinder(parts, 'lightStoneGrey', tankR * 0.05, tankR * 0.92, tankH * 0.18, 16, cx, tankY + tankH * 0.82, cz);
+  plainBox(parts, 'lightStoneGrey', 0.5, 0.55, 0.5, cx, tankY + tankH, cz);
+  plainBox(parts, 'beacon', 0.22, 0.22, 0.22, cx, tankY + tankH + 0.35, cz);
+
+  return {
+    parts, studs: roofPerimeterStuds(halfW, halfD, groundY + 0.05, 'mediumStoneGrey'),
+    height: legH + tankH, kind: 'water_tower',
+  };
+}
+
 /** Generate a building's world-space geometry parts + roof stud points + computed height/kind. */
 export function generateBuilding(ctx, b, rng) {
   const cs = ctx.world.cellSize;
@@ -408,7 +480,9 @@ export function generateBuilding(ctx, b, rng) {
     ? terr.api.surfaceHeight(cx, cz) : ctx.world.getHeight(cx, cz);
 
   let out;
-  if (b.zone === 'c') out = generateCommercial(ctx, b, rng, halfW, halfD, cx, cz, groundY);
+  if (b.kind === 'power_plant') out = generatePowerPlant(ctx, b, rng, halfW, halfD, cx, cz, groundY);
+  else if (b.kind === 'water_tower') out = generateWaterTower(ctx, b, rng, halfW, halfD, cx, cz, groundY);
+  else if (b.zone === 'c') out = generateCommercial(ctx, b, rng, halfW, halfD, cx, cz, groundY);
   else if (b.zone === 'i') out = generateIndustrial(ctx, b, rng, halfW, halfD, cx, cz, groundY);
   else out = generateResidential(ctx, b, rng, halfW, halfD, cx, cz, groundY);
 

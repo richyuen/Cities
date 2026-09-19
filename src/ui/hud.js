@@ -25,6 +25,7 @@ export const TOOL_GROUPS = [
   { label: 'Roads', tools: [['road:street', 'Street'], ['road:avenue', 'Avenue'], ['road:highway', 'Highway'], ['road:path', 'Path']] },
   { label: 'Zones', tools: [['zone:r', 'Homes'], ['zone:c', 'Shops'], ['zone:i', 'Industry'], ['zone:none', 'Dezone']] },
   { label: 'Parks', tools: [['park', 'Park'], ['trees', 'Trees'], ['plaza', 'Plaza']] },
+  { label: 'Utilities', tools: [['utility:power', 'Power Plant'], ['utility:water', 'Water Tower']] },
   { label: 'Tools', tools: [['bulldoze', 'Bulldoze', 'B'], ['select', 'Inspect', 'I']] },
 ];
 const DANGER = new Set(['bulldoze', 'zone:none']);
@@ -144,6 +145,16 @@ export class Hud {
     }
     root.append(h('div', { class: 'lc-panel lc-rci' }, h('div', { class: 'lc-studs' }), h('div', { class: 'lc-rci-title' }, 'Demand'), bars));
 
+    // ---- Utilities coverage ----
+    const utilRow = (key, label) => {
+      const value = h('span', { class: 'lc-util-pct' }, '—');
+      return { el: h('div', { class: 'lc-util-row' }, h('span', { class: 'lc-util-lbl' }, label), value), value };
+    };
+    this.powerCov = utilRow('power', 'Power');
+    this.waterCov = utilRow('water', 'Water');
+    root.append(h('div', { class: 'lc-panel lc-utilities' }, h('div', { class: 'lc-studs' }),
+      h('div', { class: 'lc-rci-title' }, 'Utilities'), this.powerCov.el, this.waterCov.el));
+
     // ---- toolbar ----
     const bar = h('div', { class: 'lc-panel lc-toolbar' }, h('div', { class: 'lc-studs' }));
     TOOL_GROUPS.forEach((g, gi) => {
@@ -188,6 +199,10 @@ export class Hud {
   setDemand(r, c, i) {
     const set = (el, v) => { const p = `${Math.round(Math.max(0, Math.min(1, v || 0)) * 100)}%`; if (el._h !== p) { el._h = p; el.style.height = p; } };
     set(this.rci.r, r); set(this.rci.c, c); set(this.rci.i, i);
+  }
+  setUtilities(power, water) {
+    setText(this.powerCov.value, `${Math.round(Math.max(0, Math.min(1, power || 0)) * 100)}%`);
+    setText(this.waterCov.value, `${Math.round(Math.max(0, Math.min(1, water || 0)) * 100)}%`);
   }
 
   // ---------- clock / speed / weather ----------

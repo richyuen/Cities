@@ -72,6 +72,12 @@ const api = {
   getBudget() { return S.model.getBudget(); },
   setTaxRate(zone, rate) { return S.model.setTaxRate(zone, rate); },
   getTaxRate(zone) { return zone ? S.model.taxRate[zone] : { ...S.model.taxRate }; },
+  /** Debit the treasury by `amount`; returns false (no-op) if unaffordable. */
+  spend(amount) { return S.model.spend(amount); },
+  /** 0..1 fraction of RCI capacity within power/water coverage. */
+  getUtilityCoverage() { return S.model.getUtilityCoverage(); },
+  /** { powered, watered } for a building id, or null if untracked. */
+  getBuildingCoverage(id) { return S.model.getBuildingCoverage(id); },
   /** 0..1 desirability of cell (i,j) for `zone` ('r'|'c'|'i'; default: the cell's zone, else 'r') */
   cellDesirability(i, j, zone) { S.grid.ensure(S.frame); return S.grid.get(i, j, zone); },
   /** chronological copy of the last ≤300 ticks */
