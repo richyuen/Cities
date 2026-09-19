@@ -256,11 +256,22 @@ export class FireDrones {
     }
   }
 
-  update(dt) {
+  // `entry.elapsed` only advances once per sim tick (2 Hz, see simulation/model.js TICK_DT) but update() runs
+  // once per render frame (usually ~60 Hz), so using it directly made the drone's position a staircase that
+  // visibly jumped every tick instead of gliding. `dispTicks` dead-reckons forward every frame at the same
+  // average rate real ticks accumulate (dt * clock.timeScale / TICK_DT — zero while paused), then gently pulls
+  // toward the authoritative `entry.elapsed` each frame so it can't drift, snapping only on a large discrepancy
+  // (e.g. a pause/resume or a big backlog of ticks landing at once).
+  update(dt, ctx) {
+    const scale = ctx?.clock && !ctx.clock.paused ? (ctx.clock.timeScale || 0) : 0;
     for (const entry of this.active.values()) {
       const { station, target, mesh } = entry;
       entry.age += dt;
-      const elapsedSec = (entry.elapsed || 0) * TICK_DT;
+      if (entry.dispTicks == null) entry.dispTicks = entry.elapsed || 0;
+      entry.dispTicks += dt * scale / TICK_DT;
+      const diff = (entry.elapsed || 0) - entry.dispTicks;
+      entry.dispTicks += Math.abs(diff) > 1.5 ? diff : diff * Math.min(1, dt * 4);
+      const elapsedSec = entry.dispTicks * TICK_DT;
       const dist = Math.hypot(target.cx - station.cx, target.cz - station.cz);
       const travelTime = Math.max(1, dist / DRONE_SPEED_MPS);
       const travelP = clamp01(elapsedSec / travelTime);

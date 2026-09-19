@@ -349,7 +349,7 @@ export default {
     }
     updateTweens(dt);
     S.fireIndicators?.update(dt);
-    S.fireDrones?.update(dt);
+    S.fireDrones?.update(dt, ctx);
     if (ctx.showcase) return; // auto-growth only runs in the full game
     S.growthAcc += dt;
     if (S.growthAcc >= GROWTH_INTERVAL) {
