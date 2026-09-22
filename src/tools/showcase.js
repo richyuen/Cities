@@ -150,7 +150,7 @@ export function stageShowcase(ctx, handlers, prevExtra, group) {
   removeDemoBuildingMesh(extra, b1);
   // padded 1 cell beyond B2's footprint on every side so the red ring reads clearly around its base instead of
   // hiding under it.
-  addDecorativeRect(ctx, extra, handlers.rectBounds(world, b2.i - 1, b2.j - 1, b2.i + b2.w, b2.j + b2.d), 'transRed', 'tools-showcase-bulldoze-ghost');
+  addDecorativeRect(ctx, extra, handlers.rectBounds(ctx, b2.i - 1, b2.j - 1, b2.i + b2.w, b2.j + b2.d), 'transRed', 'tools-showcase-bulldoze-ghost');
 
   // A second, separate site gets a genuine *uncommitted* zoning preview: call the real zoning.api.showPreview
   // directly (it owns and persists its own preview mesh independently of this module's single-active-drag
@@ -168,7 +168,7 @@ export function stageShowcase(ctx, handlers, prevExtra, group) {
   if (zoning?.status === 'ok' && typeof zoning.api?.showPreview === 'function') {
     try { zoning.api.showPreview(z2.i, z2.j, 4, 4, 'i'); zonedPreview = true; } catch (_) { /* fall through */ }
   }
-  if (!zonedPreview) addDecorativeRect(ctx, extra, handlers.rectBounds(world, z2.i, z2.j, z2.i + 3, z2.j + 3), 'transYellow', 'tools-showcase-zone-ghost');
+  if (!zonedPreview) addDecorativeRect(ctx, extra, handlers.rectBounds(ctx, z2.i, z2.j, z2.i + 3, z2.j + 3), 'transYellow', 'tools-showcase-zone-ghost');
 
   // 5) final live, uncommitted gesture: a road:street drag left mid-air (z=40, clear of the zoning preview
   // rectangle above so both read independently in the wide tools:default shot)

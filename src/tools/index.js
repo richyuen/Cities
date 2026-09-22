@@ -67,7 +67,7 @@ function toolKindOf(tool) {
   if (tool.startsWith('utility:')) { const k = tool.slice(8); return UTILITY_DEF[k] ? { group: 'stamp', utilKind: k } : null; }
   if (tool === 'bulldoze') return { group: 'bulldoze' };
   if (tool === 'select') return { group: 'select' };
-  if (tool === 'hazard:fire') return { group: 'hazard' };
+  if (tool === 'hazard:fire' || tool === 'hazard:burglary') return { group: 'hazard' };
   return null;
 }
 
@@ -640,7 +640,7 @@ function handleClick(e) {
   if (b) showCoverageRing(ctx, b); else hideCoverageRing();
 }
 
-// ---- hazard: start fire ------------------------------------------------------------------------------------
+// ---- hazard: start fire / start burglary -------------------------------------------------------------------
 
 function handleFireClick(e) {
   const ctx = S.ctx;
@@ -652,6 +652,21 @@ function handleFireClick(e) {
   if (!ok) { fail('Already on fire', hit); return; }
   const b = ctx.world.buildings.get(buildingId);
   notify(`\u{1F525} ${prettyKind(b?.kind)} is on fire!`, 'warn');
+  const audio = ctx.modules.get('audio');
+  if (audio?.status === 'ok') safeCall(() => audio.api?.play?.('error', hit));
+}
+
+function handleBurglaryClick(e) {
+  const ctx = S.ctx;
+  const hit = screenToHit(ctx, e.clientX, e.clientY);
+  const buildingId = hit ? (hit.buildingId || pickBuildingId(ctx, hit.x, hit.z, hit.i, hit.j)) : null;
+  if (!buildingId) { fail('No building here', hit); return; }
+  const b = ctx.world.buildings.get(buildingId);
+  if (b?.onFire) { fail('On fire', hit); return; }
+  const sim = ctx.modules.get('simulation');
+  if (sim?.status !== 'ok') { fail('Simulation unavailable', hit); return; }
+  if (!safeCall(() => sim.api.startBurglary(buildingId), false)) { fail('Already burgled', hit); return; }
+  notify(`\u{1F6A8} ${prettyKind(b?.kind)} is being burgled!`, 'warn');
   const audio = ctx.modules.get('audio');
   if (audio?.status === 'ok') safeCall(() => audio.api?.play?.('error', hit));
 }
@@ -707,7 +722,11 @@ function onPointerUp(e) {
   if (S.clickStart) {
     const dx = e.clientX - S.clickStart.x, dy = e.clientY - S.clickStart.y;
     S.clickStart = null;
-    if (Math.hypot(dx, dy) < 6) { if (S.tool === 'hazard:fire') handleFireClick(e); else handleClick(e); }
+    if (Math.hypot(dx, dy) < 6) {
+      if (S.tool === 'hazard:fire') handleFireClick(e);
+      else if (S.tool === 'hazard:burglary') handleBurglaryClick(e);
+      else handleClick(e);
+    }
   }
 }
 

@@ -27,9 +27,9 @@ export const TOOL_GROUPS = [
   { label: 'Parks', tools: [['park', 'Park'], ['trees', 'Trees'], ['plaza', 'Plaza']] },
   { label: 'Utilities', tools: [['utility:power', 'Power Plant'], ['utility:water', 'Water Tower'], ['utility:firedept', 'Fire Department'], ['utility:police', 'Police Station']] },
   { label: 'Tools', tools: [['bulldoze', 'Bulldoze', 'B'], ['select', 'Inspect', 'I']] },
-  { label: 'Hazards', tools: [['hazard:fire', 'Start Fire']] },
+  { label: 'Hazards', tools: [['hazard:fire', 'Start Fire'], ['hazard:burglary', 'Start Burglary']] },
 ];
-const DANGER = new Set(['bulldoze', 'zone:none', 'hazard:fire']);
+const DANGER = new Set(['bulldoze', 'zone:none', 'hazard:fire', 'hazard:burglary']);
 const MAX_TOASTS_VISIBLE = 3, MAX_TOASTS_KEPT = 8;
 const WEATHER_LABEL = { clear: 'Clear', cloudy: 'Cloudy', rain: 'Rain', fog: 'Fog' };
 const TOAST_ICON = { info: icons.info, success: icons.check, warn: icons.warn, error: icons.close };

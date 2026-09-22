@@ -114,6 +114,9 @@ export const icons = {
   // ---- tools: hazards ----
   'hazard:fire': svg(`<path d="M12 2c-1 3-4.5 4.7-4.5 9A4.5 4.5 0 0 0 12 15.5 4.5 4.5 0 0 0 16.5 11c0-1.6-1-2.6-1.7-3.4.2 1.4-.5 2.2-1.2 2.2-1 0-1-1-.6-2 .5-1.6-.2-3.6-1-5.8z" fill="${ORANGE}" ${O}/>
     <path d="M12 9.5c-.4 1.3-2 2-2 3.8a2 2 0 0 0 4 0c0-.7-.3-1.1-.6-1.5.05.6-.2 1-.5 1-.5 0-.4-.5-.2-.9.3-.7 0-1.6-.7-2.4z" fill="${YEL}"/>`),
+  // domino mask, matching the in-world burglary indicator's navy band + two eye holes
+  'hazard:burglary': svg(`<path d="M2.2 8.6c1.8-2.4 5.8-2.2 8.2-.2.6.5 2.6.5 3.2 0 2.4-2 6.4-2.2 8.2.2 1.2 1.8-.2 6-3.2 6.8-2.2.6-4.4-.6-5.8-1.8-.5-.4-1.1-.4-1.6 0-1.4 1.2-3.6 2.4-5.8 1.8-3-.8-4.4-5-3.2-6.8z" fill="#1d3557" ${O}/>
+    <circle cx="8.4" cy="11.2" r="1.5" fill="${WHITE}"/><circle cx="15.6" cy="11.2" r="1.5" fill="${WHITE}"/>`),
 
   // ---- tools: misc ----
   bulldoze: svg(`<rect x="8" y="9" width="10" height="7.5" rx="1.6" fill="${YEL}" ${O}/><rect x="10" y="5.5" width="6" height="4.5" rx="1" fill="${YEL}" ${O}/><rect x="11" y="6.6" width="4" height="2.3" fill="#a6d8ec"/>
