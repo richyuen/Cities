@@ -471,7 +471,7 @@ function generateWaterTower(ctx, b, rng, halfW, halfD, cx, cz, groundY) {
 function generateFireDepartment(ctx, b, rng, halfW, halfD, cx, cz, groundY) {
   const parts = [];
   const storyH = 6.2;
-  box(ctx, parts, 'brightRed', halfW * 2, storyH, halfD * 2, cx, groundY + storyH / 2, cz, 0.05);
+  box(ctx, parts, 'brightRed', halfW * 2, storyH, halfD * 2, cx, groundY, cz, 0.05);
   interiorLiner(parts, 'brightRed', halfW * 2, storyH, halfD * 2, cx, groundY, cz);
   box(ctx, parts, 'darkStoneGrey', halfW * 2 * 1.02, 0.3, halfD * 2 * 1.02, cx, groundY + storyH, cz, 0.03);
   const roofY = groundY + storyH + 0.3;
@@ -488,6 +488,33 @@ function generateFireDepartment(ctx, b, rng, halfW, halfD, cx, cz, groundY) {
   return {
     parts, studs: roofPerimeterStuds(halfW, halfD, roofY + 0.05, 'darkStoneGrey'),
     height: storyH + 0.3 + towerH + 0.35, kind: 'fire_department',
+  };
+}
+
+// Civic police station: a low dark-blue precinct hall with a white band, a glazed front desk bay, a roof sign and
+// a blue beacon. Fixed composition (ignores b.level — utility buildings never grow), small 2x2-cell footprint.
+function generatePoliceStation(ctx, b, rng, halfW, halfD, cx, cz, groundY) {
+  const parts = [];
+  const storyH = 6.4;
+  box(ctx, parts, 'brightBlue', halfW * 2, storyH, halfD * 2, cx, groundY, cz, 0.05);
+  interiorLiner(parts, 'brightBlue', halfW * 2, storyH, halfD * 2, cx, groundY, cz);
+  box(ctx, parts, 'white', halfW * 2 * 1.02, 1.1, halfD * 2 * 1.02, cx, groundY + storyH - 0.9, cz, 0.03);
+  box(ctx, parts, 'darkStoneGrey', halfW * 2 * 1.02, 0.3, halfD * 2 * 1.02, cx, groundY + storyH, cz, 0.03);
+  const roofY = groundY + storyH + 0.3;
+  // glazed entrance bay on the +z face, with a white desk stripe behind it
+  plainBox(parts, 'white', halfW * 1.15, storyH * 0.5, 0.12, cx, groundY + storyH * 0.3, cz + halfD - 0.06);
+  plainBox(parts, 'transBlue', halfW * 1.05, storyH * 0.42, 0.06, cx, groundY + storyH * 0.3, cz + halfD - 0.02);
+  // roof sign (white board + blue badge block) and a blue beacon on a short mast, toward a back corner
+  const sx = cx + halfW * 0.35, sz = cz - halfD * 0.3;
+  plainBox(parts, 'white', 2.2, 1.1, 0.22, sx, roofY + 0.55, sz);
+  plainBox(parts, 'brightBlue', 0.7, 0.7, 0.1, sx, roofY + 0.55, sz + 0.16);
+  const mastH = 1.6 + rng.range(0, 0.6);
+  cylinder(parts, 'lightStoneGrey', 0.09, 0.12, mastH, 8, cx - halfW * 0.5, roofY, cz - halfD * 0.5);
+  plainBox(parts, 'beaconBlue', 0.32, 0.32, 0.32, cx - halfW * 0.5, roofY + mastH + 0.2, cz - halfD * 0.5);
+
+  return {
+    parts, studs: roofPerimeterStuds(halfW, halfD, roofY + 0.05, 'white'),
+    height: storyH + 0.3 + mastH + 0.4, kind: 'police_station',
   };
 }
 
@@ -508,6 +535,7 @@ export function generateBuilding(ctx, b, rng) {
   if (b.kind === 'power_plant') out = generatePowerPlant(ctx, b, rng, halfW, halfD, cx, cz, groundY);
   else if (b.kind === 'water_tower') out = generateWaterTower(ctx, b, rng, halfW, halfD, cx, cz, groundY);
   else if (b.kind === 'fire_department') out = generateFireDepartment(ctx, b, rng, halfW, halfD, cx, cz, groundY);
+  else if (b.kind === 'police_station') out = generatePoliceStation(ctx, b, rng, halfW, halfD, cx, cz, groundY);
   else if (b.zone === 'c') out = generateCommercial(ctx, b, rng, halfW, halfD, cx, cz, groundY);
   else if (b.zone === 'i') out = generateIndustrial(ctx, b, rng, halfW, halfD, cx, cz, groundY);
   else out = generateResidential(ctx, b, rng, halfW, halfD, cx, cz, groundY);

@@ -25,7 +25,7 @@ export const TOOL_GROUPS = [
   { label: 'Roads', tools: [['road:street', 'Street'], ['road:avenue', 'Avenue'], ['road:highway', 'Highway'], ['road:path', 'Path']] },
   { label: 'Zones', tools: [['zone:r', 'Homes'], ['zone:c', 'Shops'], ['zone:i', 'Industry'], ['zone:none', 'Dezone']] },
   { label: 'Parks', tools: [['park', 'Park'], ['trees', 'Trees'], ['plaza', 'Plaza']] },
-  { label: 'Utilities', tools: [['utility:power', 'Power Plant'], ['utility:water', 'Water Tower'], ['utility:firedept', 'Fire Department']] },
+  { label: 'Utilities', tools: [['utility:power', 'Power Plant'], ['utility:water', 'Water Tower'], ['utility:firedept', 'Fire Department'], ['utility:police', 'Police Station']] },
   { label: 'Tools', tools: [['bulldoze', 'Bulldoze', 'B'], ['select', 'Inspect', 'I']] },
   { label: 'Hazards', tools: [['hazard:fire', 'Start Fire']] },
 ];

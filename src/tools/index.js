@@ -29,6 +29,7 @@ const UTILITY_DEF = {
   power: { kind: 'power_plant', label: 'Power Plant', w: 3, d: 3, cost: 8000 },
   water: { kind: 'water_tower', label: 'Water Tower', w: 2, d: 2, cost: 4000 },
   firedept: { kind: 'fire_department', label: 'Fire Department', w: 2, d: 2, cost: 6000 },
+  police: { kind: 'police_station', label: 'Police Station', w: 2, d: 2, cost: 5000 },
 };
 
 const S = {
@@ -258,7 +259,7 @@ function pickBuildingId(ctx, x, z, i, j) {
   return ctx.world.cellAt(i, j)?.buildingId || null;
 }
 
-const UTILITY_KINDS = new Set(['power_plant', 'water_tower']);
+const UTILITY_KINDS = new Set(['power_plant', 'water_tower', 'police_station']);
 
 function prettyKind(kind) {
   if (!kind) return 'Building';
@@ -267,9 +268,10 @@ function prettyKind(kind) {
 
 function buildingInfoHtml(ctx, b) {
   const zone = b.zone || null;
-  const isUtility = UTILITY_KINDS.has(b.kind);
-  const isCivic = isUtility || b.kind === 'fire_department';
-  const tag = isCivic ? `<span class="lc-tag" style="background:#666">${isUtility ? 'Utility' : 'Civic'}</span>`
+  const isUtility = UTILITY_KINDS.has(b.kind);                                   // has a coverage radius
+  const isService = b.kind === 'fire_department' || b.kind === 'police_station'; // civic service, not a network utility
+  const isCivic = isUtility || isService;
+  const tag = isCivic ? `<span class="lc-tag" style="background:#666">${isService ? 'Civic' : 'Utility'}</span>`
     : zone ? `<span class="lc-tag ${zone}">${ZONE_LABEL[zone] || zone}</span>` : `<span class="lc-tag" style="background:#666">Unzoned</span>`;
   const cells = (b.w || 1) * (b.d || 1);
   const kind = prettyKind(b.kind);
@@ -279,14 +281,15 @@ function buildingInfoHtml(ctx, b) {
   const sim = ctx.modules.get('simulation');
   if (isUtility) {
     const radii = sim?.status === 'ok' ? safeCall(() => sim.api?.getUtilityRadii?.()) : null;
-    const cellsR = radii ? (b.kind === 'power_plant' ? radii.power : radii.water) : null;
+    const cellsR = radii ? (b.kind === 'power_plant' ? radii.power : b.kind === 'water_tower' ? radii.water : radii.police) : null;
     if (cellsR != null) rows += `<span>Coverage radius</span><span>${Math.round(cellsR * ctx.world.cellSize)} m</span>`;
   } else if (zone) {
     const cov = sim?.status === 'ok' ? safeCall(() => sim.api?.getBuildingCoverage?.(b.id)) : null;
     if (cov) {
       rows += `<span>Road</span><span>${cov.roadConnected ? 'Yes' : 'No'}</span>
       <span>Powered</span><span>${cov.powered ? 'Yes' : 'No'}</span>
-      <span>Watered</span><span>${cov.watered ? 'Yes' : 'No'}</span>`;
+      <span>Watered</span><span>${cov.watered ? 'Yes' : 'No'}</span>
+      <span>Policed</span><span>${cov.policed ? 'Yes' : 'No'}</span>`;
     }
   }
   if (b.onFire || b.damage > 0) {
@@ -743,13 +746,13 @@ function showCoverageRing(ctx, b) {
   const isUtility = b && UTILITY_KINDS.has(b.kind);
   const sim = isUtility ? ctx.modules.get('simulation') : null;
   const radii = sim?.status === 'ok' ? safeCall(() => sim.api?.getUtilityRadii?.()) : null;
-  const cellsR = radii ? (b.kind === 'power_plant' ? radii.power : b.kind === 'water_tower' ? radii.water : null) : null;
+  const cellsR = radii ? (b.kind === 'power_plant' ? radii.power : b.kind === 'water_tower' ? radii.water : b.kind === 'police_station' ? radii.police : null) : null;
   if (cellsR == null) { mesh.visible = false; return; }
   const ci = b.i + ((b.w || 1) >> 1), cj = b.j + ((b.d || 1) >> 1);
   const bounds = rectBounds(ctx, ci - cellsR, cj - cellsR, ci + cellsR, cj + cellsR);
   mesh.position.set(bounds.cx, bounds.y + 0.15, bounds.cz);
   mesh.scale.set(bounds.w, 0.15, bounds.d);
-  mesh.material = ghostMat(ctx, b.kind === 'power_plant' ? 'transYellow' : 'transBlue');
+  mesh.material = ghostMat(ctx, b.kind === 'power_plant' ? 'transYellow' : b.kind === 'water_tower' ? 'transBlue' : 'brightBlue');
   mesh.visible = true;
 }
 

@@ -169,8 +169,227 @@ export class FireIndicators {
   }
 }
 
-const DRONE_SPEED_MPS = 40; // world meters/sec — visual-only, decoupled from the sim's cell-based response math
+function buildBurglaryTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = ICON_PX;
+  const g = c.getContext('2d');
+  // light tile so the dark mask reads against the city, same silhouette style as the flame/warning sprites
+  g.beginPath();
+  g.arc(32, 32, 29, 0, Math.PI * 2);
+  g.fillStyle = '#f2f5f8';
+  g.fill();
+  g.lineWidth = 4;
+  g.strokeStyle = '#2b3036';
+  g.stroke();
+  // domino mask: rounded band, two points, two eye holes
+  g.fillStyle = '#1d3557';
+  g.beginPath();
+  g.roundRect(9, 24, 46, 16, 7);
+  g.fill();
+  g.beginPath();
+  g.moveTo(11, 27); g.lineTo(17, 15); g.lineTo(23, 27); g.closePath();
+  g.moveTo(53, 27); g.lineTo(47, 15); g.lineTo(41, 27); g.closePath();
+  g.fill();
+  g.fillStyle = '#f2f5f8';
+  g.beginPath(); g.arc(23, 32, 4.6, 0, Math.PI * 2); g.fill();
+  g.beginPath(); g.arc(41, 32, 4.6, 0, Math.PI * 2); g.fill();
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
 
+/** A small pooled billboard "burglar mask" over any building currently being burgled
+ * (simulation.getBurglaries()) — crime's own indicator, deliberately distinct from the yellow unserved triangle. */
+export class BurglaryIndicators {
+  constructor() {
+    this.texture = buildBurglaryTexture();
+    this.material = new THREE.SpriteMaterial({ map: this.texture, transparent: true, depthWrite: false });
+    this.group = new THREE.Group();
+    this.group.name = 'buildings-burglary-indicators';
+    this.pool = [];
+    this.active = new Map(); // building id -> { sprite, phase }
+  }
+
+  _acquire() {
+    const sprite = this.pool.pop() || new THREE.Sprite(this.material);
+    if (!sprite.parent) this.group.add(sprite);
+    sprite.visible = true;
+    return sprite;
+  }
+
+  _release(sprite) {
+    sprite.visible = false;
+    this.pool.push(sprite);
+  }
+
+  /** ids: currently-burgled building ids (simulation.getBurglaries()); batcher: buildings' BuildingBatcher. */
+  sync(ids, batcher) {
+    const wanted = new Set(ids);
+    for (const [id, entry] of this.active) {
+      if (!wanted.has(id)) { this._release(entry.sprite); this.active.delete(id); }
+    }
+    for (const id of ids) {
+      const info = batcher.get(id);
+      if (!info) continue;
+      let entry = this.active.get(id);
+      if (!entry) { entry = { sprite: this._acquire(), phase: phaseFromId(id) }; this.active.set(id, entry); }
+      entry.sprite.position.set(info.cx, info.baseY + info.height + 2.2, info.cz);
+    }
+  }
+
+  update(dt) {
+    for (const entry of this.active.values()) {
+      entry.phase += dt * 5;
+      const bob = 1 + Math.sin(entry.phase) * 0.08;
+      entry.sprite.scale.set(2.6 * bob, 2.6 * bob, 1);
+    }
+  }
+
+  dispose() {
+    for (const sprite of this.group.children.slice()) this.group.remove(sprite);
+    this.pool.length = 0;
+    this.active.clear();
+    this.material.dispose();
+    this.texture.dispose();
+  }
+}
+
+const PATROL_SPEED_MPS = 34; // world meters/sec — visual-only, same idea as DRONE_SPEED_MPS above
+
+function buildPatrolMats() {
+  return {
+    body: new THREE.MeshStandardMaterial({ color: 0x0d69ab, roughness: 0.4 }),   // brightBlue
+    glass: new THREE.MeshStandardMaterial({ color: 0x9fd4ee, roughness: 0.2 }),
+    dark: new THREE.MeshStandardMaterial({ color: 0x2b3036, roughness: 0.65 }),
+    lampRed: new THREE.MeshStandardMaterial({ color: 0xc4281c, emissive: 0xc4281c, emissiveIntensity: 0.6, roughness: 0.4 }),
+    lampBlue: new THREE.MeshStandardMaterial({ color: 0x0d69ab, emissive: 0x2e7ddb, emissiveIntensity: 0.6, roughness: 0.4 }),
+  };
+}
+
+function buildPatrolCar(mats, geoms) {
+  const g = new THREE.Group();
+  const body = new THREE.Mesh(geoms.body, mats.body);
+  body.position.y = 0.5;
+  g.add(body);
+  const cabin = new THREE.Mesh(geoms.cabin, mats.glass);
+  cabin.position.set(0, 1.15, -0.2);
+  g.add(cabin);
+  const bar = new THREE.Mesh(geoms.bar, mats.dark);
+  bar.position.set(0, 1.55, -0.2);
+  g.add(bar);
+  const red = new THREE.Mesh(geoms.lamp, mats.lampRed);
+  red.position.set(-0.42, 1.68, -0.2);
+  g.add(red);
+  const blue = new THREE.Mesh(geoms.lamp, mats.lampBlue);
+  blue.position.set(0.42, 1.68, -0.2);
+  g.add(blue);
+  for (const [sx, sz] of [[-0.72, 1.0], [0.72, 1.0], [-0.72, -1.05], [0.72, -1.05]]) {
+    const w = new THREE.Mesh(geoms.wheel, mats.dark);
+    w.rotation.z = Math.PI / 2;
+    w.position.set(sx, 0.3, sz);
+    g.add(w);
+  }
+  return g;
+}
+
+/** A small pooled patrol car per active burglary, driving a straight line from its dispatching police_station to
+ * the building (no pathfinding, same as FireDrones) and parking there until the incident clears. All cars share
+ * one material set; the light bar flashes on that shared pair of emissive materials. */
+export class PatrolCars {
+  constructor() {
+    this.mats = buildPatrolMats();
+    this.geoms = {
+      body: new THREE.BoxGeometry(1.7, 0.7, 3.6),
+      cabin: new THREE.BoxGeometry(1.5, 0.6, 1.7),
+      bar: new THREE.BoxGeometry(1.5, 0.16, 0.34),
+      lamp: new THREE.BoxGeometry(0.62, 0.22, 0.3),
+      wheel: new THREE.CylinderGeometry(0.3, 0.3, 0.22, 10),
+    };
+    this.group = new THREE.Group();
+    this.group.name = 'buildings-patrol-cars';
+    this.pool = [];
+    this.active = new Map(); // building id -> { mesh, station, target, elapsed, age, dispTicks }
+    this._flash = 0;
+  }
+
+  _acquire() {
+    const mesh = this.pool.pop() || buildPatrolCar(this.mats, this.geoms);
+    if (!mesh.parent) this.group.add(mesh);
+    mesh.visible = true;
+    return mesh;
+  }
+
+  _release(mesh) {
+    mesh.visible = false;
+    this.pool.push(mesh);
+  }
+
+  /** ids: burgled building ids; getDispatch(id) -> {stationId, elapsed, duration} | null (simulation.getBurglary);
+   * batcher: buildings' BuildingBatcher, used to resolve both the station's and the building's world positions;
+   * world: optional World, used to stop the car *outside* the target's footprint (a car driving to the building's
+   * exact centre would park inside it — the drone can hover over the centre, a ground vehicle cannot). */
+  sync(ids, getDispatch, batcher, world = null) {
+    const wanted = new Map();
+    for (const id of ids) {
+      const d = getDispatch(id);
+      if (d && d.stationId != null) wanted.set(id, d);
+    }
+    for (const [id, entry] of this.active) {
+      if (!wanted.has(id)) { this._release(entry.mesh); this.active.delete(id); }
+    }
+    for (const [id, d] of wanted) {
+      const station = batcher.get(d.stationId), target = batcher.get(id);
+      if (!station || !target) continue;
+      let entry = this.active.get(id);
+      if (!entry) { entry = { mesh: this._acquire(), age: 0 }; this.active.set(id, entry); }
+      entry.station = station; entry.target = target; entry.elapsed = d.elapsed;
+      const rec = world?.buildings?.get(id);
+      entry.stopDist = rec ? Math.max(rec.w || 1, rec.d || 1) * (world.cellSize || 8) * 0.5 + 3.5 : 0;
+    }
+  }
+
+  // Same frame-rate dead-reckoning as FireDrones.update() (see its comment): `elapsed` only advances on sim
+  // ticks, so interpolate forward every frame and gently pull back toward the authoritative value.
+  update(dt, ctx) {
+    this._flash += dt * 10;
+    const on = Math.sin(this._flash) > 0;
+    this.mats.lampRed.emissiveIntensity = on ? 6 : 0.6;
+    this.mats.lampBlue.emissiveIntensity = on ? 0.6 : 6;
+    const scale = ctx?.clock && !ctx.clock.paused ? (ctx.clock.timeScale || 0) : 0;
+    for (const entry of this.active.values()) {
+      const { station, target, mesh } = entry;
+      entry.age += dt;
+      if (entry.dispTicks == null) entry.dispTicks = entry.elapsed || 0;
+      entry.dispTicks += dt * scale / TICK_DT;
+      const diff = (entry.elapsed || 0) - entry.dispTicks;
+      entry.dispTicks += Math.abs(diff) > 1.5 ? diff : diff * Math.min(1, dt * 4);
+      const elapsedSec = entry.dispTicks * TICK_DT;
+      const dx = target.cx - station.cx, dz = target.cz - station.cz;
+      const dist = Math.hypot(dx, dz);
+      const stopDist = Math.min(entry.stopDist || 0, dist); // never overshoot past the station on a very short hop
+      const travelDist = Math.max(0, dist - stopDist);
+      const travelTime = Math.max(1, travelDist / PATROL_SPEED_MPS);
+      const travelP = clamp01(elapsedSec / travelTime);
+      const ux = dist > 0.01 ? dx / dist : 0, uz = dist > 0.01 ? dz / dist : 0;
+      const x = station.cx + ux * travelDist * travelP;
+      const z = station.cz + uz * travelDist * travelP;
+      const y = station.baseY + (target.baseY - station.baseY) * travelP;
+      mesh.position.set(x, y + 0.05, z);
+      if (dist > 0.01) mesh.rotation.y = Math.atan2(dx, dz);
+      if (travelP >= 1) mesh.position.y = y + 0.05 + Math.sin(entry.age * 3.2) * 0.05; // idle bob while parked
+    }
+  }
+
+  dispose() {
+    for (const mesh of this.group.children.slice()) this.group.remove(mesh);
+    this.pool.length = 0;
+    this.active.clear();
+    for (const m of Object.values(this.mats)) m.dispose();
+    for (const g of Object.values(this.geoms)) g.dispose();
+  }
+}
+
+const DRONE_SPEED_MPS = 40; // world meters/sec — visual-only, decoupled from the sim's cell-based response math
 function buildDroneMats() {
   return {
     body: new THREE.MeshStandardMaterial({ color: 0xe3342f, roughness: 0.4 }),

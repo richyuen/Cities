@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { generateBuilding } from './generator.js';
 import { BuildingBatcher } from './batching.js';
-import { UnservedIndicators, FireIndicators, FireDrones } from './indicators.js';
+import { UnservedIndicators, FireIndicators, FireDrones, BurglaryIndicators, PatrolCars } from './indicators.js';
 import { stageDefault, stageLevels, stageNight } from './showcase.js';
 
 // buildings — procedurally generates and renders Lego-style buildings for world.buildings records, and (in the
@@ -41,7 +41,8 @@ const REBUILD_BUDGET_MS = 2.5;
 const LEVEL_UP_BUDGET_MS = 2;
 
 const S = {
-  ctx: null, group: null, batcher: null, indicators: null, fireIndicators: null, fireDrones: null, dynMats: null, rng: null, unsub: [],
+  ctx: null, group: null, batcher: null, indicators: null, fireIndicators: null, fireDrones: null,
+  burglaryIndicators: null, patrolCars: null, dynMats: null, rng: null, unsub: [],
   pendingDirty: false, lastEvent: 0, growthAcc: 0, growthTick: 0, growthRng: null,
   tweens: [], variant: null, closeupTarget: null,
   levelUpQueue: [], levelUpQueued: null, // null placeholder; set() in init() (needs a real Set instance)
@@ -219,6 +220,7 @@ function makeDynMats(ctx) {
     porchWarm: m.plastic('black', { emissive: 'brightYellow', emissiveIntensity: 0, roughness: 0.4, clearcoat: 0.25 }),
     chimneyGlow: m.plastic('darkStoneGrey', { emissive: 'brightOrange', emissiveIntensity: 0, roughness: 0.45 }),
     beacon: m.plastic('black', { emissive: 'brightRed', emissiveIntensity: 0, roughness: 0.3 }),
+    beaconBlue: m.plastic('black', { emissive: 'brightBlue', emissiveIntensity: 0, roughness: 0.3 }),
     signGlow: m.plastic('white', { emissive: 'brightYellow', emissiveIntensity: 0, roughness: 0.4, clearcoat: 0.4 }),
   };
 }
@@ -231,6 +233,7 @@ function updateNight(ctx, isNight, daylight) {
   d.porchWarm.emissiveIntensity = t * 2.0;
   d.chimneyGlow.emissiveIntensity = t * 3.8;
   d.beacon.emissiveIntensity = t * 5.5;
+  d.beaconBlue.emissiveIntensity = t * 5.5;
   d.signGlow.emissiveIntensity = t * 3.0;
 }
 
@@ -303,6 +306,10 @@ export default {
     S.group.add(S.fireIndicators.group);
     S.fireDrones = new FireDrones();
     S.group.add(S.fireDrones.group);
+    S.burglaryIndicators = new BurglaryIndicators();
+    S.group.add(S.burglaryIndicators.group);
+    S.patrolCars = new PatrolCars();
+    S.group.add(S.patrolCars.group);
     S.pendingDirty = false; S.growthAcc = 0; S.growthTick = 0; S.tweens.length = 0; S.closeupTarget = null; S.stageBounds = null;
     S.levelUpQueue.length = 0; S.levelUpQueued = new Set();
 
@@ -317,6 +324,11 @@ export default {
         const burning = sim.api.getBurningBuildings() || [];
         S.fireIndicators.sync(burning, S.batcher);
         S.fireDrones.sync(burning, sim.api.getFireDispatch, S.batcher);
+      }
+      if (sim?.status === 'ok' && typeof sim.api?.getBurglaries === 'function') {
+        const burglaries = sim.api.getBurglaries() || [];
+        S.burglaryIndicators.sync(burglaries, S.batcher);
+        S.patrolCars.sync(burglaries, sim.api.getBurglary, S.batcher, ctx.world);
       }
     }));
     S.unsub.push(ctx.events.on('time:changed', ({ isNight, daylight }) => updateNight(ctx, isNight, daylight)));
@@ -350,6 +362,8 @@ export default {
     updateTweens(dt);
     S.fireIndicators?.update(dt);
     S.fireDrones?.update(dt, ctx);
+    S.burglaryIndicators?.update(dt);
+    S.patrolCars?.update(dt, ctx);
     if (ctx.showcase) return; // auto-growth only runs in the full game
     S.growthAcc += dt;
     if (S.growthAcc >= GROWTH_INTERVAL) {
@@ -371,6 +385,10 @@ export default {
     S.fireIndicators = null;
     S.fireDrones?.dispose();
     S.fireDrones = null;
+    S.burglaryIndicators?.dispose();
+    S.burglaryIndicators = null;
+    S.patrolCars?.dispose();
+    S.patrolCars = null;
     S.levelUpQueue.length = 0;
     S.levelUpQueued = null;
     if (S.group) ctx.scene.remove(S.group);

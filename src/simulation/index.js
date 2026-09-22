@@ -1,7 +1,7 @@
 // simulation — deterministic, cheap city economy (RCI). Owns world.stats. Emits sim:tick at 2 Hz of game time.
 // Visuals exist only in showcase mode (Lego bar chart + DOM panel); in the full game this module is data-only.
 
-import { SimModel, TICK_DT, cityNameFor, POWER_RADIUS, WATER_RADIUS } from './model.js';
+import { SimModel, TICK_DT, cityNameFor, POWER_RADIUS, WATER_RADIUS, POLICE_RADIUS } from './model.js';
 import { DesirabilityGrid } from './desirability.js';
 import { stageCity } from './citygen.js';
 import { createVisuals } from './visuals.js';
@@ -76,18 +76,28 @@ const api = {
   spend(amount) { return S.model.spend(amount); },
   /** 0..1 fraction of RCI capacity within power/water coverage. */
   getUtilityCoverage() { return S.model.getUtilityCoverage(); },
-  /** { powered, watered, roadConnected } for a building id, or null if untracked. */
+  /** { powered, watered, policed, roadConnected } for a building id, or null if untracked. */
   getBuildingCoverage(id) { return S.model.getBuildingCoverage(id); },
   /** ids of tracked buildings currently missing road, power, or water. */
   getUnservedBuildings() { return S.model.getUnservedBuildings(); },
   /** utility coverage radius in cells (Chebyshev; multiply by ctx.world.cellSize for meters). */
-  getUtilityRadii() { return { power: POWER_RADIUS, water: WATER_RADIUS }; },
+  getUtilityRadii() { return { power: POWER_RADIUS, water: WATER_RADIUS, police: POLICE_RADIUS }; },
+  /** police coverage radius in cells (Chebyshev). */
+  getPoliceRadii() { return { police: POLICE_RADIUS }; },
+  /** { crime, policeCoverage, burglaries } — crime/policeCoverage are 0..1, burglaries is the active count. */
+  getCrime() { return S.model.getCrime(); },
   /** Ignite a building by id (any kind). Returns false if not found or already on fire. */
   igniteBuilding(id) { return S.model.igniteBuilding(id); },
   /** ids of buildings currently on fire. */
   getBurningBuildings() { return S.model.getBurningBuildings(); },
   /** { stationId, elapsed, duration } dispatch info for a burning building, or null. */
   getFireDispatch(id) { return S.model.getFireDispatch(id); },
+  /** Start a burglary on a building by id (any kind). Returns false if not found, already burgled, or on fire. */
+  startBurglary(id) { return S.model.startBurglary(id); },
+  /** ids of buildings currently being burgled. */
+  getBurglaries() { return S.model.getBurglaries(); },
+  /** { stationId, elapsed, duration } dispatch info for a burgled building, or null. */
+  getBurglary(id) { return S.model.getBurglary(id); },
   /** 0..1 desirability of cell (i,j) for `zone` ('r'|'c'|'i'; default: the cell's zone, else 'r') */
   cellDesirability(i, j, zone) { S.grid.ensure(S.frame); return S.grid.get(i, j, zone); },
   /** chronological copy of the last ≤300 ticks */
@@ -116,7 +126,12 @@ const api = {
     if (!patch) return;
     if (patch.policy) Object.assign(S.model.policy, patch.policy);
     if (patch.taxRate) S.model.taxRate = { ...patch.taxRate };
-    if (patch.stats) Object.assign(S.model.stats, patch.stats);
+    if (patch.stats) {
+      Object.assign(S.model.stats, patch.stats);
+      // crime is a model field, not just a stat — restore it too, or the loaded city restarts at crime 0 and
+      // ramps back up over the next few game-minutes (firePressure is transient and deliberately not restored).
+      if (typeof patch.stats.crime === 'number') S.model.crime = patch.stats.crime;
+    }
     S.model.syncBuildings(S.ctx.world);
     S.grid.markDirty();
     S.acc = 0;

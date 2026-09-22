@@ -21,7 +21,7 @@ export const UNSERVED_OCC_CAP = 0.45;          // occupancy ceiling for a buildi
 // needs roughly one utility pair per suburb block plus a denser grid elsewhere — ~1.7x as many utility buildings
 // as the old, gap-riddled anchor scheme this was originally tuned against. Left at the old rate, the extra upkeep
 // alone pushed a warmed-up demo city's treasury steadily negative even at healthy occupancy (verified in-browser).
-export const UPKEEP_UTILITY = { power_plant: 1.5, water_tower: 0.75, fire_department: 1.0 };  // money/tick, each
+export const UPKEEP_UTILITY = { power_plant: 1.5, water_tower: 0.75, fire_department: 1.0, police_station: 1.2 };  // money/tick, each
 
 // Fire simulation. Response time is straight-line Chebyshev distance to the nearest fire_department (no road
 // pathfinding exists anywhere in this codebase) — closer station → shorter, less damaging fire. Numbers below are
@@ -43,6 +43,22 @@ export const FIRE_ACTIVE_OCC_CAP = 0.1;      // occupancy target ceiling while a
 export const FIRE_PRESSURE_SATURATION = 5;   // simultaneous fires at which the happiness penalty maxes out
 export const FIRE_HAPPINESS_WEIGHT = 0.15;   // weight of fire pressure in hTarget (debt's weight is 0.3, for scale)
 export const DRONE_SPEED = 10;               // fire-drone travel speed, cells/game-second (visual layer only)
+
+// Police & crime. Mirrors the fire block above: service building + deterministic per-building incident + straight-line
+// response (nearest station, no pathfinding) + a happiness pressure. Crime is a slow city-wide 0..1 value driven by
+// population/unemployment/taxes/debt that raises incident odds and lowers happiness; police coverage suppresses it.
+// Starting points — tune in-browser like every other constant in this file.
+export const POLICE_RADIUS = 14;             // cells (Chebyshev) — one station covers a neighbourhood, not a district
+export const CRIME_POP_SCALE = 20000;        // population at which the population-driven term approaches max
+export const CRIME_HAPPINESS_WEIGHT = 0.12;  // weight of crime in hTarget (fire pressure is 0.15)
+export const CRIME_BASE = 0.05;              // floor: even a hamlet sees the occasional incident
+export const CRIME_POLICE_MAX_REDUCTION = 0.75;  // crime multiplier floor at full police coverage
+export const CRIME_RAMP = 0.02;              // per-tick smoothing (2 Hz) — crime moves over minutes, not seconds
+export const BURGLARY_BASE_CHANCE = 1.2e-5;  // per-tick per-eligible-building at crime=1, occ=1 (fire uses 4e-6)
+export const BURGLARY_BASE_DURATION_TICKS = 16;  // ~8 game-sec minimum, even with a station next door
+export const BURGLARY_DURATION_PER_CELL = 1.5;   // extra ticks per Chebyshev cell of response distance
+export const BURGLARY_OCC_DIP = 0.25;        // occupancy target ceiling while a building is being burgled
+export const BURGLARY_LOOT = 150;            // one-off money loss when a burglary starts
 /** money feedback: debt of DEBT_SCALE = full service degradation; wealth of WEALTH_SCALE = full wealth bonus */
 export const DEBT_SCALE = 120000;
 export const WEALTH_SCALE = 250000;
@@ -103,7 +119,8 @@ export class SimModel {
     this.parkCoverage = null;
     this.powerCoverage = null;
     this.waterCoverage = null;
-    this.utilities = [];                               // { id, kind: 'power_plant'|'water_tower', i, j, w, d }
+    this.policeCoverage = null;
+    this.utilities = [];                               // { id, kind: 'power_plant'|'water_tower'|'fire_department'|'police_station', i, j, w, d }
     this.roadCells = 0;
     this.growth = [];                                 // building ids that should level up (refreshed per tick)
     this.newCandidates = [];                          // ids that became candidates this tick
@@ -116,6 +133,8 @@ export class SimModel {
     this.bankrupt = false;                             // true once that has held for BANKRUPT_HOLD_TICKS
     this.burning = new Map();                          // id -> raw building record, currently on fire
     this.firePressure = 0;                             // 0..1, saturates at FIRE_PRESSURE_SATURATION simultaneous fires
+    this.burglaries = new Map();                       // id -> raw building record, currently being burgled
+    this.crime = 0;                                    // 0..1, slow city-wide crime level (see step())
   }
 
   _blankStats() {
@@ -123,7 +142,7 @@ export class SimModel {
       population: 0, jobs: 0, money: this.money, happiness: this.happiness, traffic: 0, employment: 1,
       workforce: 0, capacity: { r: 0, c: 0, i: 0 }, occupancy: { r: 0, c: 0, i: 0 }, jobsC: 0, jobsI: 0,
       demand: { r: 0, c: 0, i: 0 }, parkShare: 0, income: 0, expenses: 0, buildings: 0, roads: 0, net: 0, debt: 0, wealth: 0, services: 1,
-      bankrupt: false, bankruptTicks: 0, powerCoverage: 0, waterCoverage: 0,
+      bankrupt: false, bankruptTicks: 0, powerCoverage: 0, waterCoverage: 0, crime: 0, policeCoverage: 0, burglaries: 0,
       day: 1, tick: 0, cityName: this.cityName, cityLevel: 0, cityLevelName: LEVEL_NAMES[0],
     };
   }
@@ -136,8 +155,9 @@ export class SimModel {
     const seed = ((b.seed | 0) ^ Math.imul(idh, 0x27d4eb2f)) | 0;
     return {
       b, occ: this.startOccupancy, rate: 0.005 + 0.012 * hashInt(seed), level: clamp(b.level | 0, 1, 3),
-      mature: 0, nearPark: false, powered: false, watered: false, roadConnected: false, notified: false, cap: 0,
+      mature: 0, nearPark: false, powered: false, watered: false, policed: false, roadConnected: false, notified: false, cap: 0,
       fireSeed: seed ^ 0x5bd1e995,
+      crimeSeed: seed ^ 0x27d4eb2f,
     };
   }
 
@@ -165,6 +185,21 @@ export class SimModel {
     return bestId == null ? { dist: FIRE_MAX_RESPONSE_DIST, stationId: null } : { dist: best, stationId: bestId };
   }
 
+  /** { dist, stationId } to the nearest police_station (Chebyshev cells, center-to-center), however far — only
+   * { dist: 0, stationId: null } when the city has literally zero police stations (burglary duration has no
+   * "no station" maximum the way fire severity does; with no station it simply runs its base duration). */
+  _nearestPoliceStation(b) {
+    const bi = b.i + ((b.w || 1) >> 1), bj = b.j + ((b.d || 1) >> 1);
+    let best = Infinity, bestId = null;
+    for (const u of this.utilities) {
+      if (u.kind !== 'police_station') continue;
+      const ui = u.i + ((u.w || 1) >> 1), uj = u.j + ((u.d || 1) >> 1);
+      const d = Math.max(Math.abs(ui - bi), Math.abs(uj - bj));
+      if (d < best) { best = d; bestId = u.id; }
+    }
+    return bestId == null ? { dist: 0, stationId: null } : { dist: best, stationId: bestId };
+  }
+
   /** Stamp fire state directly onto a raw building record (RCI or utility) and track it in `this.burning`. */
   _startFire(b) {
     const { dist, stationId } = this._nearestFireDept(b);
@@ -178,12 +213,28 @@ export class SimModel {
     this.burning.set(b.id, b);
   }
 
-  _isUtilityKind(kind) { return kind === 'power_plant' || kind === 'water_tower' || kind === 'fire_department'; }
+  /** Stamp burglary state onto a raw building record and track it in `this.burglaries`. Response distance only
+   * scales the duration (there is no permanent damage — that is fire's identity); the city loses a small one-off
+   * sum when it starts. */
+  _startBurglary(b) {
+    const { dist, stationId } = this._nearestPoliceStation(b);
+    b.burglary = true;
+    b.burglaryElapsed = 0;
+    b.burglaryDuration = BURGLARY_BASE_DURATION_TICKS + BURGLARY_DURATION_PER_CELL * dist;
+    b.burglaryStationId = stationId;
+    this.money -= BURGLARY_LOOT;
+    this.burglaries.set(b.id, b);
+  }
+
+  _isUtilityKind(kind) {
+    return kind === 'power_plant' || kind === 'water_tower' || kind === 'fire_department' || kind === 'police_station';
+  }
 
   syncBuildings(world) {
-    this.list.length = 0; this.byId.clear(); this.utilities.length = 0; this.burning.clear();
+    this.list.length = 0; this.byId.clear(); this.utilities.length = 0; this.burning.clear(); this.burglaries.clear();
     for (const b of world.buildings.values()) {
       if (b.onFire) this.burning.set(b.id, b);
+      if (b.burglary) this.burglaries.set(b.id, b);
       if (this._isUtilityKind(b.kind)) { this.utilities.push(b); continue; }
       if (!CAPACITY[b.zone]) continue;
       const s = this._entry(b);
@@ -202,6 +253,7 @@ export class SimModel {
       s.nearPark = this.parkCoverage[b.j * this._w + b.i] === 1;
       s.powered = this.powerCoverage ? this.powerCoverage[b.j * this._w + b.i] === 1 : false;
       s.watered = this.waterCoverage ? this.waterCoverage[b.j * this._w + b.i] === 1 : false;
+      s.policed = this.policeCoverage ? this.policeCoverage[b.j * this._w + b.i] === 1 : false;
       s.roadConnected = this._roadConnectedFor(b);
       if (!s.powered || !s.watered || !s.roadConnected) this.unserved.push(b.id);
     } else this.dirtyStatic = true;
@@ -209,6 +261,7 @@ export class SimModel {
 
   removeBuilding(id) {
     this.burning.delete(id);
+    this.burglaries.delete(id);
     if (this._isUtilityKind(this.utilities.find((u) => u.id === id)?.kind)) {
       this.utilities = this.utilities.filter((u) => u.id !== id);
       this.markDirty();
@@ -259,14 +312,17 @@ export class SimModel {
 
     const powerCov = (this.powerCoverage && this.powerCoverage.length === n) ? this.powerCoverage : new Uint8Array(n);
     const waterCov = (this.waterCoverage && this.waterCoverage.length === n) ? this.waterCoverage : new Uint8Array(n);
-    powerCov.fill(0); waterCov.fill(0);
+    const policeCov = (this.policeCoverage && this.policeCoverage.length === n) ? this.policeCoverage : new Uint8Array(n);
+    powerCov.fill(0); waterCov.fill(0); policeCov.fill(0);
     for (const b of this.utilities) {
       const ci = Math.min(w - 1, b.i + ((b.w || 1) >> 1)), cj = Math.min(h - 1, b.j + ((b.d || 1) >> 1));
       if (b.kind === 'power_plant') SimModel._stampRadius(powerCov, w, h, ci, cj, POWER_RADIUS);
       else if (b.kind === 'water_tower') SimModel._stampRadius(waterCov, w, h, ci, cj, WATER_RADIUS);
+      else if (b.kind === 'police_station') SimModel._stampRadius(policeCov, w, h, ci, cj, POLICE_RADIUS);
     }
     this.powerCoverage = powerCov;
     this.waterCoverage = waterCov;
+    this.policeCoverage = policeCov;
 
     const unserved = this.unserved; unserved.length = 0;
     for (const s of this.list) {
@@ -274,6 +330,7 @@ export class SimModel {
       s.nearPark = parkCov[idx] === 1;
       s.powered = powerCov[idx] === 1;
       s.watered = waterCov[idx] === 1;
+      s.policed = policeCov[idx] === 1;
       s.roadConnected = this._roadConnectedFor(s.b);
       if (!s.powered || !s.watered || !s.roadConnected) unserved.push(s.b.id);
     }
@@ -285,7 +342,7 @@ export class SimModel {
     if (this.dirtyStatic) this._recomputeStatic(world);
     const P = this.pressure, list = this.list;
     let pop = 0, jobsC = 0, jobsI = 0, capR = 0, capC = 0, capI = 0, parkW = 0;
-    let poweredCap = 0, wateredCap = 0, totalCap = 0;
+    let poweredCap = 0, wateredCap = 0, policedCap = 0, totalCap = 0;
     const growth = this.growth; growth.length = 0;
     const fresh = this.newCandidates; fresh.length = 0;
     // neutral demand → ~80% occupied; strong negative demand empties buildings, positive fills them
@@ -303,6 +360,13 @@ export class SimModel {
     }
     this.firePressure = clamp01(this.burning.size / FIRE_PRESSURE_SATURATION);
 
+    // burglary progression — same shape as the fire loop, but no damage: a burglary just suppresses the target
+    // occupancy for its duration and then clears. Kept independent of the fire loop (a building can do both).
+    for (const b of this.burglaries.values()) {
+      b.burglaryElapsed = (b.burglaryElapsed || 0) + 1;
+      if (b.burglaryElapsed >= b.burglaryDuration) { b.burglary = false; this.burglaries.delete(b.id); }
+    }
+
     for (let k = 0, n = list.length; k < n; k++) {
       const s = list[k], b = s.b, zone = b.zone;
       const lvl = b.level < 1 ? 1 : b.level > 3 ? 3 : (b.level | 0);
@@ -311,13 +375,19 @@ export class SimModel {
         if (b.damage > 0) b.damage = Math.max(0, b.damage - FIRE_REPAIR_RATE);
         if (hashInt(s.fireSeed ^ Math.imul(this.tick, 0x9e3779b1)) < FIRE_IGNITION_BASE * (0.4 + 0.6 * s.occ)) this._startFire(b);
       }
+      if (!b.onFire && !b.burglary && this.crime > 0.001) {
+        const chance = BURGLARY_BASE_CHANCE * (0.3 + 0.7 * s.occ) * this.crime;
+        if (hashInt(s.crimeSeed ^ Math.imul(this.tick, 0x85ebca6b)) < chance) this._startBurglary(b);
+      }
       const cap = CAPACITY[zone][lvl] * b.w * b.d * (1 - FIRE_DAMAGE_CAP_LOSS * (b.damage || 0));
       s.cap = cap;
       const served = s.powered && s.watered;
       totalCap += cap; if (s.powered) poweredCap += cap; if (s.watered) wateredCap += cap;
+      if (s.policed) policedCap += cap;
       let target = zone === 'r' ? tR : zone === 'c' ? tC : tI;
       if (!served) target = Math.min(target, UNSERVED_OCC_CAP);
       if (b.onFire) target = Math.min(target, FIRE_ACTIVE_OCC_CAP);
+      if (b.burglary) target = Math.min(target, 1 - BURGLARY_OCC_DIP);
       s.occ += (target - s.occ) * s.rate;
       const filled = cap * s.occ;
       if (zone === 'r') { pop += filled; capR += cap; if (s.nearPark) parkW += filled; }
@@ -356,9 +426,16 @@ export class SimModel {
     const tax = this.taxRate, pol = this.policy;
     const avgTax = (tax.r + tax.c + tax.i) / 3;
     const taxPain = clamp01((avgTax - 0.09) * 5);
+    // crime: slow-moving city-wide pressure. Population, unemployment, taxes and debt push it up; police coverage
+    // (share of capacity within POLICE_RADIUS of a station) suppresses it, never below the CRIME_BASE floor.
+    const policeShare = totalCap ? policedCap / totalCap : 0;
+    const crimeTarget = clamp01(CRIME_BASE + (pop / CRIME_POP_SCALE) * 0.9 + 0.25 * (1 - employment)
+      + 0.3 * taxPain + 0.3 * debt + (this.bankrupt ? 0.2 : 0)) * (1 - CRIME_POLICE_MAX_REDUCTION * policeShare);
+    this.crime += (crimeTarget - this.crime) * CRIME_RAMP;
     // a fully employed, park-rich, uncongested, low-tax, solvent city tops out around 0.95
     const hTarget = 0.42 * employment + 0.22 * Math.min(1, parkShare * 1.6) + 0.18 * (1 - this.traffic)
-      + 0.1 * (1 - taxPain) + 0.08 * wealth - 0.3 * debt - FIRE_HAPPINESS_WEIGHT * this.firePressure;
+      + 0.1 * (1 - taxPain) + 0.08 * wealth - 0.3 * debt - FIRE_HAPPINESS_WEIGHT * this.firePressure
+      - CRIME_HAPPINESS_WEIGHT * this.crime;
     this.happiness += (clamp01(hTarget) - this.happiness) * 0.05;
 
     // RCI demand pressures (SimCity-style): residential wants a jobs surplus + happiness; commercial follows the
@@ -412,6 +489,7 @@ export class SimModel {
     st.net = income - expenses; st.debt = debt; st.wealth = wealth; st.services = services;
     st.bankrupt = this.bankrupt; st.bankruptTicks = this.bankruptTicks;
     st.powerCoverage = totalCap ? poweredCap / totalCap : 0; st.waterCoverage = totalCap ? wateredCap / totalCap : 0;
+    st.crime = this.crime; st.policeCoverage = policeShare; st.burglaries = this.burglaries.size;
     st.day = this.day; st.tick = this.tick; st.cityName = this.cityName; st.cityLevel = cityLevel; st.cityLevelName = LEVEL_NAMES[cityLevel];
 
     // history ring
@@ -466,11 +544,11 @@ export class SimModel {
   /** 0..1 fraction of RCI building capacity currently within power/water coverage. */
   getUtilityCoverage() { return { power: this.stats.powerCoverage || 0, water: this.stats.waterCoverage || 0 }; }
 
-  /** { powered, watered, roadConnected } for any tracked building id; utilities themselves always read as served. */
+  /** { powered, watered, policed, roadConnected } for any tracked building id; utilities themselves always read as served. */
   getBuildingCoverage(id) {
-    if (this._isUtilityKind(this.utilities.find((u) => u.id === id)?.kind)) return { powered: true, watered: true, roadConnected: true };
+    if (this._isUtilityKind(this.utilities.find((u) => u.id === id)?.kind)) return { powered: true, watered: true, policed: true, roadConnected: true };
     const s = this.byId.get(id);
-    return s ? { powered: s.powered, watered: s.watered, roadConnected: s.roadConnected } : null;
+    return s ? { powered: s.powered, watered: s.watered, policed: s.policed, roadConnected: s.roadConnected } : null;
   }
 
   /** Ids of tracked (non-utility) buildings currently missing road, power, or water. */
@@ -492,5 +570,28 @@ export class SimModel {
     const b = this.burning.get(id);
     if (!b) return null;
     return { stationId: b.fireStationId ?? null, elapsed: b.fireElapsed || 0, duration: b.fireDuration || 1 };
+  }
+
+  /** { crime, policeCoverage, burglaries } — crime/policeCoverage are 0..1, burglaries is the active count. */
+  getCrime() {
+    return { crime: this.crime, policeCoverage: this.stats.policeCoverage || 0, burglaries: this.burglaries.size };
+  }
+
+  /** Ids of buildings currently being burgled. */
+  getBurglaries() { return [...this.burglaries.keys()]; }
+
+  /** { stationId, elapsed, duration } for a burgled building's dispatch (for the patrol-car visual), or null. */
+  getBurglary(id) {
+    const b = this.burglaries.get(id);
+    if (!b) return null;
+    return { stationId: b.burglaryStationId ?? null, elapsed: b.burglaryElapsed || 0, duration: b.burglaryDuration || 1 };
+  }
+
+  /** Start a burglary on a building by id (any kind). No-op if not found, already burgled, or on fire. Returns success. */
+  startBurglary(id) {
+    const b = this.byId.get(id)?.b ?? this.utilities.find((u) => u.id === id);
+    if (!b || b.burglary || b.onFire) return false;
+    this._startBurglary(b);
+    return true;
   }
 }

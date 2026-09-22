@@ -8,6 +8,7 @@ const initialState = () => ({
   ctx: null, hud: null, style: null, minimap: null, offs: [], rng: null,
   tool: null, settings: { quality: 'high', studs: true }, hudVisible: true,
   day: 1, lastHours: null, lastMinute: -1, statsPoll: 0, hadTick: false, _night: undefined,
+  burglaries: new Set(),
   pointer: { x: -1, y: -1 }, onKey: null, onPointer: null, backdrop: null,
 });
 const S = initialState();
@@ -26,6 +27,17 @@ function applyStats(stats) {
 function simApi(ctx) { const m = ctx.modules.get('simulation'); return m?.status === 'ok' ? m.api : null; }
 const pct = (v) => `${Math.round(Math.max(0, Math.min(1, v || 0)) * 100)}%`;
 const num = (v) => Math.round(v || 0).toLocaleString('en-US');
+
+/** One toast per new burglary. The sim exposes only the current id list (no event), so diff it against the
+ * previous tick's set — a burglary that merely persists doesn't re-toast. */
+function pollBurglaries(ctx) {
+  const ids = simApi(ctx)?.getBurglaries?.() || [];
+  const now = new Set(ids);
+  for (const id of now) {
+    if (!S.burglaries.has(id)) { S.hud?.notify('\u{1F6A8} Burglary reported — police dispatched', 'warn'); break; }
+  }
+  S.burglaries = now;
+}
 
 function buildTreasuryModal(ctx) {
   const sim = simApi(ctx);
@@ -64,6 +76,9 @@ function buildPopulationModal(ctx) {
       h('span', {}, 'Housing demand'), h('span', {}, pct(st.demand.r)),
       h('span', {}, 'Happiness'), h('span', {}, pct(st.happiness)),
       h('span', {}, 'Park access'), h('span', {}, pct(st.parkShare)),
+      h('span', {}, 'Crime'), h('span', {}, pct(st.crime)),
+      h('span', {}, 'Police coverage'), h('span', {}, pct(st.policeCoverage)),
+      h('span', {}, 'Burglaries'), h('span', {}, num(st.burglaries)),
       h('span', {}, 'City level'), h('span', {}, st.cityLevelName)));
 }
 
@@ -223,6 +238,7 @@ export default {
         applyStats(p?.stats);
         const d = p?.demand || {};
         S.hud.setDemand(d.r || 0, d.c || 0, d.i || 0);
+        pollBurglaries(ctx);
       }),
       ctx.events.on('tool:selected', (p) => { S.tool = p?.tool ?? null; S.hud.setTool(S.tool); }),
       ctx.events.on('weather:changed', (p) => S.hud.setWeather(p?.weather?.kind || ctx.world.weather.kind, ctx.clock.isNight)),
