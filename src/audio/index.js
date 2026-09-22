@@ -148,7 +148,7 @@ export default {
     const ev = ctx.events, world = ctx.world;
     S.unsub = [
       ev.on('tool:selected', () => play('click')),
-      ev.on('road:added', ({ edge }) => play('road', edge ? edgeCenter(world, edge) : null)),
+      ev.on('road:added', ({ edge, reason }) => { if (reason !== 'split' && reason !== 'merge') play('road', edge ? edgeCenter(world, edge) : null); }),
       ev.on('building:spawned', ({ building }) => play('place', building ? buildingCenter(world, building) : null)),
       ev.on('building:removed', ({ building }) => play('bulldoze', building ? buildingCenter(world, building) : null)),
       ev.on('zone:changed', ({ zone }) => { if (zone) play('zone'); }),

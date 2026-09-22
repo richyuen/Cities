@@ -328,17 +328,29 @@ export function buildEdge(B, f, nodes) {
     const ga = gapFor(nodeA), gb = gapFor(nodeB);
     const ma = f.s0 + ga, mb = f.s1 - gb;
     if (mb - ma > 1) {
-      const mst = stationsBetween(f, ma, mb);
       const hw = spec.median / 2;
-      const mL = mst.map((s) => edgePoint(f, s, -hw, Y.sidewalk));
-      const mR = mst.map((s) => edgePoint(f, s, +hw, Y.sidewalk));
+      // Taper the ends that stop short of a junction into a nose (a blunt square cut reads unfinished and the
+      // yellow lines beside it look clipped). Ends that meet a bend keep full width so the arc median matches.
+      const noseA = ga > 0 ? Math.min(1.5, (mb - ma) * 0.4) : 0;
+      const noseB = gb > 0 ? Math.min(1.5, (mb - ma) * 0.4) : 0;
+      const halfAt = (s) => {
+        let t = 1;
+        if (noseA > 0) t = Math.min(t, (s - ma) / noseA);
+        if (noseB > 0) t = Math.min(t, (mb - s) / noseB);
+        t = Math.max(0, Math.min(1, t));
+        return hw * (0.18 + 0.82 * t);
+      };
+      const mst2 = [ma];
+      for (let s = Math.ceil(ma / PITCH) * PITCH; s < mb - 1e-3; s += PITCH) if (s > ma + 1e-3) mst2.push(s);
+      mst2.push(mb);
+      const mL = mst2.map((s) => edgePoint(f, s, -halfAt(s), Y.sidewalk));
+      const mR = mst2.map((s) => edgePoint(f, s, +halfAt(s), Y.sidewalk));
       addBand(B.curb, mL, mR, { wallIn: Y.sidewalk - Y.surface + 0.02, wallOut: Y.sidewalk - Y.surface + 0.02 });
-      for (const [s, dir, gap] of [[ma, -1, ga], [mb, 1, gb]]) {
-        if (gap <= 0) continue;
-        const a = edgePoint(f, s, -hw, Y.sidewalk), b = edgePoint(f, s, hw, Y.sidewalk);
-        addCap(B.curb, a, b, Y.sidewalk - Y.surface + 0.02, dir, f);
-      }
+      const capDepth = Y.sidewalk - Y.surface + 0.02;
+      if (noseA > 0) addCap(B.curb, edgePoint(f, ma, -halfAt(ma), Y.sidewalk), edgePoint(f, ma, halfAt(ma), Y.sidewalk), capDepth, -1, f);
+      if (noseB > 0) addCap(B.curb, edgePoint(f, mb, -halfAt(mb), Y.sidewalk), edgePoint(f, mb, halfAt(mb), Y.sidewalk), capDepth, +1, f);
       for (let s = Math.ceil((ma + 0.4) / PITCH) * PITCH; s <= mb - 0.4; s += PITCH) {
+        if (halfAt(s) < 0.55) continue; // would hang off the tapered nose
         for (const lat of [-0.4, 0.4]) { const p = edgePoint(f, s, lat, Y.sidewalk); B.studs.push(p.x, p.y, p.z, 'mediumStoneGrey'); }
       }
     }
@@ -373,9 +385,10 @@ function addCap(acc, a, b, depth, dir, f) {
   else { acc.tri(base, base + 2, base + 1); acc.tri(base + 1, base + 2, base + 3); }
 }
 
-/** Marking strip following the profile. */
+/** Marking strip following the profile. Sub-25 cm slivers (a dash clipped by a junction trim) are dropped rather
+ * than rendered as a hairline that shimmers on the deck at grazing angles. */
 function addStrip(acc, f, s0, s1, l0, l1) {
-  if (s1 - s0 < 0.05) return;
+  if (!(s1 - s0 > 0.25)) return;
   const st = stationsBetween(f, s0, s1);
   const A = st.map((s) => edgePoint(f, s, l0, Y.marking));
   const Bp = st.map((s) => edgePoint(f, s, l1, Y.marking));
@@ -500,6 +513,7 @@ function buildArcNode(B, node) {
       const seg = (u0, u1, lat) => { const out = []; const k = Math.max(2, Math.ceil((u1 - u0) * n) + 1); for (let i = 0; i < k; i++) { const p = arcPoint(node, u0 + (u1 - u0) * (i / (k - 1)), lat); out.push({ x: p.x, y: arcY(node, u0 + (u1 - u0) * (i / (k - 1))) + Y.marking, z: p.z }); } return out; };
       for (let s = m.gap / 2; s < len - 0.3; s += period) {
         const u0 = s / len, u1 = Math.min(1, (s + m.dash) / len);
+        if (!((u1 - u0) * len > 0.25)) continue; // clipped dash sliver
         addBand(bucket, seg(u0, u1, m.lat - m.w / 2), seg(u0, u1, m.lat + m.w / 2), {});
       }
     }

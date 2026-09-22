@@ -1,5 +1,5 @@
 {
-  "updated": "2026-09-18T15:45:30.769Z",
+  "updated": "2026-09-22T03:25:50.767Z",
   "modules": {
     "terrain": {
       "score": 7.3,
@@ -36,19 +36,23 @@
       "updated": "2026-09-17T23:25:31.456Z"
     },
     "roads": {
-      "score": 8.6,
-      "round": 3,
+      "score": 8.8,
+      "round": 4,
       "pass": true,
       "errors": 0,
-      "fps": 84.4,
+      "fps": 143,
       "drawCalls": 78,
       "issues": [
-        "Noon plastic sheen is angle-dependent (visible close/grazing, flatter in standard closeup preset at true noon)",
-        "lastBuildMs still ~3x round1 baseline (51.6ms vs 18ms, not perf-budgeted)"
+        "Faint straight-edged shading/UV steps on large coplanar asphalt plates (Issue 3, untouched, still minor)",
+        "Noon plastic sheen still angle-dependent (r3 carry-over, unchanged)",
+        "lastBuildMs 36-54ms (not perf-budgeted)",
+        "Thin marking slivers/hairlines on junction decks (fixed, verified in fresh r4v captures)",
+        "Blunt square-cut median island noses (fixed, tapered noses verified)",
+        "junction-variant north-end bend bulb 8m from avenue (fixed: now 4-way T at (0,160) + bend to n15/56,128)"
       ],
-      "review": "docs/reviews/roads-r3.md",
+      "review": "docs/reviews/roads-r4.md",
       "wave": 0,
-      "updated": "2026-09-17T10:39:31.020Z"
+      "updated": "2026-09-22T03:25:50.766Z"
     },
     "simulation": {
       "score": 8.8,

@@ -120,6 +120,29 @@ function roadCrossingInfo(ctx, a, b) {
 
 function roadPathBuildable(ctx, a, b) { return roadCrossingInfo(ctx, a, b).ok; }
 
+/** True when the carriageway would be paved over a cell that already has a building on it. Road and building
+ * meshes overlapping each other is exactly the "roads overlap" artefact players see; the game's convention is
+ * that you bulldoze first (same as fixed-footprint utility placement, see stampBuildable). */
+function roadBuildingBlocked(ctx, a, b, kind) {
+  const world = ctx.world;
+  const roads = ctx.modules.get('roads');
+  let half = (FALLBACK_WIDTH[kind] || 8) / 2;
+  if (roads?.status === 'ok' && typeof roads.api?.roadWidth === 'function') { try { half = roads.api.roadWidth(kind) / 2; } catch (_) { /* keep fallback */ } }
+  const dx = b.x - a.x, dz = b.z - a.z, len = Math.hypot(dx, dz) || 1;
+  const nx = -dz / len, nz = dx / len;
+  const steps = Math.max(1, Math.ceil(len / 4));
+  const lat = Math.max(1, Math.ceil((half - 0.1) / 4));
+  for (let s = 0; s <= steps; s++) {
+    const t = s / steps, cx = a.x + dx * t, cz = a.z + dz * t;
+    for (let o = -lat; o <= lat; o++) {
+      const u = (o / lat) * Math.max(0.1, half - 0.1);
+      const c = world.cellAtWorld(cx + nx * u, cz + nz * u);
+      if (c && c.buildingId) return true;
+    }
+  }
+  return false;
+}
+
 function roadGhostGeom(ctx, kind, a, b) {
   const dx = b.x - a.x, dz = b.z - a.z;
   const length = Math.hypot(dx, dz);
@@ -131,7 +154,8 @@ function roadGhostGeom(ctx, kind, a, b) {
   if (roads?.status === 'ok' && typeof roads.api?.heightAt === 'function') { try { midy = roads.api.heightAt(midx, midz); } catch (_) { midy = ctx.world.getHeight(midx, midz); } }
   else midy = ctx.world.getHeight(midx, midz);
   const crossing = roadCrossingInfo(ctx, a, b);
-  const valid = length >= MIN_ROAD_LEN && crossing.ok && !ctx.world.roadOverlapBlocked(a, b, kind);
+  const buildingBlocked = roadBuildingBlocked(ctx, a, b, kind);
+  const valid = length >= MIN_ROAD_LEN && crossing.ok && !buildingBlocked && !ctx.world.roadOverlapBlocked(a, b, kind);
   const cost = Math.round(length * (PRICE_PER_M[kind] ?? 100) * (crossing.crossesWater ? BRIDGE_COST_MULTIPLIER : 1));
   return { length, width, mid: { x: midx, y: midy + 0.25, z: midz }, angle: Math.atan2(dz, dx), valid, cost };
 }
@@ -460,11 +484,12 @@ function finishRoad(d) {
   if (length < MIN_ROAD_LEN) return; // a tap, not a drag: silent no-op
   const crossing = roadCrossingInfo(ctx, a, b);
   if (!crossing.ok) { fail('Cannot build there — blocked by water', a); return; }
+  if (roadBuildingBlocked(ctx, a, b, kind)) { fail('Cannot build there — bulldoze the building first', a); return; }
   if (ctx.world.roadOverlapBlocked(a, b, kind)) { fail('A road already runs along this path', a); return; }
   const cost = Math.round(length * (PRICE_PER_M[kind] ?? 100) * (crossing.crossesWater ? BRIDGE_COST_MULTIPLIER : 1));
   if (currentMoney(ctx) < cost) { fail(`Insufficient funds — need $${cost.toLocaleString()}`, a); return; }
   let edgeId;
-  try { edgeId = ctx.world.addRoad({ x: a.x, z: a.z }, { x: b.x, z: b.z }, kind, { bridge: crossing.crossesWater }); }
+  try { edgeId = ctx.world.addRoad({ x: a.x, z: a.z }, { x: b.x, z: b.z }, kind, { bridge: crossing.crossesWater, snapNodes: true }); }
   catch (e) { ctx.error('[tools] addRoad failed:', e); fail('Road placement failed', a); return; }
   if (!edgeId) { fail('Road placement failed', a); return; }
   spendMoney(ctx, cost);

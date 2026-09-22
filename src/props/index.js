@@ -251,7 +251,7 @@ function maybeSignalIntersections() {
   }
 }
 
-function onRoadAdded({ edgeId, edge }) {
+function onRoadAdded({ edgeId, edge, reason }) {
   // A 'path' (pedestrian, lanes: 0) edge is a park crossing or a service alley, not a real street — it gets no
   // streetlamps (populateAlongRoad) and never forms a vehicle-signalled intersection (maybeSignalIntersections),
   // so skip both. This isn't just cosmetic: every lamp placement resolves its height via roads.snapToRoad(), which
@@ -261,7 +261,10 @@ function onRoadAdded({ edgeId, edge }) {
   // cost was being paid per lamp, on every alley, and dominated generation time.
   const kind = edge?.kind ?? S.ctx.world.roads.edges.get(edgeId)?.kind;
   if (kind === 'path') return;
-  populateAlongRoad(S.ctx, api.addProp, S.rng, edgeId);
+  // A split/merge event is the core stitching an existing road into a junction: props already exist along that
+  // line, so repopulating the halves would duplicate lamps near the new junction. Signals still need the new
+  // node, so that pass always runs.
+  if (reason !== 'split' && reason !== 'merge') populateAlongRoad(S.ctx, api.addProp, S.rng, edgeId);
   maybeSignalIntersections();
 }
 

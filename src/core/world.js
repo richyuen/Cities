@@ -7,6 +7,42 @@ import * as THREE from 'three';
 const PARALLEL_COS_TOL = Math.cos((20 * Math.PI) / 180);
 const ROAD_OVERLAP_BLOCK_FRACTION = 0.6;
 
+// Junction model (see World.addRoad): vehicle roads are stitched into the network instead of merely overlapping it.
+//   NODE_SNAP     — how far a requested endpoint may sit from an existing node and still join it (matches
+//                   _findOrCreateNode's historical 0.5 m tolerance for the exact-coordinate callers).
+//   JUNCTION_SNAP — a crossing/endpoint this close to an existing node joins that node rather than creating a
+//                   second node next to it (no near-duplicate nodes, no sub-4 m stubs at junctions).
+//   ENDPOINT_SNAP — a requested endpoint this close to a road centreline splits that edge and joins it (a player
+//                   drag ending on a road, i.e. the T-junction gesture).
+//   ROUTE_SNAP    — interactive drags (snapNodes) also route through existing nodes this close to the segment.
+//   STRAIGHT_COS  — removal healing merges two edges through a degree-2 node only when they are this collinear.
+const NODE_SNAP = 0.5;
+const JUNCTION_SNAP = 4;
+const ENDPOINT_SNAP = 2;
+const ROUTE_SNAP = 4;
+const STRAIGHT_COS = -Math.cos((2.5 * Math.PI) / 180);
+
+/** Distance from point (px,pz) to segment (ax,az)-(bx,bz). */
+function pointSegDist(px, pz, ax, az, bx, bz) {
+  const dx = bx - ax, dz = bz - az, l2 = dx * dx + dz * dz;
+  if (!(l2 > 1e-12)) return Math.hypot(px - ax, pz - az);
+  let t = ((px - ax) * dx + (pz - az) * dz) / l2;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  return Math.hypot(ax + dx * t - px, az + dz * t - pz);
+}
+
+/** Proper interior intersection of segments a-b and c-d; null when parallel or touching an endpoint. */
+function segIntersect(ax, az, bx, bz, cx, cz, dx, dz) {
+  const rx = bx - ax, rz = bz - az, sx = dx - cx, sz = dz - cz;
+  const den = rx * sz - rz * sx;
+  if (Math.abs(den) < 1e-9) return null;
+  const qx = cx - ax, qz = cz - az;
+  const t = (qx * sz - qz * sx) / den;
+  const u = (qx * rz - qz * rx) / den;
+  if (t <= 1e-6 || t >= 1 - 1e-6 || u <= 1e-6 || u >= 1 - 1e-6) return null;
+  return { x: ax + rx * t, z: az + rz * t, t, u };
+}
+
 export class World {
   constructor(events, { w = 256, h = 256, cellSize = 8 } = {}) {
     this.events = events;
@@ -259,6 +295,170 @@ export class World {
     return n;
   }
 
+  /** Nearest existing node within maxDist (Euclidean), or null. Scans the 1 m node-grid buckets that can hold a
+   * node that close — unlike _findOrCreateNode's fixed 3x3 window this stays correct for tolerances above 1 m. */
+  _nearestNode(x, z, maxDist) {
+    const g0x = Math.round(x - maxDist) - 1, g1x = Math.round(x + maxDist) + 1;
+    const g0z = Math.round(z - maxDist) - 1, g1z = Math.round(z + maxDist) + 1;
+    let best = null, bestD = maxDist + 1e-9;
+    for (let gx = g0x; gx <= g1x; gx++) {
+      for (let gz = g0z; gz <= g1z; gz++) {
+        const bucket = this._nodeGrid.get(`${gx},${gz}`);
+        if (!bucket) continue;
+        for (const n of bucket) {
+          const d = Math.hypot(n.x - x, n.z - z);
+          if (d < bestD) { bestD = d; best = n; }
+        }
+      }
+    }
+    return best;
+  }
+
+  /** Nearest point on a stitchable road edge (vehicle, at-grade) within maxDist: { edge, x, z, dist } or null. */
+  _nearestRoadEdgePoint(x, z, maxDist) {
+    let best = null;
+    for (const e of this.roads.edges.values()) {
+      if (e.bridge || e.kind === 'path') continue;
+      const na = this.roads.nodes.get(e.a), nb = this.roads.nodes.get(e.b);
+      if (!na || !nb) continue;
+      const dx = nb.x - na.x, dz = nb.z - na.z, l2 = dx * dx + dz * dz;
+      if (!(l2 > 1e-12)) continue;
+      let t = ((x - na.x) * dx + (z - na.z) * dz) / l2;
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const px = na.x + dx * t, pz = na.z + dz * t;
+      const d = Math.hypot(px - x, pz - z);
+      if (d <= maxDist && (!best || d < best.dist)) best = { edge: e, x: px, z: pz, t, dist: d };
+    }
+    return best;
+  }
+
+  /** Resolve one end of a new vehicle road: join a nearby node, else split the nearest road edge, else make a node. */
+  _resolveRoadNode(x, z, nodeSnap = NODE_SNAP) {
+    const near = this._nearestNode(x, z, nodeSnap);
+    if (near) return near;
+    const hit = this._nearestRoadEdgePoint(x, z, ENDPOINT_SNAP);
+    if (hit) {
+      const n = this._splitEdgeAt(hit.edge.id, hit.x, hit.z);
+      if (n) return n;
+    }
+    return this._findOrCreateNode(x, z, 0.01);
+  }
+
+  /**
+   * Split an edge at (x,z), sharing one node between the two halves. Retires the old edge (cells are re-owned)
+   * and inserts the halves with the same cross-section. Returns the junction node, or null for bridges/missing.
+   */
+  _splitEdgeAt(edgeId, x, z) {
+    const e = this.roads.edges.get(edgeId);
+    if (!e || e.bridge) return null;
+    const na = this.roads.nodes.get(e.a), nb = this.roads.nodes.get(e.b);
+    if (!na || !nb) return null;
+    const n = this._findOrCreateNode(x, z, 0.05);
+    if (n.id === e.a || n.id === e.b) return n;
+    const proto = { kind: e.kind, lanes: e.lanes, width: e.width, bridge: !!e.bridge };
+    this._retireEdge(e, 'split');
+    this._createEdgeBetween(na, n, proto, 'split');
+    this._createEdgeBetween(n, nb, proto, 'split');
+    return n;
+  }
+
+  /** Create the edge between two nodes (reusing an existing one), mark its cells, emit road:added. */
+  _createEdgeBetween(na, nb, proto, reason) {
+    if (!na || !nb || na === nb) return null;
+    for (const eid of na.edges) {
+      const e = this.roads.edges.get(eid);
+      if (e && ((e.a === na.id && e.b === nb.id) || (e.a === nb.id && e.b === na.id))) return eid;
+    }
+    const id = `e${this._ids.edge++}`;
+    const edge = { id, a: na.id, b: nb.id, kind: proto.kind, lanes: proto.lanes, width: proto.width, bridge: !!proto.bridge };
+    this.roads.edges.set(id, edge);
+    na.edges.push(id); nb.edges.push(id);
+    this._markRoadCells(edge);
+    this.events.emit('road:added', { edgeId: id, edge, reason: reason || undefined });
+    return id;
+  }
+
+  /** Remove an edge from the graph: re-own its cells by the remaining edges (or free them), emit road:removed.
+   * Nodes are left alone (callers clean up / heal). `reason` marks programmatic splits/merges for consumers. */
+  _retireEdge(edge, reason) {
+    this._unmarkRoadCells(edge);
+    this.roads.edges.delete(edge.id);
+    for (const nid of [edge.a, edge.b]) {
+      const n = this.roads.nodes.get(nid);
+      if (n) n.edges = n.edges.filter((id) => id !== edge.id);
+    }
+    this.events.emit('road:removed', { edgeId: edge.id, edge, reason: reason || undefined });
+  }
+
+  /**
+   * Cell ownership on removal. Cells can be claimed by core marking (carriageway) or by the roads module's own
+   * footprint marking (carriageway + sidewalks), so retirement must hand back every cell that points at the
+   * retired edge — not just the ones this method's own rasterisation would have marked.
+   */
+  _unmarkRoadCells(edge) {
+    for (const c of this.cells) {
+      if (c.roadId !== edge.id) continue;
+      const owner = this._cellOwner(c.i, c.j, edge.id);
+      if (owner) { c.type = 'road'; c.roadId = owner; }
+      else { c.type = this._isWaterCell(c.i, c.j) ? 'water' : 'none'; c.roadId = null; }
+    }
+  }
+
+  /** Id of the remaining edge whose footprint covers cell (i,j), preferring the closest centreline; null if none. */
+  _cellOwner(i, j, excludeId) {
+    const p = this.cellToWorld(i, j);
+    let best = null, bestD = Infinity;
+    for (const e of this.roads.edges.values()) {
+      if (e.id === excludeId) continue;
+      const na = this.roads.nodes.get(e.a), nb = this.roads.nodes.get(e.b);
+      if (!na || !nb) continue;
+      const d = pointSegDist(p.x, p.z, na.x, na.z, nb.x, nb.z);
+      // generous reach: carriageway + the widest sidewalk/verge (2 m) + half a cell for rasterisation slack
+      if (d <= e.width / 2 + 2.5 + this.cellSize * 0.75 && d < bestD) { bestD = d; best = e.id; }
+    }
+    return best;
+  }
+
+  _cleanupNode(nodeId) {
+    const n = this.roads.nodes.get(nodeId);
+    if (!n || n.edges.length) return;
+    this.roads.nodes.delete(nodeId);
+    const key = this._nodeGridKey(n.x, n.z);
+    const bucket = this._nodeGrid.get(key);
+    if (!bucket) return;
+    const idx = bucket.indexOf(n);
+    if (idx >= 0) bucket.splice(idx, 1);
+    if (bucket.length === 0) this._nodeGrid.delete(key);
+  }
+
+  /**
+   * Removal healing: a degree-2 node whose two edges are the same cross-section and nearly collinear is an
+   * artefact of an earlier junction split (the through road's two halves). Merge them back into one edge so
+   * editing does not litter the network with micro-edges. Non-collinear degree-2 nodes (real bends) stay.
+   */
+  _healNode(nodeId) {
+    const n = this.roads.nodes.get(nodeId);
+    if (!n || n.edges.length !== 2) return;
+    const e1 = this.roads.edges.get(n.edges[0]), e2 = this.roads.edges.get(n.edges[1]);
+    if (!e1 || !e2) return;
+    if (e1.kind !== e2.kind || e1.width !== e2.width || !!e1.bridge !== !!e2.bridge || e1.bridge) return;
+    const o1 = this.roads.nodes.get(e1.a === nodeId ? e1.b : e1.a);
+    const o2 = this.roads.nodes.get(e2.a === nodeId ? e2.b : e2.a);
+    if (!o1 || !o2 || o1 === o2) return;
+    const l1 = Math.hypot(n.x - o1.x, n.z - o1.z), l2 = Math.hypot(n.x - o2.x, n.z - o2.z);
+    if (!(l1 > 1e-6) || !(l2 > 1e-6)) return;
+    const d1x = (o1.x - n.x) / l1, d1z = (o1.z - n.z) / l1;
+    const d2x = (o2.x - n.x) / l2, d2z = (o2.z - n.z) / l2;
+    if (d1x * d2x + d1z * d2z > STRAIGHT_COS) return; // < ~177.5 deg: a real bend, keep the node
+    const proto = { kind: e1.kind, lanes: e1.lanes, width: e1.width, bridge: !!e1.bridge };
+    this._retireEdge(e1, 'merge');
+    this._retireEdge(e2, 'merge');
+    this._createEdgeBetween(o1, o2, proto, 'merge');
+    this._cleanupNode(nodeId);
+    this._healNode(o1.id);
+    this._healNode(o2.id);
+  }
+
   static ROAD_SPECS = {
     street: { lanes: 2, width: 8 },
     avenue: { lanes: 4, width: 16 },
@@ -298,26 +498,81 @@ export class World {
 
   roadOverlapBlocked(a, b, kind) { return this.roadOverlapFraction(a, b, kind) > ROAD_OVERLAP_BLOCK_FRACTION; }
 
-  addRoad(a, b, kind = 'street', { bridge = false } = {}) {
+  /**
+   * Add a road. The segment is stitched into the network: an endpoint that lands on a road splits that road and
+   * shares the junction node, and interior crossings of other roads become real junctions (both edges are split
+   * at the shared node) instead of overlapping plates. Bridges stay at-grade-exempt (no junction on the deck) and
+   * pedestrian paths keep the legacy behaviour (an alley ends at the kerb; it never splits a street).
+   * `snapNodes` (interactive drags) additionally routes the new road through any existing node it passes over.
+   * Returns the id of the first created edge piece (or an existing edge if nothing new was needed).
+   */
+  addRoad(a, b, kind = 'street', { bridge = false, snapNodes = false } = {}) {
     const spec = World.ROAD_SPECS[kind] || World.ROAD_SPECS.street;
     if (this.roadOverlapBlocked(a, b, kind)) return null;
+    if (kind === 'path') return this._addLegacyRoad(a, b, kind, spec, bridge);
+
+    const na = this._resolveRoadNode(a.x, a.z, snapNodes ? JUNCTION_SNAP : NODE_SNAP);
+    const nb = this._resolveRoadNode(b.x, b.z, snapNodes ? JUNCTION_SNAP : NODE_SNAP);
+    if (!na || !nb || na === nb) return null;
+
+    const junctionT = new Map(); // junction node id -> t along the requested segment
+    if (!bridge) {
+      const pool = [...this.roads.edges.values()]; // splits below mutate the map; iterate a snapshot
+      for (const e of pool) {
+        if (e.bridge || e.kind === 'path') continue;
+        if (e.a === na.id || e.b === na.id || e.a === nb.id || e.b === nb.id) continue;
+        const ea = this.roads.nodes.get(e.a), eb = this.roads.nodes.get(e.b);
+        if (!ea || !eb) continue;
+        const hit = segIntersect(na.x, na.z, nb.x, nb.z, ea.x, ea.z, eb.x, eb.z);
+        if (!hit) continue;
+        const node = this._nearestNode(hit.x, hit.z, JUNCTION_SNAP) || this._splitEdgeAt(e.id, hit.x, hit.z);
+        if (!node || node === na || node === nb) continue;
+        const prev = junctionT.get(node.id);
+        if (prev === undefined || hit.t < prev) junctionT.set(node.id, hit.t);
+      }
+      if (snapNodes) {
+        for (const n of this.roads.nodes.values()) {
+          if (n === na || n === nb) continue;
+          const dx = nb.x - na.x, dz = nb.z - na.z, l2 = dx * dx + dz * dz;
+          if (!(l2 > 1e-12)) continue;
+          const t = ((n.x - na.x) * dx + (n.z - na.z) * dz) / l2;
+          if (t <= 1e-6 || t >= 1 - 1e-6) continue;
+          if (pointSegDist(n.x, n.z, na.x, na.z, nb.x, nb.z) > ROUTE_SNAP) continue;
+          const prev = junctionT.get(n.id);
+          if (prev === undefined || t < prev) junctionT.set(n.id, t);
+        }
+      }
+    }
+
+    const chain = [{ node: na, t: 0 }];
+    for (const [nodeId, t] of junctionT) {
+      const n = this.roads.nodes.get(nodeId);
+      if (n) chain.push({ node: n, t });
+    }
+    chain.push({ node: nb, t: 1 });
+    chain.sort((p, q) => p.t - q.t);
+    const proto = { kind, lanes: spec.lanes, width: spec.width, bridge };
+    let first = null;
+    for (let i = 0; i + 1 < chain.length; i++) {
+      const p = chain[i].node, q = chain[i + 1].node;
+      if (p === q) continue;
+      const id = this._createEdgeBetween(p, q, proto, null);
+      if (id && first === null) first = id;
+    }
+    return first;
+  }
+
+  /** Single-edge add with exact-node endpoints only (pedestrian paths, and the pre-junction callers). */
+  _addLegacyRoad(a, b, kind, spec, bridge) {
     const na = this._findOrCreateNode(a.x, a.z);
     const nb = this._findOrCreateNode(b.x, b.z);
     if (na === nb) return null;
-    for (const eid of na.edges) {
-      const e = this.roads.edges.get(eid);
-      if (e && ((e.a === na.id && e.b === nb.id) || (e.a === nb.id && e.b === na.id))) return eid;
-    }
-    const id = `e${this._ids.edge++}`;
-    const edge = { id, a: na.id, b: nb.id, kind, lanes: spec.lanes, width: spec.width, bridge: !!bridge };
-    this.roads.edges.set(id, edge);
-    na.edges.push(id); nb.edges.push(id);
-    this._markRoadCells(edge, id);
-    this.events.emit('road:added', { edgeId: id, edge });
-    return id;
+    return this._createEdgeBetween(na, nb, { kind, lanes: spec.lanes, width: spec.width, bridge }, null);
   }
 
-  _markRoadCells(edge, roadId) {
+  /** Mark every cell the new edge's band covers as road, owned by that edge (an existing road cell keeps its
+   * owner; _unmarkRoadCells hands ownership over when that owner is retired). */
+  _markRoadCells(edge) {
     const na = this.roads.nodes.get(edge.a), nb = this.roads.nodes.get(edge.b);
     const dx = nb.x - na.x, dz = nb.z - na.z;
     const len = Math.hypot(dx, dz);
@@ -330,12 +585,8 @@ export class World {
       for (let o = -half; o <= half; o += this.cellSize * 0.5) {
         const { i, j } = this.worldToCell(cx + nx * o, cz + nz * o);
         const c = this.cellAt(i, j);
-        if (!c) continue;
-        if (roadId) {
-          if (c.type !== 'road') { c.type = 'road'; c.zone = null; c.density = 0; c.roadId = roadId; }
-        } else if (c.roadId === edge.id) {
-          c.type = this._isWaterCell(i, j) ? 'water' : 'none'; c.roadId = null;
-        }
+        if (c && c.type !== 'road') { c.type = 'road'; c.zone = null; c.density = 0; c.roadId = edge.id; }
+        else if (c && !c.roadId) c.roadId = edge.id; // adopt unowned road cells (e.g. showcase-only markings)
       }
     }
   }
@@ -343,24 +594,12 @@ export class World {
   removeRoad(edgeId) {
     const edge = this.roads.edges.get(edgeId);
     if (!edge) return false;
-    this._markRoadCells(edge, null); // before nodes may be deleted
-    this.roads.edges.delete(edgeId);
-    for (const nid of [edge.a, edge.b]) {
-      const n = this.roads.nodes.get(nid);
-      if (!n) continue;
-      n.edges = n.edges.filter((e) => e !== edgeId);
-      if (n.edges.length === 0) {
-        this.roads.nodes.delete(nid);
-        const key = this._nodeGridKey(n.x, n.z);
-        const bucket = this._nodeGrid.get(key);
-        if (bucket) {
-          const idx = bucket.indexOf(n);
-          if (idx >= 0) bucket.splice(idx, 1);
-          if (bucket.length === 0) this._nodeGrid.delete(key);
-        }
-      }
-    }
-    this.events.emit('road:removed', { edgeId, edge });
+    const a = edge.a, b = edge.b;
+    this._retireEdge(edge);
+    this._cleanupNode(a);
+    this._cleanupNode(b);
+    this._healNode(a); // a through road split at an earlier junction merges back once the junction is gone
+    this._healNode(b);
     return true;
   }
 
@@ -444,7 +683,14 @@ export class World {
   clearContent() {
     for (const id of [...this.buildings.keys()]) this.removeBuilding(id);
     for (const id of [...this.props.keys()]) this.removeProp(id);
-    for (const id of [...this.roads.edges.keys()]) this.removeRoad(id);
+    // Bulk road clear: per-edge removal + healing would be O(edges^2) here and a delete-while-iterating loop
+    // could miss edges that healing merges mid-loop. Clear the graph, reset road cells once, then emit the
+    // removals so listeners (roads/traffic/sim/ui) rebuild as usual.
+    const edges = [...this.roads.edges.values()];
+    this.roads.edges.clear();
+    this.roads.nodes.clear();
+    this._nodeGrid.clear();
     for (const c of this.cells) { c.zone = null; c.density = 0; if (c.type !== 'water') c.type = 'none'; c.roadId = null; c.buildingId = null; }
+    for (const e of edges) this.events.emit('road:removed', { edgeId: e.id, edge: e });
   }
 }

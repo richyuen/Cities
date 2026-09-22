@@ -39,6 +39,130 @@ function ensureNetwork() {
 
 function markDirty() { S.dirty = true; S.netDirty = true; S.lastEvent = performance.now(); }
 
+/** Distance from point (px,pz) to segment (ax,az)-(bx,bz). */
+function pointSegDist(px, pz, ax, az, bx, bz) {
+  const dx = bx - ax, dz = bz - az, l2 = dx * dx + dz * dz;
+  if (!(l2 > 1e-12)) return Math.hypot(px - ax, pz - az);
+  let t = ((px - ax) * dx + (pz - az) * dz) / l2;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  return Math.hypot(ax + dx * t - px, az + dz * t - pz);
+}
+
+/**
+ * Read-only network invariant audit (driven by tools/road-audit.mjs). Every list must be empty for the road
+ * network to be consistent:
+ *   crossings  — two at-grade vehicle edges crossing without a shared node (traffic can never turn there)
+ *   overlaps   — two non-incident parallel edges whose bands genuinely overlap (duplicated road)
+ *   nearNodes  — two distinct nodes closer than 1.5 m (should have merged)
+ *   unsplitT   — a degree-1 vehicle node sitting inside another vehicle edge's band (T without a junction)
+ *   orphans    — node/edge references pointing at deleted entities
+ *   badCells   — a road cell whose owner edge id points at a deleted edge (roadCellsNoOwner is informational)
+ *   badLane    — NaN/Inf lane paths or lane connections
+ */
+function auditNetwork(world) {
+  const out = { crossings: [], overlaps: [], nearNodes: [], unsplitT: [], orphans: [], badCells: [], badLane: [] };
+  const nodes = [...world.roads.nodes.values()];
+  const edges = [...world.roads.edges.values()];
+  const at = (id) => world.roads.nodes.get(id);
+  const isVeh = (e) => e && e.kind !== 'path' && !e.bridge;
+  const info = [];
+  for (const e of edges) {
+    const a = at(e.a), b = at(e.b);
+    if (!a || !b) continue;
+    const dx = b.x - a.x, dz = b.z - a.z, L = Math.hypot(dx, dz);
+    if (L > 1e-6) info.push({ e, ax: a.x, az: a.z, dx, dz, L });
+  }
+  const COS20 = Math.cos((20 * Math.PI) / 180);
+  for (let i = 0; i < info.length; i++) {
+    for (let j = i + 1; j < info.length; j++) {
+      const A = info[i], B = info[j], ea = A.e, eb = B.e;
+      if (!isVeh(ea) || !isVeh(eb)) continue;
+      if (ea.a === eb.a || ea.a === eb.b || ea.b === eb.a || ea.b === eb.b) continue;
+      const den = A.dx * B.dz - A.dz * B.dx;
+      const qx = B.ax - A.ax, qz = B.az - A.az;
+      if (Math.abs(den) > 1e-9) {
+        const t = (qx * B.dz - qz * B.dx) / den, u = (qx * A.dz - qz * A.dx) / den;
+        if (t > 1e-6 && t < 1 - 1e-6 && u > 1e-6 && u < 1 - 1e-6) {
+          out.crossings.push({ a: ea.id, b: eb.id, x: +(A.ax + A.dx * t).toFixed(2), z: +(A.az + A.dz * t).toFixed(2) });
+        }
+        continue;
+      }
+      const cos = Math.abs((A.dx * B.dx + A.dz * B.dz) / (A.L * B.L));
+      if (cos < COS20) continue;
+      const nx = -A.dz / A.L, nz = A.dx / A.L;
+      const d1 = (B.ax - A.ax) * nx + (B.az - A.az) * nz;
+      const d2 = (B.ax + B.dx - A.ax) * nx + (B.az + B.dz - A.az) * nz;
+      const lat = Math.min(Math.abs(d1), Math.abs(d2));
+      if (lat >= (ea.width + eb.width) / 2 - 0.01) continue;
+      const dirx = A.dx / A.L, dirz = A.dz / A.L;
+      const t1 = (B.ax - A.ax) * dirx + (B.az - A.az) * dirz;
+      const t2 = (B.ax + B.dx - A.ax) * dirx + (B.az + B.dz - A.az) * dirz;
+      const lo = Math.max(0, Math.min(t1, t2)), hi = Math.min(A.L, Math.max(t1, t2));
+      if (hi - lo > 0.5) out.overlaps.push({ a: ea.id, b: eb.id, run: +(hi - lo).toFixed(2), lat: +lat.toFixed(2) });
+    }
+  }
+  for (let i = 0; i < nodes.length; i++) {
+    for (let j = i + 1; j < nodes.length; j++) {
+      const d = Math.hypot(nodes[i].x - nodes[j].x, nodes[i].z - nodes[j].z);
+      if (d < 1.5) out.nearNodes.push({ a: nodes[i].id, b: nodes[j].id, d: +d.toFixed(2) });
+    }
+  }
+  const edgeIds = new Set(edges.map((e) => e.id));
+  const nodeIds = new Set(nodes.map((n) => n.id));
+  for (const n of nodes) for (const id of n.edges) if (!edgeIds.has(id)) out.orphans.push(`node ${n.id} -> ${id}`);
+  for (const e of edges) {
+    if (!nodeIds.has(e.a)) out.orphans.push(`edge ${e.id} -> ${e.a}`);
+    if (!nodeIds.has(e.b)) out.orphans.push(`edge ${e.id} -> ${e.b}`);
+  }
+  for (const n of nodes) {
+    if (n.edges.length !== 1) continue;
+    const inc = world.roads.edges.get(n.edges[0]);
+    if (!isVeh(inc)) continue;
+    for (const e of info) {
+      if (e.e.id === inc.id || !isVeh(e.e)) continue;
+      if (e.e.a === n.id || e.e.b === n.id) continue;
+      if (pointSegDist(n.x, n.z, e.ax, e.az, e.ax + e.dx, e.az + e.dz) <= e.e.width / 2 - 0.01) {
+        out.unsplitT.push({ node: n.id, edge: e.e.id });
+        break;
+      }
+    }
+  }
+  const cs = world.cellSize;
+  let roadCellsNoOwner = 0;
+  for (const c of world.cells) {
+    if (c.type !== 'road') continue;
+    if (!c.roadId) { roadCellsNoOwner++; continue; }
+    const e = world.roads.edges.get(c.roadId);
+    const a = e && at(e.a), b = e && at(e.b);
+    // Ownership itself is the invariant: a road cell must point at a live edge (any live edge covering the cell
+    // is fine — junction plates / fillet corners extend beyond a single edge's own band, so "owner covers" is
+    // neither necessary nor sufficient). Holes left by a bad removal surface as road cells disappearing, which
+    // the harness's round-trip fingerprints catch.
+    if (!e || !a || !b) out.badCells.push({ i: c.i, j: c.j, roadId: c.roadId, why: 'missing owner' });
+  }
+  out.roadCellsNoOwner = roadCellsNoOwner;
+  const net = ensureNetwork();
+  for (const f of net.edges.values()) {
+    if (!(lanesPerDirection(f) > 0)) continue;
+    for (const p of lanePath(f, 0, 'forward')) {
+      if (!Number.isFinite(p.x) || !Number.isFinite(p.y) || !Number.isFinite(p.z)) { out.badLane.push({ edge: f.id, why: 'non-finite lane point' }); break; }
+    }
+  }
+  for (const n of net.nodes.values()) {
+    let conns = [];
+    try { conns = api.getLaneConnections(n.id); } catch (err) { out.badLane.push({ node: n.id, why: String(err && err.message || err) }); continue; }
+    for (const c of conns) {
+      if (!c.path || !c.path.length || c.path.some((p) => !Number.isFinite(p.x) || !Number.isFinite(p.y) || !Number.isFinite(p.z))) {
+        out.badLane.push({ node: n.id, why: 'non-finite connection path' });
+        break;
+      }
+    }
+  }
+  out.ok = !out.crossings.length && !out.overlaps.length && !out.nearNodes.length && !out.unsplitT.length
+    && !out.orphans.length && !out.badCells.length && !out.badLane.length;
+  return out;
+}
+
 /**
  * Mark every world cell the road footprint touches as 'road' (terrain then hides its studs there) and put the
  * terrain's own studs back on the part of those cells the footprint does not cover, so there are never studs
@@ -233,9 +357,13 @@ async function makeMaterials(ctx) {
     white: ctx.materials.plastic('white', { roughness: 0.5, clearcoat: 0.3 }),
     yellow: ctx.materials.plastic('brightYellow', { roughness: 0.5, clearcoat: 0.3 }),
   };
-  // surface sits under the markings: push it back a hair so nothing z-fights at grazing angles
+  // surface sits under the markings: push it back a hair so nothing z-fights at grazing angles; the print itself
+  // is 2 cm above the surface, which can fall under depth precision at distance, so pull it toward the camera
+  // with the opposite offset sign — otherwise lane lines shimmer as 1-pixel hairlines on the deck.
   mats.surface.polygonOffset = true; mats.surface.polygonOffsetFactor = 1; mats.surface.polygonOffsetUnits = 1;
   mats.path.polygonOffset = true; mats.path.polygonOffsetFactor = 1; mats.path.polygonOffsetUnits = 1;
+  mats.white.polygonOffset = true; mats.white.polygonOffsetFactor = -1; mats.white.polygonOffsetUnits = -1;
+  mats.yellow.polygonOffset = true; mats.yellow.polygonOffsetFactor = -1; mats.yellow.polygonOffsetUnits = -1;
   return mats;
 }
 
@@ -321,6 +449,13 @@ const presets = {
     const s = f.L / 2;
     const mx = f.ax + f.d.x * s, mz = f.az + f.d.z * s, my = profileAt(f, s);
     return { pos: [mx - f.d.x * 174 - f.right.x * 47, my + 32, mz - f.d.z * 174 - f.right.z * 47], target: [mx, my + 1, mz], fov: 50 };
+  },
+  'roads:junction': (world) => {
+    // The junction story: a 4-arm node with an avenue arm, framed so the corner fillets and the crosswalks read.
+    const n = pickNode((v) => (v.arms.length >= 4 ? 10 : v.arms.length >= 3 ? 6 : 0)
+      + (v.arms.some((a) => a.frame.kind === 'avenue') ? 3 : 0) - Math.hypot(v.x, v.z) / 2000);
+    if (!n) return fallbackCam(world);
+    return { pos: [n.x + 44, n.y + 34, n.z - 52], target: [n.x, n.y, n.z], fov: 46 };
   },
   'roads:deadend': (world) => {
     const n = pickNode((n) => (n.kind === 'deadend' ? 10 : 0) + (n.arms[0]?.bulb > 0 ? 5 : 0) - Math.hypot(n.x, n.z) / 1000);
@@ -420,6 +555,8 @@ const api = {
     return num(S.ctx?.world.getHeight(x, z)) + Y.lane;
   },
   getNetwork() { return ensureNetwork(); },
+  /** Read-only network invariant audit; every list must be empty (see auditNetwork / tools/road-audit.mjs). */
+  audit() { return auditNetwork(S.ctx.world); },
   lastBuildMs() { return S.lastBuildMs; },
   buildBreakdown() { return { ...S.breakdown, ...S.fpTimes }; },
   studStats() { return { ...S.studStats }; },
@@ -431,7 +568,7 @@ export default {
   deps: TERRAIN_PRESENT ? ['terrain'] : [],
   order: 30,
   api,
-  showcaseVariants: ['default', 'intersection', 'highway'],
+  showcaseVariants: ['default', 'intersection', 'highway', 'junction'],
   presets,
 
   async init(ctx) {

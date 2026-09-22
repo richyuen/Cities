@@ -31,7 +31,9 @@ function smooth(t) { t = Math.min(1, Math.max(0, t)); return t * t * (3 - 2 * t)
 
 export function stageNetwork(ctx, variant) {
   const add = (a, b, kind = 'street') => ctx.world.addRoad({ x: a[0], z: a[1] }, { x: b[0], z: b[1] }, kind);
-  // world.addRoad does not split edges at crossings, so every grid line is added as segments between crossings
+  // Explicit grid stage: each line is added as segments between crossings. Since the junction rework, addRoad
+  // splits edges at crossings on its own, so this manual segmentation is just the legacy spelling of the same
+  // network — the `junction` variant below exercises the auto-stitching path instead.
   const grid = (xs, zs, kindOf) => {
     for (const x of xs) for (let k = 0; k < zs.length - 1; k++) add([x, zs[k]], [x, zs[k + 1]], kindOf('v', x));
     for (const z of zs) for (let k = 0; k < xs.length - 1; k++) add([xs[k], z], [xs[k + 1], z], kindOf('h', z));
@@ -40,6 +42,20 @@ export function stageNetwork(ctx, variant) {
     grid([-96, -48, 0, 48, 96], [-64, 0, 64], (o, v) => (o === 'h' && v === 0 ? 'avenue' : 'street'));
     add([-96, -64], [-96, -110], 'street');
     add([96, 64], [96, 110], 'street');
+    return;
+  }
+  if (variant === 'junction') {
+    // Player-style sketch: one drag per line, endpoints dropped onto existing roads. Before the junction rework
+    // these were dead-end stubs (cul-de-sac bulbs on the carriageway) and unconnected crossings; the contract is
+    // now that both sides are split at a shared node, with real corner geometry and lane connections.
+    add([0, -200], [0, 200], 'avenue');          // long north-south avenue
+    add([-200, -80], [200, -80], 'street');      // crosses the avenue off-centre (X)
+    add([-200, 96], [200, 96], 'street');        // another X
+    add([-112, 32], [112, 32], 'street');        // mid-block street, T into both cross streets
+    add([-112, 32], [-112, -80], 'street');      // T onto the first cross street
+    add([112, 32], [112, 96], 'street');         // T onto the second
+    add([-200, 160], [0, 160], 'street');        // T onto the avenue near the north end
+    add([0, 160], [56, 128], 'street');          // 45 deg bend continuing from the new T node
     return;
   }
   if (variant === 'highway') {

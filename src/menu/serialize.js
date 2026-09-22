@@ -16,7 +16,7 @@ export function serializeSave(ctx, { name }) {
   for (const e of world.roads.edges.values()) {
     const a = world.roads.nodes.get(e.a), b = world.roads.nodes.get(e.b);
     if (!a || !b) continue;
-    roads.push({ a: { x: a.x, z: a.z }, b: { x: b.x, z: b.z }, kind: e.kind });
+    roads.push({ a: { x: a.x, z: a.z }, b: { x: b.x, z: b.z }, kind: e.kind, bridge: !!e.bridge });
   }
   const zones = [];
   const parks = [];
@@ -45,7 +45,7 @@ export function applySave(ctx, save) {
   if (!save) return;
   const world = ctx.world;
   world.clearContent();
-  for (const r of save.roads || []) world.addRoad(r.a, r.b, r.kind);
+  for (const r of save.roads || []) world.addRoad(r.a, r.b, r.kind, { bridge: !!r.bridge });
   for (const z of save.zones || []) world.setZone(z.i, z.j, z.zone, z.density);
   for (const p of save.parks || []) world.setCell(p.i, p.j, { type: 'park', parkKind: p.parkKind ?? undefined });
   for (const b of save.buildings || []) world.addBuilding(b);
