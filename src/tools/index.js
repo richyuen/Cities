@@ -82,11 +82,22 @@ function gridSnap(world, x, z) {
   return { x: world.minX + Math.round((x - world.minX) / cs) * cs, z: world.minZ + Math.round((z - world.minZ) / cs) * cs };
 }
 
-/** Snap a road endpoint to a nearby existing road (for junctions) else the 8 m cell grid. */
+/** Snap a road endpoint to nearby existing road geometry (for junctions): a node first — exact, and dead-end
+ * nodes are reachable across their visible cul-de-sac bulb — then a point on the nearest centreline (split),
+ * else the 8 m cell grid. */
 function snapRoadPoint(ctx, x, z) {
   const roads = ctx.modules.get('roads');
-  if (roads?.status === 'ok' && typeof roads.api?.snapToRoad === 'function') {
-    try { const s = roads.api.snapToRoad(x, z, 6); if (s) return { x: s.x, z: s.z }; } catch (_) { /* fall through to grid snap */ }
+  if (roads?.status === 'ok') {
+    try {
+      if (typeof roads.api?.snapToNode === 'function') {
+        const n = roads.api.snapToNode(x, z);
+        if (n) return { x: n.x, z: n.z };
+      }
+      if (typeof roads.api?.snapToRoad === 'function') {
+        const s = roads.api.snapToRoad(x, z, 6);
+        if (s) return { x: s.x, z: s.z };
+      }
+    } catch (_) { /* fall through to grid snap */ }
   }
   return gridSnap(ctx.world, x, z);
 }

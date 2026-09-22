@@ -289,6 +289,32 @@ async function pageSuite() {
     }
   }
 
+  // ---- 5b. Player endpoint snap: a drag starting one grid cell (8 m) past a dead end stitches ---------------
+  {
+    let anchor = null;
+    for (const cand of [[-304, 696], [-304, 656], [304, 696], [-704, 656], [704, 696], [-304, 296], [304, 296], [0, 696]]) {
+      if (world.getHeight(cand[0], cand[1]) < 1) continue;
+      if (api.snapToRoad(cand[0], cand[1], 80)) continue; // too close to an existing road
+      anchor = { x: cand[0], z: cand[1] };
+      break;
+    }
+    if (!anchor) { check('tool snap: found open land', false, null); } else {
+      const A0 = { x: anchor.x - 48, z: anchor.z }, A1 = { x: anchor.x, z: anchor.z };
+      const aid = world.addRoad(A0, A1, 'street', { snapNodes: true });
+      const end = nodeAt(A1.x, A1.z, 0.6);
+      const raw = { x: A1.x + 8, z: A1.z }; // exactly one grid cell past the end, where grid snap would land
+      const p = api.snapToNode(raw.x, raw.z);
+      check('tool snap: a point one cell past a dead end snaps to the end node', !!p && Math.hypot(p.x - A1.x, p.z - A1.z) < 0.01,
+        { snap: p && [+p.x.toFixed(2), +p.z.toFixed(2)], radius: p && +p.radius.toFixed(1) });
+      const bid = world.addRoad(p ? { x: p.x, z: p.z } : raw, { x: A1.x + 56, z: A1.z }, 'street', { snapNodes: true });
+      check('tool snap: the second street shares the dead end', !!end && end.edges.length === 2, { degree: end && end.edges.length, aid, bid });
+      await auditClean('tool snap');
+      if (bid) world.removeRoad(bid);
+      if (aid) world.removeRoad(aid);
+      await roundTrip('tool snap');
+    }
+  }
+
   // ---- 6. Bridge stays at-grade-exempt: a bridge crossing a street must not split it --------------------
   {
     const target = findEdge((e, a, b, L) => e.kind === 'street' && L > 120 && Math.hypot((a.x + b.x) / 2, (a.z + b.z) / 2) > 300);

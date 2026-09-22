@@ -9,6 +9,12 @@ import { stageTerrain, stageNetwork, stageLots, buildFallbackGround } from './sh
 // module lands, roads runs standalone with a flat/showcase height field so it can be screenshotted.
 const TERRAIN_PRESENT = Object.keys(import.meta.glob('../terrain/index.js')).length > 0;
 
+// Player endpoint snapping radii (see api.snapToNode): ordinary junctions, square road ends, and the pad added
+// to a cul-de-sac bulb radius (streets only) so the whole visible bulb is a snap target.
+const NODE_SNAP_RADIUS = 4;
+const END_SNAP_RADIUS = 6;
+const BULB_SNAP_PAD = 2.5;
+
 const S = {
   ctx: null, group: null, rng: null, net: null, meshes: [], studs: null, mats: null,
   dirty: false, lastEvent: 0, unsub: [], lastBuildMs: 0, fallbackGround: null, netDirty: true, extraStuds: [],
@@ -530,6 +536,27 @@ const api = {
       }
     }
     return out;
+  },
+  /**
+   * Nearest existing road NODE (junction or dead end) a player could be aiming at. Dead-end streets are
+   * surrounded by a visible 8.5 m cul-de-sac bulb, so their snap radius covers the bulb plus a pad — without
+   * this, a drag that starts one 8 m cell past the end of another street (the grid-snap default) misses the
+   * centerline snap (clamped perpendicular foot > 6 m), gets its own fresh node, and two overlapping bulbs look
+   * stitched while the graph is disconnected. Other nodes use a tight 4 m radius so mid-street work is unaffected.
+   * Returns { nodeId, x, y, z, dist, kind, radius } or null.
+   */
+  snapToNode(x, z, maxDist = 14) {
+    const net = ensureNetwork();
+    let best = null;
+    for (const n of net.nodes.values()) {
+      const arm = n.arms[0];
+      const r = Math.min(maxDist, n.kind === 'deadend'
+        ? (arm && arm.bulb > 0 ? arm.bulb + BULB_SNAP_PAD : END_SNAP_RADIUS)
+        : NODE_SNAP_RADIUS);
+      const d = Math.hypot(n.x - x, n.z - z);
+      if (d <= r && (!best || d < best.dist)) best = { nodeId: n.id, x: num(n.x), y: num(n.y) + Y.lane, z: num(n.z), dist: d, kind: n.kind, radius: r };
+    }
+    return best;
   },
   /** Nearest point on a road centreline, with road-surface height. Null when there are no roads. */
   snapToRoad(x, z, maxDist = Infinity) {
