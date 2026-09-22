@@ -97,11 +97,16 @@ function bulbCollides(world, n, arm, rb) {
   for (const m of world.roads.nodes.values()) {
     if (m.id === n.id) continue;
     const d = Math.hypot(m.x - n.x, m.z - n.z);
-    if (d > outer + 12) continue; // no node plate reaches farther than ~12 m from its centre
+    if (d > outer + 24) continue; // no plate (≤12 m) or bulb (≤10.5 m) reaches farther than this
+    const dead = m.edges.length === 1;
     let paved = 0;
     for (const eid of m.edges) {
       const e = world.roads.edges.get(eid);
-      if (e) paved = Math.max(paved, e.width / 2 + kindSpec(e.kind).sidewalk);
+      if (!e) continue;
+      const spec = kindSpec(e.kind);
+      paved = Math.max(paved, e.width / 2 + spec.sidewalk);
+      // the other end's own bulb is pavement too: two bulbs overlap out to ~21 m even when their stems don't
+      if (dead && spec.bulb > 0) paved = Math.max(paved, Math.max(e.width / 2 + 0.5, spec.bulb) + spec.sidewalk);
     }
     if (d < outer + paved + 0.01) return true;
   }

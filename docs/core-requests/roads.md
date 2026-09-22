@@ -90,3 +90,15 @@ fixes, both in the roads/tools layer:
 Harness: a `cluster` check draws five short streets toward one point through the tool's snap chain and asserts
 they share junctions rather than stacking dead ends — 64/64 on seeds 1–3, deterministic. Cul-de-sacs in open
 land still render as bulbs (verified in both showcase variants).
+
+**Round 7 (player report: a street drawn as a continuation, two grid cells from an existing end, left two
+square-cut ends facing each other).** That spot is the 2-cell diagonal lattice point (16, 8) — 17.9 m from the
+end, just outside the old snap radius (bulb 10.5 + 5.7 pad = 16.2) while close enough for the bulb-collision
+demotion to fire, so both ends were cut square and read as a connection that was not made. Fixes:
+- `NODE_SNAP_PAD` is one full 8 m cell: the pad has to cover the grid snap's worst-case rounding of a click
+  aimed at the junction, and half a cell (the previous value) left the diagonal lattice point outside.
+- `snapToNode` measures a street end from its *spec* bulb radius even when the bulb is demoted for rendering —
+  a demoted end is still a street end the player can aim at.
+- `bulbCollides` (and `audit.bulbOverlaps`) now count the other node's own bulb as pavement, so bulb-vs-bulb
+  overlap out to ~21 m demotes both ends; overlapping rings cannot be drawn at any distance.
+Harness: the tool-snap check now covers the 2-cell diagonal point — 65/65 on seeds 1–3, deterministic.

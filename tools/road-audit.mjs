@@ -307,6 +307,10 @@ async function pageSuite() {
       const p = api.snapToNode(raw.x, raw.z);
       check('tool snap: a point one cell past a dead end snaps to the end node', !!p && Math.hypot(p.x - A1.x, p.z - A1.z) < 0.01,
         { snap: p && [+p.x.toFixed(2), +p.z.toFixed(2)], radius: p && +p.radius.toFixed(1) });
+      const diag = { x: A1.x + 16, z: A1.z + 8 }; // the 2-cell diagonal lattice point (17.9 m), the common miss
+      const p2 = api.snapToNode(diag.x, diag.z);
+      check('tool snap: the 2-cell diagonal lattice point also snaps to the end node', !!p2 && Math.hypot(p2.x - A1.x, p2.z - A1.z) < 0.01,
+        { snap: p2 && [+p2.x.toFixed(2), +p2.z.toFixed(2)], radius: p2 && +p2.radius.toFixed(1) });
       const bid = world.addRoad(p ? { x: p.x, z: p.z } : raw, { x: A1.x + 56, z: A1.z }, 'street', { snapNodes: true });
       check('tool snap: the second street shares the dead end', !!end && end.edges.length === 2, { degree: end && end.edges.length, aid, bid });
       await auditClean('tool snap');

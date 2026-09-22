@@ -10,10 +10,12 @@ import { stageTerrain, stageNetwork, stageLots, buildFallbackGround } from './sh
 const TERRAIN_PRESENT = Object.keys(import.meta.glob('../terrain/index.js')).length > 0;
 
 // Player endpoint snapping (see api.snapToNode): a node is a snap target over its whole paved plate — the
-// carriageway + sidewalk radius of its arms, or a street dead end's cul-de-sac bulb — plus this pad, which
-// covers the grid snap rounding of a click aimed at the junction. Without the footprint radius, the second
-// street of a cluster grew its own dead-end bulb even though the click was on the first junction's pavement.
-const NODE_SNAP_PAD = 5.7;
+// carriageway + sidewalk radius of its arms, or a street dead end's cul-de-sac bulb — plus this pad, one full
+// 8 m cell. The pad has to cover the grid snap's worst-case rounding of a click aimed at the junction (up to a
+// cell diagonal), which is why it is a whole cell rather than half of one: with too small a pad, the 2-cell
+// diagonal lattice point (16, 8) lands just outside the radius and a street drawn as a clear continuation
+// gets its own square-cut end instead of joining.
+const NODE_SNAP_PAD = 8;
 
 const S = {
   ctx: null, group: null, rng: null, net: null, meshes: [], studs: null, mats: null,
@@ -173,8 +175,12 @@ function auditNetwork(world) {
     const outer = n.arms[0].bulb + n.arms[0].sw;
     for (const m of net.nodes.values()) {
       if (m.id === n.id) continue;
+      // the other node's rendered pavement: its plates, plus its own bulb if one is actually rendered
       let paved = 0;
-      for (const a of m.arms) paved = Math.max(paved, a.frame.w + a.frame.spec.sidewalk);
+      for (const a of m.arms) {
+        paved = Math.max(paved, a.frame.w + a.frame.spec.sidewalk);
+        if (a.bulb > 0) paved = Math.max(paved, a.bulb + a.sw);
+      }
       if (Math.hypot(m.x - n.x, m.z - n.z) < outer + paved + 0.01) out.bulbOverlaps.push({ node: n.id, other: m.id });
     }
     for (const f of net.edges.values()) {
@@ -563,14 +569,17 @@ const api = {
    * makes a second street drawn toward the same spot join the first junction instead of growing another
    * overlapping dead-end bulb. Returns { nodeId, x, y, z, dist, kind, radius } or null.
    */
-  snapToNode(x, z, maxDist = 17) {
+  snapToNode(x, z, maxDist = 21) {
     const net = ensureNetwork();
     let best = null;
     for (const n of net.nodes.values()) {
       let paved = 0;
       for (const a of n.arms) {
         paved = Math.max(paved, a.w + a.sw);
-        if (n.kind === 'deadend' && a.bulb > 0) paved = Math.max(paved, a.bulb + a.sw);
+        // a demoted bulb (rendered as a square stub because it would overlap a neighbour) is still a street end
+        // for snapping: the player aiming near it means "join this end", so use the spec bulb radius regardless.
+        const bulb = a.frame.spec.bulb > 0 ? Math.max(a.w + 0.5, a.frame.spec.bulb) : 0;
+        if (n.kind === 'deadend' && bulb > 0) paved = Math.max(paved, bulb + a.sw);
       }
       const r = Math.min(maxDist, paved + NODE_SNAP_PAD);
       const d = Math.hypot(n.x - x, n.z - z);
