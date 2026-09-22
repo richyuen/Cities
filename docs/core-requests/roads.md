@@ -77,3 +77,16 @@ across two fresh loads.
 
 **Still open (tools, round 4):** roads are blocked over building cells (`roadBuildingBlocked`), so the player must
 bulldoze first instead of slicing a road through a building mesh.
+
+**Round 6 (player report: short streets drawn toward the same spot stacked overlapping cul-de-sac rings).** Two
+fixes, both in the roads/tools layer:
+- `roads.api.snapToNode` now treats a node as a target over its whole *paved plate* — the largest arm's
+  carriageway + sidewalk radius, or a street dead end's bulb — plus one grid cell of pad. Previously only
+  degree-1 nodes had a wide radius (and it collapsed to 4 m once a second street joined), so a third street
+  drawn onto the same junction pavement grew its own dead-end bulb.
+- `buildNetwork` demotes a cul-de-sac bulb to a plain square stub (`a.noBulb`) when `bulbCollides` finds that
+  its pavement would overlap another road's or node's pavement. `roads.api.audit()` gains `bulbOverlaps` (the
+  pixel-level invariant: rendered bulbs must never overlap other pavement; must stay empty).
+Harness: a `cluster` check draws five short streets toward one point through the tool's snap chain and asserts
+they share junctions rather than stacking dead ends — 64/64 on seeds 1–3, deterministic. Cul-de-sacs in open
+land still render as bulbs (verified in both showcase variants).

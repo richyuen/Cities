@@ -9,11 +9,11 @@ import { stageTerrain, stageNetwork, stageLots, buildFallbackGround } from './sh
 // module lands, roads runs standalone with a flat/showcase height field so it can be screenshotted.
 const TERRAIN_PRESENT = Object.keys(import.meta.glob('../terrain/index.js')).length > 0;
 
-// Player endpoint snapping radii (see api.snapToNode): ordinary junctions, square road ends, and the pad added
-// to a cul-de-sac bulb radius (streets only) so the whole visible bulb is a snap target.
-const NODE_SNAP_RADIUS = 4;
-const END_SNAP_RADIUS = 6;
-const BULB_SNAP_PAD = 2.5;
+// Player endpoint snapping (see api.snapToNode): a node is a snap target over its whole paved plate — the
+// carriageway + sidewalk radius of its arms, or a street dead end's cul-de-sac bulb — plus this pad, which
+// covers the grid snap rounding of a click aimed at the junction. Without the footprint radius, the second
+// street of a cluster grew its own dead-end bulb even though the click was on the first junction's pavement.
+const NODE_SNAP_PAD = 5.7;
 
 const S = {
   ctx: null, group: null, rng: null, net: null, meshes: [], studs: null, mats: null,
@@ -64,9 +64,10 @@ function pointSegDist(px, pz, ax, az, bx, bz) {
  *   orphans    — node/edge references pointing at deleted entities
  *   badCells   — a road cell whose owner edge id points at a deleted edge (roadCellsNoOwner is informational)
  *   badLane    — NaN/Inf lane paths or lane connections
+ *   bulbOverlaps — a rendered cul-de-sac bulb whose pavement overlaps another road's or node's pavement
  */
 function auditNetwork(world) {
-  const out = { crossings: [], overlaps: [], nearNodes: [], unsplitT: [], orphans: [], badCells: [], badLane: [] };
+  const out = { crossings: [], overlaps: [], nearNodes: [], unsplitT: [], orphans: [], badCells: [], badLane: [], bulbOverlaps: [] };
   const nodes = [...world.roads.nodes.values()];
   const edges = [...world.roads.edges.values()];
   const at = (id) => world.roads.nodes.get(id);
@@ -164,8 +165,26 @@ function auditNetwork(world) {
       }
     }
   }
+  // Rendered cul-de-sac bulbs must not overlap any other pavement. buildNetwork demotes a bulb to a square stub
+  // when it would (bulbCollides), so this list is empty on a well-formed network; it is the pixel-level guard
+  // against a pile of overlapping rings that reads as junctions which do not exist.
+  for (const n of net.nodes.values()) {
+    if (n.arms.length !== 1 || !(n.arms[0].bulb > 0)) continue;
+    const outer = n.arms[0].bulb + n.arms[0].sw;
+    for (const m of net.nodes.values()) {
+      if (m.id === n.id) continue;
+      let paved = 0;
+      for (const a of m.arms) paved = Math.max(paved, a.frame.w + a.frame.spec.sidewalk);
+      if (Math.hypot(m.x - n.x, m.z - n.z) < outer + paved + 0.01) out.bulbOverlaps.push({ node: n.id, other: m.id });
+    }
+    for (const f of net.edges.values()) {
+      if (f.a === n.id || f.b === n.id) continue;
+      const reach = f.w + f.spec.sidewalk;
+      if (pointSegDist(n.x, n.z, f.ax, f.az, f.bx, f.bz) < outer + reach + 0.01) out.bulbOverlaps.push({ node: n.id, edge: f.id });
+    }
+  }
   out.ok = !out.crossings.length && !out.overlaps.length && !out.nearNodes.length && !out.unsplitT.length
-    && !out.orphans.length && !out.badCells.length && !out.badLane.length;
+    && !out.orphans.length && !out.badCells.length && !out.badLane.length && !out.bulbOverlaps.length;
   return out;
 }
 
@@ -490,7 +509,7 @@ const api = {
     for (const n of net.nodes.values()) {
       out.push({
         nodeId: n.id, x: n.x, y: n.y + Y.lane, z: n.z, kind: n.kind, bend: n.arc ? { radius: n.arc.R, deflection: n.arc.theta } : null,
-        arms: n.arms.map((a) => ({ edgeId: a.edgeId, angle: a.angle, outward: a.outward, trim: a.trim, lanes: lanesPerDirection(a.frame), kind: a.frame.kind })),
+        arms: n.arms.map((a) => ({ edgeId: a.edgeId, angle: a.angle, outward: a.outward, trim: a.trim, lanes: lanesPerDirection(a.frame), kind: a.frame.kind, bulb: a.bulb })),
       });
     }
     return out;
@@ -538,21 +557,22 @@ const api = {
     return out;
   },
   /**
-   * Nearest existing road NODE (junction or dead end) a player could be aiming at. Dead-end streets are
-   * surrounded by a visible 8.5 m cul-de-sac bulb, so their snap radius covers the bulb plus a pad — without
-   * this, a drag that starts one 8 m cell past the end of another street (the grid-snap default) misses the
-   * centerline snap (clamped perpendicular foot > 6 m), gets its own fresh node, and two overlapping bulbs look
-   * stitched while the graph is disconnected. Other nodes use a tight 4 m radius so mid-street work is unaffected.
-   * Returns { nodeId, x, y, z, dist, kind, radius } or null.
+   * Nearest existing road NODE (junction, bend or dead end) a player could be aiming at, i.e. the node whose
+   * paved plate the click is on or near. The radius is the node's own footprint — the largest arm's
+   * carriageway + sidewalk, or a street dead end's cul-de-sac bulb — plus one grid cell of pad. This is what
+   * makes a second street drawn toward the same spot join the first junction instead of growing another
+   * overlapping dead-end bulb. Returns { nodeId, x, y, z, dist, kind, radius } or null.
    */
-  snapToNode(x, z, maxDist = 14) {
+  snapToNode(x, z, maxDist = 17) {
     const net = ensureNetwork();
     let best = null;
     for (const n of net.nodes.values()) {
-      const arm = n.arms[0];
-      const r = Math.min(maxDist, n.kind === 'deadend'
-        ? (arm && arm.bulb > 0 ? arm.bulb + BULB_SNAP_PAD : END_SNAP_RADIUS)
-        : NODE_SNAP_RADIUS);
+      let paved = 0;
+      for (const a of n.arms) {
+        paved = Math.max(paved, a.w + a.sw);
+        if (n.kind === 'deadend' && a.bulb > 0) paved = Math.max(paved, a.bulb + a.sw);
+      }
+      const r = Math.min(maxDist, paved + NODE_SNAP_PAD);
       const d = Math.hypot(n.x - x, n.z - z);
       if (d <= r && (!best || d < best.dist)) best = { nodeId: n.id, x: num(n.x), y: num(n.y) + Y.lane, z: num(n.z), dist: d, kind: n.kind, radius: r };
     }

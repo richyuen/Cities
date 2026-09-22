@@ -66,6 +66,7 @@ async function pageSuite() {
       ok: a.ok,
       crossings: a.crossings.length, overlaps: a.overlaps.length, nearNodes: a.nearNodes.length,
       unsplitT: a.unsplitT.length, orphans: a.orphans.length, badCells: a.badCells.length, badLane: a.badLane.length,
+      bulbOverlaps: a.bulbOverlaps.length,
     };
   };
   const findEdge = (pred) => {
@@ -377,6 +378,44 @@ async function pageSuite() {
       removeEdgeAt(placed.B.x, placed.B.z);
       if (eid && R.edges.has(eid)) world.removeRoad(eid);
       await roundTrip('bulldoze');
+    }
+  }
+
+  // ---- 8b. Player cluster: short streets drawn toward one spot share junctions, never stack bulbs ----------
+  {
+    const cs = world.cellSize;
+    const gridSnap = (p) => ({ x: world.minX + Math.round((p.x - world.minX) / cs) * cs, z: world.minZ + Math.round((p.z - world.minZ) / cs) * cs });
+    let anchor = null;
+    for (const cand of [[-300, 620], [-300, 660], [300, 620], [-700, 620], [700, 620], [-300, 900], [300, 900]]) {
+      if (world.getHeight(cand[0], cand[1]) < 1) continue;
+      if (api.snapToRoad(cand[0], cand[1], 90)) continue; // too close to an existing road
+      anchor = { x: cand[0], z: cand[1] };
+      break;
+    }
+    if (!anchor) { check('cluster: found open land', false, null); } else {
+      const C = anchor;
+      // the tool's endpoint snap chain: node first (footprint radius), then centreline, then the 8 m grid
+      const snapLikeTool = (x, z) => {
+        const n = api.snapToNode(x, z);
+        if (n) return { x: n.x, z: n.z };
+        const s = api.snapToRoad(x, z, 6);
+        return s ? { x: s.x, z: s.z } : gridSnap({ x, z });
+      };
+      let created = 0;
+      for (const [ox, oz] of [[0, 8], [-8, 0], [0, -8], [8, 0], [8, 8]]) {
+        const raw = { x: C.x + ox, z: C.z + oz };
+        const L = Math.hypot(ox, oz) || 1;
+        const start = { x: raw.x + (ox / L) * 56, z: raw.z + (oz / L) * 56 };
+        const p = snapLikeTool(raw.x, raw.z);
+        if (world.addRoad(p, start, 'street', { snapNodes: true })) created++;
+      }
+      const near = [...R.nodes.values()].filter((n) => Math.hypot(n.x - C.x, n.z - C.z) < 20);
+      const deadEnds = near.filter((n) => n.edges.length === 1);
+      // At most one street may still be a dead end near the meeting point; the rest must share junction nodes.
+      // (Their bulbs are additionally checked globally by audit.bulbOverlaps, so no fake rings can remain.)
+      check('cluster: streets share junctions instead of stacking dead ends', created >= 4 && deadEnds.length <= 1,
+        { created, nodes: near.map((n) => [n.id, n.edges.length]) });
+      await auditClean('cluster');
     }
   }
 

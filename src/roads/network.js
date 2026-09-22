@@ -73,6 +73,41 @@ function lineIntersect(px, pz, ax, az, qx, qz, bx, bz) {
   return { x: px + ax * t, z: pz + az * t, t, s };
 }
 
+/** Distance from point (px,pz) to segment (ax,az)-(bx,bz). */
+function pointSegDist(px, pz, ax, az, bx, bz) {
+  const dx = bx - ax, dz = bz - az, l2 = dx * dx + dz * dz;
+  if (!(l2 > 1e-12)) return Math.hypot(px - ax, pz - az);
+  let t = ((px - ax) * dx + (pz - az) * dz) / l2;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  return Math.hypot(ax + dx * t - px, az + dz * t - pz);
+}
+
+/** True when a dead-end node's proposed cul-de-sac bulb (paved radius rb plus its own sidewalk) would overlap
+ * another road's or node's pavement. Those ends render as square stubs instead — a bulb overlapping a neighbouring
+ * road reads as a junction that is not there. */
+function bulbCollides(world, n, arm, rb) {
+  const outer = rb + (arm.sw || 0);
+  for (const e of world.roads.edges.values()) {
+    if (e.a === n.id || e.b === n.id) continue;
+    const a = world.roads.nodes.get(e.a), b = world.roads.nodes.get(e.b);
+    if (!a || !b) continue;
+    const reach = e.width / 2 + kindSpec(e.kind).sidewalk;
+    if (pointSegDist(n.x, n.z, a.x, a.z, b.x, b.z) < outer + reach + 0.01) return true;
+  }
+  for (const m of world.roads.nodes.values()) {
+    if (m.id === n.id) continue;
+    const d = Math.hypot(m.x - n.x, m.z - n.z);
+    if (d > outer + 12) continue; // no node plate reaches farther than ~12 m from its centre
+    let paved = 0;
+    for (const eid of m.edges) {
+      const e = world.roads.edges.get(eid);
+      if (e) paved = Math.max(paved, e.width / 2 + kindSpec(e.kind).sidewalk);
+    }
+    if (d < outer + paved + 0.01) return true;
+  }
+  return false;
+}
+
 /**
  * Build frames for every edge and node.
  * groundAt(x, z): rendered terrain surface height (never NaN).
@@ -117,6 +152,14 @@ export function buildNetwork(world, groundAt) {
     if (!arms.length) continue;
     arms.sort((p, q) => p.angle - q.angle);
     const node = { id: n.id, x: n.x, z: n.z, y: 0, arms, kind: arms.length >= 3 ? 'intersection' : arms.length === 2 ? 'joint' : 'deadend', pairs: [], arc: null };
+    // A cul-de-sac bulb is ~10.5 m of pavement. When the street ends close to other roads/nodes that pavement would
+    // overlap theirs (a pile of overlapping rings where each street end looks connected but is not), so demote the
+    // bulb to a plain square stub for those ends — the end then reads as clearly separate, which is the truth.
+    if (arms.length === 1) {
+      const a = arms[0];
+      const rb = a.frame.spec.bulb > 0 ? Math.max(a.w + 0.5, a.frame.spec.bulb) : 0;
+      if (rb > 0 && bulbCollides(world, n, a, rb)) a.noBulb = true;
+    }
     computeNodeCorners(node);
     // node height: highest rendered terrain under the node's actual footprint, so plates never sink into a hill
     let y = ground(n.x, n.z);
@@ -165,7 +208,7 @@ function computeNodeCorners(node) {
   const k = arms.length;
   if (k === 1) {
     const a = arms[0];
-    const Rb = a.frame.spec.bulb > 0 ? Math.max(a.w + 0.5, a.frame.spec.bulb) : 0;
+    const Rb = !a.noBulb && a.frame.spec.bulb > 0 ? Math.max(a.w + 0.5, a.frame.spec.bulb) : 0;
     a.bulb = Rb;
     if (Rb > 0) {
       const Ro = Rb + a.sw;
