@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { buildNetwork, lanePath, lanesPerDirection, turnAngle, classifyTurn, turnCurve, arcLanePath, kindSpec, profileAt, Y, PITCH } from './network.js';
+import { buildNetwork, lanePath, lanesPerDirection, laneOffsetsFor, directionAllowed, turnAngle, classifyTurn, turnCurve, arcLanePath, kindSpec, profileAt, Y, PITCH } from './network.js';
 import { GeoAcc, buildEdge, buildNode } from './geometry.js';
 import { StudField, StudList } from './studs.js';
 import { stageTerrain, stageNetwork, stageLots, buildFallbackGround } from './showcase.js';
@@ -488,6 +488,8 @@ const presets = {
     if (!n) return fallbackCam(world);
     return { pos: [n.x + 44, n.y + 34, n.z - 52], target: [n.x, n.y, n.z], fov: 46 };
   },
+  'roads:oneway': () => ({ pos: [104, 74, 150], target: [0, 2, -6], fov: 46 }),
+  'roads:oneway-close': () => ({ pos: [30, 11, -52], target: [-4, 0, -18], fov: 44 }),
   'roads:deadend': (world) => {
     const n = pickNode((n) => (n.kind === 'deadend' ? 10 : 0) + (n.arms[0]?.bulb > 0 ? 5 : 0) - Math.hypot(n.x, n.z) / 1000);
     if (!n) return fallbackCam(world);
@@ -520,7 +522,8 @@ const api = {
     }
     return out;
   },
-  /** Lane-to-lane connections through a node with drivable paths (right-hand traffic). */
+  /** Lane-to-lane connections through a node with drivable paths (right-hand traffic). One-way edges only
+   * contribute/accept the directions their flow permits; a one-way dead end still gets its forced U-turn. */
   getLaneConnections(nodeId) {
     const net = ensureNetwork();
     const n = net.nodes.get(nodeId);
@@ -530,15 +533,19 @@ const api = {
     for (const inArm of n.arms) {
       const fin = inArm.frame;
       const inDir = inArm.outward ? 'backward' : 'forward';
+      if (!directionAllowed(fin, inDir)) continue;
       const nIn = lanesPerDirection(fin);
       const travel = { x: -inArm.d.x, z: -inArm.d.z };
       for (const outArm of n.arms) {
         const fout = outArm.frame;
         const outDir = outArm.outward ? 'forward' : 'backward';
+        const sameArm = outArm === inArm;
+        if (sameArm) { if (n.kind !== 'deadend') continue; }
+        else if (!directionAllowed(fout, outDir)) continue;
         const nOut = lanesPerDirection(fout);
         const theta = turnAngle(travel, outArm.d);
         let turn = classifyTurn(theta);
-        if (outArm === inArm) { if (n.kind !== 'deadend') continue; turn = 'uturn'; }
+        if (sameArm) turn = 'uturn';
         else if (n.kind === 'joint') turn = 'through';
         const pairs = [];
         if (turn === 'through') for (let k = 0; k < nIn; k++) pairs.push([k, Math.min(k, nOut - 1)]);
@@ -549,8 +556,9 @@ const api = {
           const pOut = lanePath(fout, lo, outDir);
           if (!pIn.length || !pOut.length) continue;
           const p0 = pIn[pIn.length - 1], p3 = pOut[0];
+          const laneLat = laneOffsetsFor(fin, inDir)[Math.min(li, nIn - 1)];
           const path = n.arc && turn === 'through'
-            ? arcLanePath(n, inArm, fin.spec.laneOffsets[Math.min(li, nIn - 1)], y, 10)
+            ? arcLanePath(n, inArm, laneLat, y, 10)
             : turnCurve(p0, travel, p3, outArm.d, y, turn === 'through' ? 4 : 8);
           out.push({
             from: { edgeId: fin.id, lane: li, direction: inDir },
@@ -624,7 +632,7 @@ export default {
   deps: TERRAIN_PRESENT ? ['terrain'] : [],
   order: 30,
   api,
-  showcaseVariants: ['default', 'intersection', 'highway', 'junction'],
+  showcaseVariants: ['default', 'intersection', 'highway', 'junction', 'oneway'],
   presets,
 
   async init(ctx) {
@@ -644,6 +652,8 @@ export default {
     const bump = () => markDirty();
     S.unsub.push(ctx.events.on('road:added', bump));
     S.unsub.push(ctx.events.on('road:removed', bump));
+    // in-place edits (upgrade/downgrade/one-way conversion) keep the edge id but change its cross-section
+    S.unsub.push(ctx.events.on('road:changed', bump));
     S.unsub.push(ctx.events.on('terrain:changed', bump));
     rebuild();
   },

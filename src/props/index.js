@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { KIND_NAMES, buildRoleGeometry, buildKindParts, SHARED_GEOMETRY_ROLES, FOUNTAIN_WATER_Y } from './kinds.js';
 import { buildRoleMaterials } from './materials.js';
 import { mat } from './geo.js';
-import { populateAlongRoad, populateIntersectionNode, populatePark } from './populate.js';
+import { populateAlongRoad, populateIntersectionNode, populatePark, forgetEdge } from './populate.js';
 import { stageStreet, stagePark, PRESETS } from './showcase.js';
 
 const KIND_SET = new Set(KIND_NAMES);
@@ -28,6 +28,7 @@ const S = {
   camLast: new THREE.Vector3(Infinity, Infinity, Infinity),
   time: 0,
   signaledNodes: new Set(),
+  nodeSignalProps: new Map(), // nodeId -> traffic_light prop ids (re-placed when a road edit changes arm widths)
   parkDirty: new Set(), parkFlushAt: 0, parkClusters: new Map(),
   waterMat: null,
 };
@@ -247,8 +248,51 @@ function maybeSignalIntersections() {
   for (const node of roads.api.getIntersections()) {
     if (node.arms.length < 3 || S.signaledNodes.has(node.nodeId)) continue;
     S.signaledNodes.add(node.nodeId);
-    populateIntersectionNode(ctx, api.addProp, S.rng, roads.api, node);
+    const ids = populateIntersectionNode(ctx, api.addProp, S.rng, roads.api, node);
+    if (ids && ids.length) S.nodeSignalProps.set(node.nodeId, ids);
   }
+}
+
+/** Re-place the signal props of the given nodes (their arm cross-sections changed, so the old props sit at the
+ * wrong lateral offsets). Re-adds via maybeSignalIntersections() at the new widths. */
+function respawnSignals(nodeIds) {
+  let changed = false;
+  for (const id of nodeIds) {
+    const ids = S.nodeSignalProps.get(id);
+    if (ids) { for (const pid of ids) S.ctx.world.removeProp(pid); S.nodeSignalProps.delete(id); }
+    if (S.signaledNodes.delete(id)) changed = true;
+  }
+  if (changed) maybeSignalIntersections();
+}
+
+function segmentDist(px, pz, ax, az, bx, bz) {
+  const dx = bx - ax, dz = bz - az, l2 = dx * dx + dz * dz;
+  if (!(l2 > 1e-12)) return Math.hypot(px - ax, pz - az);
+  let t = ((px - ax) * dx + (pz - az) * dz) / l2;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  return Math.hypot(ax + dx * t - px, az + dz * t - pz);
+}
+
+// Furniture kinds populateAlongRoad() lays down; only these are cleaned up on an in-place edit (traffic lights,
+// bus stops and park furniture belong to other systems and must never be swept away by a road widening).
+const EDGE_FURNITURE = new Set(['streetlamp', 'trash_bin', 'bench', 'road_sign']);
+
+/** In-place road edit (drag-over upgrade / one-way conversion): kind or width changed, so the old street
+ * furniture was derived from a cross-section that no longer exists. Remove it, re-lay it at the new offsets and
+ * re-place the signals at the edited edges' nodes. Direction-only changes are a no-op (geometry is identical). */
+function onRoadChanged({ edgeId, edge, prev }) {
+  if (!edge || !prev || (prev.width === edge.width && prev.kind === edge.kind)) return;
+  const world = S.ctx.world;
+  const na = world.roads.nodes.get(edge.a), nb = world.roads.nodes.get(edge.b);
+  if (!na || !nb) return;
+  const reach = Math.max(prev.width, edge.width) / 2 + 2.4;
+  for (const p of [...world.props.values()]) {
+    if (!EDGE_FURNITURE.has(p.kind)) continue;
+    if (segmentDist(p.x, p.z, na.x, na.z, nb.x, nb.z) <= reach) world.removeProp(p.id);
+  }
+  forgetEdge(edgeId);
+  populateAlongRoad(S.ctx, api.addProp, S.rng, edgeId);
+  respawnSignals([edge.a, edge.b]);
 }
 
 function onRoadAdded({ edgeId, edge, reason }) {
@@ -379,6 +423,7 @@ export default {
 
     if (!ctx.showcase) {
       S.unsub.push(ctx.events.on('road:added', onRoadAdded));
+      S.unsub.push(ctx.events.on('road:changed', onRoadChanged));
       S.unsub.push(ctx.events.on('world:cell', ({ i, j, cell }) => onParkCell(i, j, cell)));
       S.unsub.push(ctx.events.on('zone:changed', ({ i, j }) => {
         const c = ctx.world.cellAt(i, j);
@@ -405,6 +450,7 @@ export default {
   async showcase(ctx, variant = 'default') {
     if (variant === 'park') stagePark(ctx, api); else stageStreet(ctx, api);
     S.signaledNodes.clear();
+    S.nodeSignalProps.clear();
     rebuild();
   },
 
@@ -422,6 +468,6 @@ export default {
     S.lightPool.length = 0;
     ctx.scene.remove(S.group);
     S.group = null; S.roleTable = null; S.roleInstances = null;
-    S.signaledNodes.clear(); S.parkClusters.clear(); S.parkDirty.clear();
+    S.signaledNodes.clear(); S.nodeSignalProps.clear(); S.parkClusters.clear(); S.parkDirty.clear();
   },
 };

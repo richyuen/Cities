@@ -89,7 +89,9 @@ World {
   cells: Cell[w*h]                   // index = j*w + i
   Cell { i, j, height, type: 'none'|'road'|'zone'|'park'|'water'|'building', zone: null|'r'|'c'|'i', density: 0..3,
          roadId, buildingId, level }
-  roads: { nodes: Map<id, {id, x, z, y}>, edges: Map<id, {id, a, b, lanes, kind: 'street'|'avenue'|'highway', width}> }
+  roads: { nodes: Map<id, {id, x, z, y}>, edges: Map<id, {id, a, b, lanes, kind: 'street'|'avenue'|'highway', width, bridge, oneway}> }
+  // oneway: 0 = two-way (default), 1 = traffic flows a->b, -1 = flows b->a. One-way edges use the full carriageway
+  // in the permitted direction (street 2 lanes, avenue/highway 4) and render lane arrows.
   buildings: Map<id, { id, i, j, w, d, zone, level, height, seed, kind }>
   props: Map<id, { id, x, y, z, rot, kind }>
   weather: { kind: 'clear'|'cloudy'|'rain'|'fog', intensity: 0..1, wind: [x,z] }
@@ -98,7 +100,10 @@ World {
 }
 ```
 Mutators (all emit events, all deterministic): `setHeight(i,j,h)`, `getHeight(x,z)` (bilinear, meters), `setCell(i,j,patch)`,
-`addRoad(a:{x,z}, b:{x,z}, kind)` → edgeId, `removeRoad(edgeId)`, `setZone(i,j,zone,density)`, `addBuilding(rec)` → id, `removeBuilding(id)`,
+`addRoad(a:{x,z}, b:{x,z}, kind, {bridge?, snapNodes?, oneway?})` → edgeId, `removeRoad(edgeId)`,
+`planRoadEdit(a, b, kind)` → read-only `{ edges, length, coverage, blocked } | null` (the drag-over upgrade verdict),
+`upgradeRoad(a, b, kind, {oneway?})` → `{ edges, length, kindChanged, dirChanged } | null` (in-place kind/width/
+direction edit of the existing road the drag follows; emits `road:changed` per edge), `setZone(i,j,zone,density)`, `addBuilding(rec)` → id, `removeBuilding(id)`,
 `addProp(rec)` → id, `removeProp(id)`, `setWeather(patch)`, `worldToCell(x,z)`, `cellToWorld(i,j)` (center), `cellAt(i,j)`, `raycastGround(ray, maxDist?, heightFn?)`
 (terrain heightfield only), `raycastBuildings(ray, maxDist?, heightFn?)` (nearest building footprint AABB), `raycastScene(ray, maxDist?, heightFn?)` →
 `{ point, buildingId }` (whichever of the two the ray reaches first — use this one for pointer picking so a building's facade/roof stops the ray
@@ -113,6 +118,7 @@ Ownership: terrain owns `heightField/height`; roads own `roads`; zoning owns `zo
 | `world:cell` | `{ i, j, cell }` | world |
 | `terrain:changed` | `{ region: {i0,j0,i1,j1} }` | terrain |
 | `road:added` / `road:removed` | `{ edgeId, edge }` | world |
+| `road:changed` | `{ edgeId, edge, prev: {kind,width,oneway} }` | world (in-place upgrade/downgrade/one-way edit) |
 | `zone:changed` | `{ i, j, zone, density }` | world |
 | `building:spawned` / `building:removed` | `{ building }` | world |
 | `prop:added` / `prop:removed` | `{ prop }` | world |
@@ -152,7 +158,7 @@ Controls: left-drag orbit, right-drag pan, wheel zoom, WASD pan. Camera never go
 - Studs: everything horizontal that is "Lego" gets studs (ground plates, roofs, road shoulders). Use `ctx.materials.studs()` which returns an `InstancedMesh` helper: `studs.add(x,y,z,colorName)`, `studs.commit()`, `studs.clear()`. Stud pitch in-world **0.8 m** (1 cell = 10 × 10 studs). Stud radius 0.24 m, height 0.17 m. Use LOD: studs fade beyond ~250 m.
 - Lighting is owned by `environment`: sun `DirectionalLight` (3-cascade via `three/addons/csm/CSM.js`), sky hemisphere/ambient, HDRI/procedural environment map for reflections, fog. Other modules must not add lights except local point lights for night (props/buildings; pooled, ≤ 48 real point lights, rest emissive-only).
 - Post (`effects`): SMAA, GTAO, bloom (threshold ≥ 1.0, subtle), vignette. Tone mapping ACES filmic is set by core renderer; exposure is set by environment via `ctx.renderer.toneMappingExposure`.
-- Roads: dark grey plates, white/yellow lane markings, curbs, stud sidewalks; intersections with proper corner geometry, no z-fighting (use `polygonOffset` or small Y offsets).
+- Roads: dark grey plates, white/yellow lane markings, curbs, stud sidewalks; intersections with proper corner geometry, no z-fighting (use `polygonOffset` or small Y offsets). One-way edges additionally print lane arrows (white, ~12 m apart, on every usable lane) pointing along the permitted flow; two-way roads are unchanged.
 - Night: windows emissive per-building with per-window random on/off seeded; streetlights on when `isNight`; car headlights/taillights.
 
 Per-module draw call budget (full city): terrain 20, environment 10 (+3 shadow cascades), roads 60, buildings 400, props 300, traffic 40, effects 25 (fixed post overhead), others ≤ 10 each.

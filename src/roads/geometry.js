@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { Y, KINDS, PITCH, PLATE, armPoint, connector, edgePoint, stationsBetween, profileAt, arcPoint, arcLength, arcY } from './network.js';
+import { Y, KINDS, PITCH, PLATE, armPoint, connector, edgePoint, stationsBetween, profileAt, arcPoint, arcLength, arcY, laneOffsetsFor } from './network.js';
 
 // Geometry accumulation. One GeoAcc per material bucket; everything of the network ends up in ~8 merged meshes.
 
@@ -372,6 +372,38 @@ export function buildEdge(B, f, nodes) {
   }
   if (crossA) addCrosswalk(B, f, f.s0, +1, w, spec);
   if (crossB) addCrosswalk(B, f, f.s1, -1, w, spec);
+  if (f.oneway) addOneWayArrows(B, f, spec, markStart, markEnd);
+}
+
+/** Lane arrows for a one-way street: white stem + head on every usable lane, every ~12 m, pointing along the
+ * flow. Two-way roads are untouched (no arrows), so their rendered output is unchanged. */
+function addOneWayArrows(B, f, spec, markStart, markEnd) {
+  const dir = f.oneway > 0 ? 1 : -1;                       // +1 points towards increasing s
+  const dirName = dir > 0 ? 'forward' : 'backward';
+  const nLanes = spec.laneOffsets.length * 2;
+  const offs = laneOffsetsFor(f, dirName);
+  const SPACING = 12;
+  for (let k = 0; k < nLanes; k++) {
+    const lat = offs[k];
+    for (let s = markStart + 5; s <= markEnd - 4; s += SPACING) addLaneArrow(B.white, f, s, lat, dir);
+  }
+}
+
+/** One arrow: a strip stem plus a triangular head at the marking height, following the road profile. */
+function addLaneArrow(acc, f, s, lat, dir) {
+  const half = 1.5, head = 1.3, stemHalf = 0.16, headHalf = 0.65;
+  const sBack = s - dir * half, sNeck = s + dir * (half - head);
+  addStrip(acc, f, Math.min(sBack, sNeck), Math.max(sBack, sNeck), lat - stemHalf, lat + stemHalf);
+  const p1 = edgePoint(f, sNeck, lat - headHalf, Y.marking);
+  const p2 = edgePoint(f, sNeck, lat + headHalf, Y.marking);
+  const tip = edgePoint(f, s + dir * half, lat, Y.marking);
+  const base = acc.count;
+  acc.vertex(p1.x, p1.y, p1.z, 0, 1, 0);
+  acc.vertex(p2.x, p2.y, p2.z, 0, 1, 0);
+  acc.vertex(tip.x, tip.y, tip.z, 0, 1, 0);
+  // upward-facing winding: normal.y = uz*vx - ux*vz must be positive
+  if ((p2.z - p1.z) * (tip.x - p1.x) - (p2.x - p1.x) * (tip.z - p1.z) > 0) acc.tri(base, base + 1, base + 2);
+  else acc.tri(base, base + 2, base + 1);
 }
 
 /** Vertical end cap of the median. */

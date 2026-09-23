@@ -13,6 +13,10 @@ const LAMP_INSET = 9;
 // every lamp/bin/bench on it.
 const populatedEdges = new Set();
 
+/** Forget that an edge was furnished, so the next populateAlongRoad(edgeId) call re-runs it. Used when an in-place
+ * road edit changes the cross-section and the furniture has to be re-laid at the new offsets. */
+export function forgetEdge(edgeId) { populatedEdges.delete(edgeId); }
+
 /** Streetlamps every ~24 m alternating sides + occasional bin/bench/sign, along one road edge. Safe to call more
  * than once with the same `edgeId`: every call after the first is a no-op (see `populatedEdges` above). */
 export function populateAlongRoad(ctx, addProp, rngRoot, edgeId) {

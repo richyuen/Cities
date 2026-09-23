@@ -166,6 +166,7 @@ export default {
       ev.on('building:removed', ({ building }) => { S.model.removeBuilding(building.id); S.grid.markDirty(); }),
       ev.on('road:added', () => S.grid.markDirty()),
       ev.on('road:removed', () => S.grid.markDirty()),
+      ev.on('road:changed', () => { S.grid.markDirty(); S.model.markDirty(); }),
       ev.on('zone:changed', () => S.grid.markDirty()),
       ev.on('world:cell', () => { S.grid.markDirty(); S.model.markDirty(); }),
     );

@@ -7,6 +7,11 @@ import * as THREE from 'three';
 const PARALLEL_COS_TOL = Math.cos((20 * Math.PI) / 180);
 const ROAD_OVERLAP_BLOCK_FRACTION = 0.6;
 
+// Road edits (World.planRoadEdit / upgradeRoad): a drag is an edit of the existing road when its corridor covers at
+// least this fraction of the drag; below it the drag is treated as a new road (and the overlap guard may reject it).
+const ROAD_EDIT_MIN_COVERAGE = 0.85;
+const ROAD_EDIT_GAP_TOL = 0.12; // normalized along-drag gap allowed between chained edges (junction nodes)
+
 // Junction model (see World.addRoad): vehicle roads are stitched into the network instead of merely overlapping it.
 //   NODE_SNAP     — how far a requested endpoint may sit from an existing node and still join it (matches
 //                   _findOrCreateNode's historical 0.5 m tolerance for the exact-coordinate callers).
@@ -355,7 +360,7 @@ export class World {
     if (!na || !nb) return null;
     const n = this._findOrCreateNode(x, z, 0.05);
     if (n.id === e.a || n.id === e.b) return n;
-    const proto = { kind: e.kind, lanes: e.lanes, width: e.width, bridge: !!e.bridge };
+    const proto = { kind: e.kind, lanes: e.lanes, width: e.width, bridge: !!e.bridge, oneway: e.oneway | 0 };
     this._retireEdge(e, 'split');
     this._createEdgeBetween(na, n, proto, 'split');
     this._createEdgeBetween(n, nb, proto, 'split');
@@ -370,7 +375,7 @@ export class World {
       if (e && ((e.a === na.id && e.b === nb.id) || (e.a === nb.id && e.b === na.id))) return eid;
     }
     const id = `e${this._ids.edge++}`;
-    const edge = { id, a: na.id, b: nb.id, kind: proto.kind, lanes: proto.lanes, width: proto.width, bridge: !!proto.bridge };
+    const edge = { id, a: na.id, b: nb.id, kind: proto.kind, lanes: proto.lanes, width: proto.width, bridge: !!proto.bridge, oneway: proto.oneway | 0 };
     this.roads.edges.set(id, edge);
     na.edges.push(id); nb.edges.push(id);
     this._markRoadCells(edge);
@@ -445,12 +450,22 @@ export class World {
     const o1 = this.roads.nodes.get(e1.a === nodeId ? e1.b : e1.a);
     const o2 = this.roads.nodes.get(e2.a === nodeId ? e2.b : e2.a);
     if (!o1 || !o2 || o1 === o2) return;
+    // One-way flow must survive a merge. f1 is the flow along o1 -> n (+1 towards n, -1 towards o1, 0 two-way);
+    // f2 is the same for o2 -> n. A merge is only valid when the two flows are continuous through n (f1 = -f2),
+    // or both edges are two-way; anything else (colliding flows, one-way + two-way) keeps the node.
+    const flowSign = (e, fromNode) => (e.oneway === 0 ? 0 : (e.a === fromNode.id ? 1 : -1) * (e.oneway > 0 ? 1 : -1));
+    const f1 = flowSign(e1, o1), f2 = flowSign(e2, o2);
+    let oneway = 0;
+    if (f1 === 0 && f2 === 0) oneway = 0;
+    else if (f1 === 1 && f2 === -1) oneway = 1;   // o1 -> n -> o2
+    else if (f1 === -1 && f2 === 1) oneway = -1;  // o2 -> n -> o1
+    else return;
     const l1 = Math.hypot(n.x - o1.x, n.z - o1.z), l2 = Math.hypot(n.x - o2.x, n.z - o2.z);
     if (!(l1 > 1e-6) || !(l2 > 1e-6)) return;
     const d1x = (o1.x - n.x) / l1, d1z = (o1.z - n.z) / l1;
     const d2x = (o2.x - n.x) / l2, d2z = (o2.z - n.z) / l2;
     if (d1x * d2x + d1z * d2z > STRAIGHT_COS) return; // < ~177.5 deg: a real bend, keep the node
-    const proto = { kind: e1.kind, lanes: e1.lanes, width: e1.width, bridge: !!e1.bridge };
+    const proto = { kind: e1.kind, lanes: e1.lanes, width: e1.width, bridge: !!e1.bridge, oneway };
     this._retireEdge(e1, 'merge');
     this._retireEdge(e2, 'merge');
     this._createEdgeBetween(o1, o2, proto, 'merge');
@@ -498,15 +513,223 @@ export class World {
 
   roadOverlapBlocked(a, b, kind) { return this.roadOverlapFraction(a, b, kind) > ROAD_OVERLAP_BLOCK_FRACTION; }
 
+  // ---- road edits (upgrade / downgrade / one-way conversion in place) -------------------------------------
+  // A player drag that follows an existing road is not a new road: it applies the drag's settings (kind + one-way
+  // direction) to the road beneath it. planRoadEdit is the read-only verdict/costing hook; upgradeRoad applies it.
+  // Both are separate from addRoad so the build path is untouched.
+
+  /** One edge's overlap with the drag a->b, or null when it is not a corridor candidate (not parallel enough, too
+   * far laterally, or barely overlapping). t0/t1 are normalized along-drag [0,1]. */
+  _corridorCandidate(e, a, b, ux, uz, L, spec) {
+    if (e.kind === 'path') return null;
+    const na = this.roads.nodes.get(e.a), nb = this.roads.nodes.get(e.b);
+    if (!na || !nb) return null;
+    const ex = nb.x - na.x, ez = nb.z - na.z, eL = Math.hypot(ex, ez);
+    if (!(eL > 1e-6)) return null;
+    const cos = Math.abs((ux * ex + uz * ez) / eL);
+    if (cos < PARALLEL_COS_TOL) return null; // crossing, not running alongside
+    const reach = Math.max(spec.width, e.width) / 2 + 1;
+    const ax = na.x - a.x, az = na.z - a.z, bx = nb.x - a.x, bz = nb.z - a.z;
+    const latA = Math.abs(ax * -uz + az * ux), latB = Math.abs(bx * -uz + bz * ux);
+    if (Math.min(latA, latB) > reach) return null;
+    const pA = ax * ux + az * uz, pB = bx * ux + bz * uz;
+    const t0 = Math.max(0, Math.min(pA, pB)) / L, t1 = Math.min(L, Math.max(pA, pB)) / L;
+    if (t1 - t0 < 0.02) return null;
+    return { edge: e, t0, t1, len: eL };
+  }
+
+  /** Ordered chain of existing corridor edges from node `na` to node `nb` (BFS over _corridorCandidate edges).
+   * Returns [{ edge, fromId }] in traversal order, or null when the two nodes are not connected through the
+   * drag's corridor. Read-only. */
+  _corridorChain(na, nb, a, b, ux, uz, L, spec) {
+    const prev = new Map();
+    const seen = new Set([na.id]);
+    const q = [na.id];
+    while (q.length) {
+      const cur = q.shift();
+      if (cur === nb.id) break;
+      const n = this.roads.nodes.get(cur);
+      if (!n) continue;
+      for (const eid of n.edges) {
+        const e = this.roads.edges.get(eid);
+        if (!e || !this._corridorCandidate(e, a, b, ux, uz, L, spec)) continue;
+        const other = e.a === cur ? e.b : e.a;
+        if (seen.has(other)) continue;
+        seen.add(other);
+        prev.set(other, { from: cur, edge: e });
+        q.push(other);
+      }
+    }
+    if (!seen.has(nb.id)) return null;
+    const chain = [];
+    let cur = nb.id;
+    while (cur !== na.id) {
+      const p = prev.get(cur);
+      if (!p) return null;
+      chain.push({ edge: p.edge, fromId: p.from });
+      cur = p.from;
+    }
+    chain.reverse();
+    return chain;
+  }
+
+  /** Read-only plan for a drag that may be an edit of existing road rather than a new build. Returns null when the
+   * drag does not run along a single existing road corridor; otherwise:
+   *   { edges: [{ id, kind, oneway, flow, length, width, covered }], length, coverage, blocked }
+   * `flow` is the edge's current one-way flow along the drag (+1/-1/0 — edge orientation normalized to the drag),
+   * `covered` the wedge of the edge inside the drag (for cost), `coverage` the fraction of the drag covered by the
+   * chain (1 = the whole drag follows the road). `blocked` reports a new-width conflict outside the old carriageway
+   * ('building' | 'water'; checked here so callers can refuse before any mutation). Never mutates the graph. */
+  planRoadEdit(a, b, kind = 'street') {
+    const spec = World.ROAD_SPECS[kind] || World.ROAD_SPECS.street;
+    const dx = b.x - a.x, dz = b.z - a.z, L = Math.hypot(dx, dz);
+    if (!(L > 1e-6)) return null;
+    const ux = dx / L, uz = dz / L;
+    const cands = [];
+    for (const e of this.roads.edges.values()) {
+      const c = this._corridorCandidate(e, a, b, ux, uz, L, spec);
+      if (c) cands.push(c);
+    }
+    if (!cands.length) return null;
+    const nearestEnd = (px, pz) => {
+      let best = null, bd = Infinity;
+      for (const c of cands) {
+        for (const nid of [c.edge.a, c.edge.b]) {
+          const n = this.roads.nodes.get(nid);
+          if (!n) continue;
+          const d = Math.hypot(n.x - px, n.z - pz);
+          if (d < bd) { bd = d; best = n; }
+        }
+      }
+      return best;
+    };
+    const na = nearestEnd(a.x, a.z), nb2 = nearestEnd(b.x, b.z);
+    if (!na || !nb2 || na === nb2) return null;
+    const chain = this._corridorChain(na, nb2, a, b, ux, uz, L, spec);
+    if (!chain || !chain.length) return null;
+    const spans = [];
+    const coveredById = new Map();
+    for (const { edge } of chain) {
+      const c = this._corridorCandidate(edge, a, b, ux, uz, L, spec);
+      if (!c) continue;
+      spans.push(c);
+      coveredById.set(edge.id, (c.t1 - c.t0) * L);
+    }
+    spans.sort((p, q) => p.t0 - q.t0);
+    let reach = 0, covered = 0;
+    for (const c of spans) {
+      if (c.t0 > reach + ROAD_EDIT_GAP_TOL) break;
+      const from = Math.max(c.t0, reach);
+      if (c.t1 > from) { covered += c.t1 - from; reach = c.t1; }
+    }
+    const coverage = Math.max(0, Math.min(1, covered));
+    const blocked = this._editFootprintBlocked(a, b, spec, chain.map((x) => x.edge));
+    return {
+      edges: chain.map(({ edge, fromId }) => {
+        const e0 = this.roads.nodes.get(edge.a), e1 = this.roads.nodes.get(edge.b);
+        const flow = edge.oneway === 0 ? 0 : (edge.a === fromId ? 1 : -1) * (edge.oneway > 0 ? 1 : -1);
+        return {
+          id: edge.id, kind: edge.kind, oneway: edge.oneway | 0, flow,
+          length: Math.hypot(e1.x - e0.x, e1.z - e0.z), width: edge.width,
+          covered: Math.min(coveredById.get(edge.id) ?? 0, Math.hypot(e1.x - e0.x, e1.z - e0.z)),
+        };
+      }),
+      length: L, coverage, blocked,
+    };
+  }
+
+  /** Would the new carriageway band cover any cell that is not already under the old carriageway and holds a
+   * building or water? Water is exempt under bridges (a wider deck over water is fine). Returns that reason or
+   * null. Read-only. */
+  _editFootprintBlocked(a, b, spec, edges) {
+    const cs = this.cellSize;
+    const dx = b.x - a.x, dz = b.z - a.z, L = Math.hypot(dx, dz) || 1;
+    const ux = dx / L, uz = dz / L;
+    const nx = -dz / L, nz = dx / L; // unit normal
+    const half = spec.width / 2 - 0.01;
+    const minx = Math.min(a.x, b.x) - half - cs, maxx = Math.max(a.x, b.x) + half + cs;
+    const minz = Math.min(a.z, b.z) - half - cs, maxz = Math.max(a.z, b.z) + half + cs;
+    const c0 = this.worldToCell(minx, minz), c1 = this.worldToCell(maxx, maxz);
+    for (let j = c0.j; j <= c1.j; j++) {
+      for (let i = c0.i; i <= c1.i; i++) {
+        const c = this.cellAt(i, j);
+        if (!c || (!c.buildingId && c.type !== 'water')) continue;
+        const p = this.cellToWorld(i, j);
+        const px = p.x - a.x, pz = p.z - a.z;
+        const t = px * ux + pz * uz;
+        if (t < -half || t > L + half) continue;
+        if (Math.abs(px * nx + pz * nz) > half) continue;
+        // already under an old carriageway band? (the nearest chain edge decides, and a bridge deck may widen
+        // over water; only a cell outside every old band can block)
+        let nearest = null, nearestD = Infinity;
+        for (const e of edges) {
+          const ea = this.roads.nodes.get(e.a), eb = this.roads.nodes.get(e.b);
+          if (!ea || !eb) continue;
+          const d = pointSegDist(p.x, p.z, ea.x, ea.z, eb.x, eb.z);
+          if (d < nearestD) { nearestD = d; nearest = e; }
+        }
+        if (nearest && nearestD <= nearest.width / 2 + 0.05) continue;
+        if (c.buildingId) return 'building';
+        if (c.type === 'water' && !(nearest && nearest.bridge)) return 'water';
+      }
+    }
+    return null;
+  }
+
+  /** Apply an edit of the existing road(s) the drag runs along: kind, lanes, width and one-way direction are
+   * written in place on every chain edge. Endpoints are resolved onto the network (mid-edge endpoints split the
+   * edge, like addRoad) so exactly the dragged span changes. `oneway` is +1 = flow along the drag, -1 = against,
+   * 0 = two-way. Returns { edges, length, kindChanged, dirChanged } or null when the drag is not a clean edit
+   * (callers should then fall back to the addRoad path / its overlap rejection). Emits `road:changed` per edge. */
+  upgradeRoad(a, b, kind = 'street', { oneway = 0 } = {}) {
+    const spec = World.ROAD_SPECS[kind] || World.ROAD_SPECS.street;
+    const plan = this.planRoadEdit(a, b, kind);
+    if (!plan || plan.blocked || plan.coverage < ROAD_EDIT_MIN_COVERAGE) return null;
+    const dx = b.x - a.x, dz = b.z - a.z, L = Math.hypot(dx, dz) || 1;
+    const ux = dx / L, uz = dz / L;
+    const na = this._resolveRoadNode(a.x, a.z, JUNCTION_SNAP);
+    const nb = this._resolveRoadNode(b.x, b.z, JUNCTION_SNAP);
+    if (!na || !nb || na === nb) return null;
+    const chain = this._corridorChain(na, nb, a, b, ux, uz, L, spec);
+    if (!chain || !chain.length) {
+      // restore any endpoint splits this failed attempt made
+      this._healNode(na.id); this._healNode(nb.id);
+      this._cleanupNode(na.id); this._cleanupNode(nb.id);
+      return null;
+    }
+    const want = oneway > 0 ? 1 : oneway < 0 ? -1 : 0;
+    let length = 0, kindChanged = false, dirChanged = false;
+    const edges = [];
+    for (const { edge: e, fromId } of chain) {
+      const ea = this.roads.nodes.get(e.a), eb = this.roads.nodes.get(e.b);
+      if (!ea || !eb) continue;
+      const prev = { kind: e.kind, width: e.width, oneway: e.oneway | 0 };
+      // flow along the drag: +1 when e.a -> e.b matches the drag direction, else -1
+      const sign = e.a === fromId ? 1 : -1;
+      const nextOneway = want === 0 ? 0 : sign * want;
+      if (prev.kind === kind && prev.width === spec.width && prev.oneway === nextOneway) continue; // already as asked
+      this._unmarkRoadCells(e);
+      e.kind = kind; e.lanes = spec.lanes; e.width = spec.width; e.oneway = nextOneway;
+      this._markRoadCells(e);
+      length += Math.hypot(eb.x - ea.x, eb.z - ea.z);
+      if (prev.kind !== kind) kindChanged = true;
+      if (prev.oneway !== nextOneway) dirChanged = true;
+      edges.push(e.id);
+      this.events.emit('road:changed', { edgeId: e.id, edge: e, prev });
+    }
+    return { edges, length, kindChanged, dirChanged };
+  }
+
   /**
    * Add a road. The segment is stitched into the network: an endpoint that lands on a road splits that road and
    * shares the junction node, and interior crossings of other roads become real junctions (both edges are split
    * at the shared node) instead of overlapping plates. Bridges stay at-grade-exempt (no junction on the deck) and
    * pedestrian paths keep the legacy behaviour (an alley ends at the kerb; it never splits a street).
    * `snapNodes` (interactive drags) additionally routes the new road through any existing node it passes over.
+   * `oneway` (0 two-way | 1 flow a->b | -1 flow b->a) is stamped on every piece the drag creates.
    * Returns the id of the first created edge piece (or an existing edge if nothing new was needed).
    */
-  addRoad(a, b, kind = 'street', { bridge = false, snapNodes = false } = {}) {
+  addRoad(a, b, kind = 'street', { bridge = false, snapNodes = false, oneway = 0 } = {}) {
     const spec = World.ROAD_SPECS[kind] || World.ROAD_SPECS.street;
     if (this.roadOverlapBlocked(a, b, kind)) return null;
     if (kind === 'path') return this._addLegacyRoad(a, b, kind, spec, bridge);
@@ -551,7 +774,7 @@ export class World {
     }
     chain.push({ node: nb, t: 1 });
     chain.sort((p, q) => p.t - q.t);
-    const proto = { kind, lanes: spec.lanes, width: spec.width, bridge };
+    const proto = { kind, lanes: spec.lanes, width: spec.width, bridge, oneway: oneway > 0 ? 1 : oneway < 0 ? -1 : 0 };
     let first = null;
     for (let i = 0; i + 1 < chain.length; i++) {
       const p = chain[i].node, q = chain[i + 1].node;
@@ -567,7 +790,7 @@ export class World {
     const na = this._findOrCreateNode(a.x, a.z);
     const nb = this._findOrCreateNode(b.x, b.z);
     if (na === nb) return null;
-    return this._createEdgeBetween(na, nb, { kind, lanes: spec.lanes, width: spec.width, bridge }, null);
+    return this._createEdgeBetween(na, nb, { kind, lanes: spec.lanes, width: spec.width, bridge, oneway: 0 }, null);
   }
 
   /** Mark every cell the new edge's band covers as road, owned by that edge (an existing road cell keeps its

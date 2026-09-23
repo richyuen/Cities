@@ -118,6 +118,10 @@ export const icons = {
   'hazard:burglary': svg(`<path d="M2.2 8.6c1.8-2.4 5.8-2.2 8.2-.2.6.5 2.6.5 3.2 0 2.4-2 6.4-2.2 8.2.2 1.2 1.8-.2 6-3.2 6.8-2.2.6-4.4-.6-5.8-1.8-.5-.4-1.1-.4-1.6 0-1.4 1.2-3.6 2.4-5.8 1.8-3-.8-4.4-5-3.2-6.8z" fill="#1d3557" ${O}/>
     <circle cx="8.4" cy="11.2" r="1.5" fill="${WHITE}"/><circle cx="15.6" cy="11.2" r="1.5" fill="${WHITE}"/>`),
 
+  // one-way street: dark road plate with a lane arrow pointing up
+  oneway: svg(`<rect x="2" y="2" width="20" height="20" rx="2" fill="${ROAD}" ${O}/>
+    <path d="M12 19.5v-11" stroke="${WHITE}" stroke-width="1.3" stroke-dasharray="2.4 2"/>
+    <path d="M7.4 11.6 12 6.4l4.6 5.2" fill="none" stroke="${YEL}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>`),
   // ---- tools: misc ----
   bulldoze: svg(`<rect x="8" y="9" width="10" height="7.5" rx="1.6" fill="${YEL}" ${O}/><rect x="10" y="5.5" width="6" height="4.5" rx="1" fill="${YEL}" ${O}/><rect x="11" y="6.6" width="4" height="2.3" fill="#a6d8ec"/>
     <path d="M8 12.5H5.2V18" stroke="${GREY}" stroke-width="2.4" stroke-linecap="round"/><rect x="2.4" y="11.5" width="3" height="7.5" fill="#8d9296" ${O}/>

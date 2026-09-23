@@ -22,7 +22,8 @@ export const fmtMoney = (v) => (v < 0 ? '-$' : '$') + fmtInt(v);
 const pad2 = (n) => (n < 10 ? '0' : '') + n;
 
 export const TOOL_GROUPS = [
-  { label: 'Roads', tools: [['road:street', 'Street'], ['road:avenue', 'Avenue'], ['road:highway', 'Highway'], ['road:path', 'Path']] },
+  { label: 'Roads', tools: [['road:street', 'Street'], ['road:avenue', 'Avenue'], ['road:highway', 'Highway'], ['road:path', 'Path']],
+    toggle: ['road:oneway', '1-Way', 'One-way roads — drag to set the travel direction'] },
   { label: 'Zones', tools: [['zone:r', 'Homes'], ['zone:c', 'Shops'], ['zone:i', 'Industry'], ['zone:none', 'Dezone']] },
   { label: 'Parks', tools: [['park', 'Park'], ['trees', 'Trees'], ['plaza', 'Plaza']] },
   { label: 'Utilities', tools: [['utility:power', 'Power Plant'], ['utility:water', 'Water Tower'], ['utility:firedept', 'Fire Department'], ['utility:police', 'Police Station']] },
@@ -34,7 +35,7 @@ const MAX_TOASTS_VISIBLE = 3, MAX_TOASTS_KEPT = 8;
 const WEATHER_LABEL = { clear: 'Clear', cloudy: 'Cloudy', rain: 'Rain', fog: 'Fog' };
 const TOAST_ICON = { info: icons.info, success: icons.check, warn: icons.warn, error: icons.close };
 const KEYS = [['Esc', 'Deselect tool / close'], ['Space', 'Pause / resume'], ['1 2 3', 'Speed 1x 2x 4x'], ['B', 'Bulldoze'], ['I', 'Inspect'],
-  ['H', 'Hide / show HUD'], ['W A S D', 'Pan camera'], ['Drag / Wheel', 'Orbit / zoom']];
+  ['O', 'One-way roads'], ['H', 'Hide / show HUD'], ['W A S D', 'Pan camera'], ['Drag / Wheel', 'Orbit / zoom']];
 
 export class Hud {
   constructor(ctx, on) {
@@ -44,6 +45,7 @@ export class Hud {
     this.speedBtns = {};
     this.qualityBtns = {};
     this.sliderDragging = false;
+    this.oneWay = false;
     this._tip = { mode: null, x: -1, y: -1, w: 0, hgt: 0 };
     this._mood = -1;
     this._weatherKey = '';
@@ -183,6 +185,17 @@ export class Hud {
         this.toolBtns.set(tool, b);
         btns.append(b);
       }
+      if (g.toggle) {
+        // a build-mode chip, not a tool: it stays selected alongside whichever road kind is active
+        const [tid, label, title] = g.toggle;
+        const b = h('button', { class: 'lc-tool lc-tool-toggle', html: icons.oneway, 'data-tool': tid, title,
+          onclick: () => this.on.oneway(!this.oneWay),
+          onpointerenter: () => this.setTooltip(label, { anchor: b, key: 'O' }),
+          onpointerleave: () => { if (this._tip.mode === 'anchor') this.setTooltip(null); } });
+        b.append(h('span', {}, label));
+        this.oneWayBtn = b;
+        btns.append(b);
+      }
       bar.append(h('div', { class: 'lc-group' }, h('div', { class: 'lc-group-lbl' }, g.label), btns));
     });
     root.append(bar);
@@ -243,6 +256,11 @@ export class Hud {
   // ---------- tools ----------
   setTool(tool) {
     for (const [t, b] of this.toolBtns) setClass(b, 'on', t === tool);
+  }
+  /** One-way build-mode chip (stays lit independently of the selected road kind). */
+  setOneWay(on) {
+    this.oneWay = !!on;
+    if (this.oneWayBtn) this.oneWayBtn.classList.toggle('on', this.oneWay);
   }
 
   // ---------- settings ----------

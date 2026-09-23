@@ -19,6 +19,8 @@ const ZONING_PRESENT = Object.keys(import.meta.glob('../zoning/index.js')).lengt
 const PRICE_PER_M = { street: 100, avenue: 200, highway: 400, path: 20 };
 const FALLBACK_WIDTH = { street: 8, avenue: 16, highway: 16, path: 3 };
 const ROAD_LABEL = { street: 'Street', avenue: 'Avenue', highway: 'Highway', path: 'Path' };
+const ROAD_EDIT_MIN_COVERAGE = 0.85;   // matches World.planRoadEdit's own edit threshold
+const ONEWAY_FEE = 0.2;                // re-striping fee (fraction of the kind price) when only the direction changes
 const ZONE_LABEL = { r: 'Residential', c: 'Commercial', i: 'Industrial' };
 const AREA_LABEL = { park: 'Park', trees: 'Trees', plaza: 'Plaza' };
 const MIN_ROAD_LEN = 4; // meters — shorter drags are treated as a no-op tap, not an error
@@ -36,7 +38,7 @@ const S = {
   ctx: null, rng: null, group: null, raycaster: null, ghosts: null,
   tool: null, drag: null, pointerId: null, clickStart: null, selectedBuildingId: null,
   pointer: { over: false, lastClient: null },
-  showcaseExtra: null,
+  showcaseExtra: null, oneWay: false,
   unsub: [], onPointerDown: null, onPointerMove: null, onPointerUp: null, onPointerLeave: null, onKeyDown: null,
 };
 
@@ -155,6 +157,31 @@ function roadBuildingBlocked(ctx, a, b, kind) {
   return false;
 }
 
+/** The read-only in-place edit verdict for a drag, or null when the drag is a new build (or is not on a road at
+ * all). Thin wrapper over World.planRoadEdit with the tools' own coverage bar. */
+function roadEditPlan(ctx, a, b, kind) {
+  if (typeof ctx.world.planRoadEdit !== 'function') return null;
+  const plan = safeCall(() => ctx.world.planRoadEdit(a, b, kind), null);
+  if (!plan || plan.coverage < ROAD_EDIT_MIN_COVERAGE) return null;
+  return plan;
+}
+
+/** Cost + change flags of applying `kind`/`oneway` to a plan's chain. Upgrades charge the positive price
+ * difference; a direction-only change charges a small re-striping fee. Downgrades are free. `e.flow` is the
+ * edge's current one-way flow **along the drag** (the plan normalizes edge orientation to the drag). */
+function roadEditCost(plan, kind, oneway) {
+  const price = PRICE_PER_M[kind] ?? 100;
+  const want = oneway ? 1 : 0;
+  let cost = 0, kindChanged = false, dirChanged = false;
+  for (const e of plan.edges) {
+    const covered = e.covered ?? e.length;
+    const oldPrice = PRICE_PER_M[e.kind] ?? 100;
+    if (e.kind !== kind) { kindChanged = true; cost += Math.max(0, covered * (price - oldPrice)); }
+    if ((e.flow | 0) !== want) { dirChanged = true; if (e.kind === kind) cost += covered * price * ONEWAY_FEE; }
+  }
+  return { cost: Math.round(cost), kindChanged, dirChanged };
+}
+
 function roadGhostGeom(ctx, kind, a, b) {
   const dx = b.x - a.x, dz = b.z - a.z;
   const length = Math.hypot(dx, dz);
@@ -165,11 +192,34 @@ function roadGhostGeom(ctx, kind, a, b) {
   let midy;
   if (roads?.status === 'ok' && typeof roads.api?.heightAt === 'function') { try { midy = roads.api.heightAt(midx, midz); } catch (_) { midy = ctx.world.getHeight(midx, midz); } }
   else midy = ctx.world.getHeight(midx, midz);
-  const crossing = roadCrossingInfo(ctx, a, b);
-  const buildingBlocked = roadBuildingBlocked(ctx, a, b, kind);
-  const valid = length >= MIN_ROAD_LEN && crossing.ok && !buildingBlocked && !ctx.world.roadOverlapBlocked(a, b, kind);
-  const cost = Math.round(length * (PRICE_PER_M[kind] ?? 100) * (crossing.crossesWater ? BRIDGE_COST_MULTIPLIER : 1));
-  return { length, width, mid: { x: midx, y: midy + 0.25, z: midz }, angle: Math.atan2(dz, dx), valid, cost };
+  const oneway = S.oneWay && kind !== 'path';
+  const label = `${oneway ? 'One-way ' : ''}${ROAD_LABEL[kind] || kind}`;
+  const plan = roadEditPlan(ctx, a, b, kind);
+  let mode = 'new', valid, cost, status;
+  if (plan) {
+    // drag-over edit: upgrade/downgrade the road beneath (or set its one-way direction)
+    mode = 'edit';
+    cost = 0;
+    if (plan.blocked === 'building') { valid = false; status = `${label} edit blocked — bulldoze the building first`; }
+    else if (plan.blocked === 'water') { valid = false; status = `${label} edit blocked — water in the way`; }
+    else {
+      const e = roadEditCost(plan, kind, oneway);
+      cost = e.cost;
+      valid = length >= MIN_ROAD_LEN && (e.kindChanged || e.dirChanged);
+      if (!valid) status = `Already ${oneway ? 'a one-way ' : 'a '}${ROAD_LABEL[kind] || kind}`;
+      else if (currentMoney(ctx) < cost) { valid = false; status = `Insufficient funds — need $${cost.toLocaleString()}`; }
+      else status = `${label} upgrade: ${Math.round(length)} m, $${cost.toLocaleString()}`;
+    }
+  } else if (length < MIN_ROAD_LEN) {
+    valid = false; cost = 0; status = `${label}: ${Math.round(length)} m`;
+  } else {
+    const crossing = roadCrossingInfo(ctx, a, b);
+    const buildingBlocked = roadBuildingBlocked(ctx, a, b, kind);
+    valid = crossing.ok && !buildingBlocked && !ctx.world.roadOverlapBlocked(a, b, kind);
+    cost = Math.round(length * (PRICE_PER_M[kind] ?? 100) * (crossing.crossesWater ? BRIDGE_COST_MULTIPLIER : 1));
+    status = `${label}: ${Math.round(length)} m, $${cost.toLocaleString()}`;
+  }
+  return { length, width, mid: { x: midx, y: midy + 0.25, z: midz }, angle: Math.atan2(dz, dx), valid, cost, mode, status };
 }
 
 function normRect(d) { return { i0: Math.min(d.i0, d.i1), i1: Math.max(d.i0, d.i1), j0: Math.min(d.j0, d.j1), j1: Math.max(d.j0, d.j1) }; }
@@ -337,12 +387,12 @@ function refreshGhostEmissiveForTime() {
   });
 }
 
-function applyRibbon(g) {
+function applyRibbon(g, colorName) {
   const mesh = S.ghosts.ribbon;
   mesh.position.set(g.mid.x, g.mid.y, g.mid.z);
   mesh.rotation.set(0, g.angle, 0);
   mesh.scale.set(Math.max(g.length, 0.05), 0.6, Math.max(g.width, 0.5));
-  mesh.material = ghostMat(S.ctx, g.valid ? 'lime' : 'transRed');
+  mesh.material = ghostMat(S.ctx, colorName || (g.valid ? 'lime' : 'transRed'));
   mesh.visible = true;
   S.ghosts.rect.visible = false; S.ghosts.point.visible = false;
 }
@@ -415,8 +465,8 @@ function updateGhostsForDrag() {
   if (!d) return;
   if (d.group === 'road') {
     const g = roadGhostGeom(ctx, d.kind, d.a, d.b);
-    applyRibbon(g);
-    uiApi(ctx)?.setStatus?.(`${ROAD_LABEL[d.kind] || d.kind}: ${Math.round(g.length)} m, $${g.cost.toLocaleString()}`);
+    applyRibbon(g, g.mode === 'edit' ? 'brightYellow' : (g.valid ? 'lime' : 'transRed'));
+    uiApi(ctx)?.setStatus?.(g.status);
     return;
   }
   if (d.group === 'stamp') {
@@ -496,6 +546,28 @@ function finishRoad(d) {
   const { a, b, kind } = d;
   const length = Math.hypot(b.x - a.x, b.z - a.z);
   if (length < MIN_ROAD_LEN) return; // a tap, not a drag: silent no-op
+  const oneway = S.oneWay && kind !== 'path' ? 1 : 0;
+  const label = ROAD_LABEL[kind] || kind;
+
+  // Drag-over edit: the drag runs along an existing road, so apply the tool's settings to it in place instead of
+  // rejecting it as an overlap. Covers kind upgrades/downgrades and one-way / two-way conversion.
+  const plan = roadEditPlan(ctx, a, b, kind);
+  if (plan) {
+    if (plan.blocked === 'building') { fail('Cannot upgrade here — bulldoze the building first', a); return; }
+    if (plan.blocked === 'water') { fail('Cannot upgrade here — blocked by water', a); return; }
+    const { cost, kindChanged, dirChanged } = roadEditCost(plan, kind, oneway);
+    if (!kindChanged && !dirChanged) { fail(`Already ${oneway ? 'a one-way ' : 'a '}${label}`, a); return; }
+    if (currentMoney(ctx) < cost) { fail(`Insufficient funds — need $${cost.toLocaleString()}`, a); return; }
+    let res;
+    try { res = ctx.world.upgradeRoad({ x: a.x, z: a.z }, { x: b.x, z: b.z }, kind, { oneway }); }
+    catch (e) { ctx.error('[tools] upgradeRoad failed:', e); fail('Road upgrade failed', a); return; }
+    if (!res) { fail('Cannot upgrade here — the drag must follow the road', a); return; }
+    spendMoney(ctx, cost);
+    const what = res.kindChanged ? `Upgraded to ${label}` : oneway ? 'One-way set' : 'Two-way set';
+    notify(`${what}: ${Math.round(res.length)} m, $${cost.toLocaleString()}`, 'success');
+    return;
+  }
+
   const crossing = roadCrossingInfo(ctx, a, b);
   if (!crossing.ok) { fail('Cannot build there — blocked by water', a); return; }
   if (roadBuildingBlocked(ctx, a, b, kind)) { fail('Cannot build there — bulldoze the building first', a); return; }
@@ -503,13 +575,13 @@ function finishRoad(d) {
   const cost = Math.round(length * (PRICE_PER_M[kind] ?? 100) * (crossing.crossesWater ? BRIDGE_COST_MULTIPLIER : 1));
   if (currentMoney(ctx) < cost) { fail(`Insufficient funds — need $${cost.toLocaleString()}`, a); return; }
   let edgeId;
-  try { edgeId = ctx.world.addRoad({ x: a.x, z: a.z }, { x: b.x, z: b.z }, kind, { bridge: crossing.crossesWater, snapNodes: true }); }
+  try { edgeId = ctx.world.addRoad({ x: a.x, z: a.z }, { x: b.x, z: b.z }, kind, { bridge: crossing.crossesWater, snapNodes: true, oneway }); }
   catch (e) { ctx.error('[tools] addRoad failed:', e); fail('Road placement failed', a); return; }
   if (!edgeId) { fail('Road placement failed', a); return; }
   spendMoney(ctx, cost);
   const props = ctx.modules.get('props');
   if (props?.status === 'ok') { try { props.api?.populateAlongRoad?.(edgeId); } catch (e) { ctx.error('[tools] props.populateAlongRoad failed:', e); } }
-  notify(`${ROAD_LABEL[kind] || kind} built: ${Math.round(length)} m, $${cost.toLocaleString()}`, 'success');
+  notify(`${oneway ? 'One-way ' : ''}${label} built: ${Math.round(length)} m, $${cost.toLocaleString()}`, 'success');
   // world.addRoad emits 'road:added', which the audio module already listens to and plays 'road' for — no
   // explicit ctx.modules.get('audio').api.play('road', ...) here, to avoid an audible double-trigger.
 }
@@ -840,6 +912,7 @@ export default {
     el.addEventListener('pointerleave', S.onPointerLeave);
     window.addEventListener('keydown', S.onKeyDown);
     S.unsub.push(ctx.events.on('tool:selected', onToolSelected));
+    S.unsub.push(ctx.events.on('settings:changed', (p = {}) => { if ('oneWay' in p) S.oneWay = !!p.oneWay; }));
     S.unsub.push(ctx.events.on('time:changed', refreshGhostEmissiveForTime));
     S.unsub.push(ctx.events.on('inspect:closed', () => { S.selectedBuildingId = null; hideCoverageRing(); }));
     S.unsub.push(ctx.events.on('building:removed', ({ building }) => {
@@ -873,7 +946,7 @@ export default {
     if (S.group) ctx.scene.remove(S.group);
     Object.assign(S, {
       ctx: null, group: null, ghosts: null, tool: null, drag: null, pointerId: null, clickStart: null, selectedBuildingId: null,
-      pointer: { over: false, lastClient: null }, showcaseExtra: null, unsub: [],
+      pointer: { over: false, lastClient: null }, showcaseExtra: null, oneWay: false, unsub: [],
       onPointerDown: null, onPointerMove: null, onPointerUp: null, onPointerLeave: null, onKeyDown: null,
     });
   },

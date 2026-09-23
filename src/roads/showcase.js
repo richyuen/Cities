@@ -30,7 +30,7 @@ export function stageTerrain(ctx) {
 function smooth(t) { t = Math.min(1, Math.max(0, t)); return t * t * (3 - 2 * t); }
 
 export function stageNetwork(ctx, variant) {
-  const add = (a, b, kind = 'street') => ctx.world.addRoad({ x: a[0], z: a[1] }, { x: b[0], z: b[1] }, kind);
+  const add = (a, b, kind = 'street', oneway = 0) => ctx.world.addRoad({ x: a[0], z: a[1] }, { x: b[0], z: b[1] }, kind, { oneway });
   // Explicit grid stage: each line is added as segments between crossings. Since the junction rework, addRoad
   // splits edges at crossings on its own, so this manual segmentation is just the legacy spelling of the same
   // network — the `junction` variant below exercises the auto-stitching path instead.
@@ -56,6 +56,18 @@ export function stageNetwork(ctx, variant) {
     add([112, 32], [112, 96], 'street');         // T onto the second
     add([-200, 160], [0, 160], 'street');        // T onto the avenue near the north end
     add([0, 160], [56, 128], 'street');          // 45 deg bend continuing from the new T node
+    return;
+  }
+  if (variant === 'oneway') {
+    // One-way couplet: two parallel one-way streets flowing opposite ways, linked by two-way cross streets, plus
+    // a one-way avenue feeding the block. Lane arrows are painted on every usable lane; traffic (when the full
+    // game's traffic module is loaded) only ever travels the permitted direction.
+    add([-32, -96], [-32, 96], 'street', 1);
+    add([32, 96], [32, -96], 'street', 1);
+    add([-96, -96], [96, -96], 'street');
+    add([-96, 0], [96, 0], 'street');
+    add([-96, 96], [96, 96], 'street');
+    add([0, 96], [0, -96], 'avenue', 1);
     return;
   }
   if (variant === 'highway') {

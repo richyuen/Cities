@@ -325,6 +325,7 @@ export default {
     const bump = () => markDirty();
     S.unsub.push(ctx.events.on('road:added', bump));
     S.unsub.push(ctx.events.on('road:removed', bump));
+    S.unsub.push(ctx.events.on('road:changed', bump));
     markDirty();
   },
 

@@ -136,7 +136,7 @@ export function buildNetwork(world, groundAt) {
     edges.set(e.id, {
       id: e.id, kind: e.kind, spec, a: e.a, b: e.b, ax: na.x, az: na.z, bx: nb.x, bz: nb.z, d, right, L,
       w: spec.width / 2, sw: spec.sidewalk, trimA: 0, trimB: 0, stations: null, ys: null, ya: 0, yb: 0,
-      bridge: !!e.bridge,
+      bridge: !!e.bridge, oneway: e.oneway | 0,
     });
   }
 
@@ -516,18 +516,40 @@ export function stationsBetween(f, sa, sb) {
 
 // ---- lanes ------------------------------------------------------------------------------------
 
-/** Lane centreline for edge f, lane index (0 = rightmost), direction 'forward' (a->b) | 'backward'. */
-export function lanePath(f, laneIndex, direction) {
+/** True when traffic may travel `direction` along this edge (one-way edges permit one direction only). */
+export function directionAllowed(f, direction) {
+  if (!f.oneway) return true;
+  const fwd = direction !== 'backward' && direction !== -1 && direction !== 'ba';
+  return f.oneway === (fwd ? 1 : -1);
+}
+
+/** Physical lane-centre offsets (a->b frame, positive = right of a->b) for the lanes usable in `direction`, in
+ * travel order (index 0 = rightmost lane). Two-way: the per-direction offsets. One-way: the full carriageway runs
+ * in the permitted direction, so both sides of the centreline are usable lanes (avenue/highway -> 4, street -> 2). */
+export function laneOffsetsFor(f, direction) {
   const fwd = direction !== 'backward' && direction !== -1 && direction !== 'ba';
   const offs = f.spec.laneOffsets;
+  if (!f.oneway) return fwd ? offs.slice() : offs.map((o) => -o);
+  const one = offs.slice();
+  for (let i = offs.length - 1; i >= 0; i--) one.push(-offs[i]);
+  return fwd ? one : one.map((o) => -o);
+}
+
+/** Lane centreline for edge f, lane index (0 = rightmost in travel direction), direction 'forward' (a->b) |
+ * 'backward'. Geometry only — callers that must not use a forbidden direction check directionAllowed first. */
+export function lanePath(f, laneIndex, direction) {
+  const fwd = direction !== 'backward' && direction !== -1 && direction !== 'ba';
+  const offs = laneOffsetsFor(f, direction);
+  if (!offs.length) return [];
   const li = Math.min(Math.max(0, laneIndex | 0), offs.length - 1);
-  const lat = fwd ? offs[li] : -offs[li];
+  const lat = offs[li];
   const st = f.stations;
+  if (!st) return [];
   const pts = st.map((s) => edgePoint(f, s, lat, Y.lane));
   return fwd ? pts : pts.reverse();
 }
 
-export function lanesPerDirection(f) { return f.spec.laneOffsets.length; }
+export function lanesPerDirection(f) { return f.oneway ? f.spec.laneOffsets.length * 2 : f.spec.laneOffsets.length; }
 
 /** Signed turn angle from incoming travel direction to outgoing arm direction; > 0 = right turn. */
 export function turnAngle(inDir, outDir) {

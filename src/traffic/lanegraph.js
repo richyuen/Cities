@@ -97,12 +97,16 @@ export class LaneGraph {
       }
     }
 
-    // lanes: every (edge, laneIndex, direction) with a real path
+    // lanes: every (edge, laneIndex, direction) with a real path. One-way edges cache both directions (a forced
+    // U-turn at a dead end needs the against-flow geometry) but only offer the permitted direction as a spawn /
+    // travel lane.
     for (const edge of world.roads.edges.values()) {
+      const oneway = edge.oneway | 0;
       let nLanes = 0;
       try { nLanes = api.lanesPerDirection(edge.id); } catch (_) { nLanes = 0; }
       if (!(nLanes > 0)) continue;
       for (const dir of ['forward', 'backward']) {
+        const allowed = !oneway || oneway === (dir === 'forward' ? 1 : -1);
         for (let lane = 0; lane < nLanes; lane++) {
           let pts = [];
           try { pts = api.getLanePath(edge.id, lane, dir); } catch (_) { pts = []; }
@@ -117,6 +121,7 @@ export class LaneGraph {
             kind: edge.kind, edgeId: edge.id, lane, direction: dir,
             terminalNodeId, isIntersection: !!sig, terminalArm, total: pd.total,
           });
+          if (!allowed) continue;
           this.laneKeys.push(key);
           this.laneWeights.push(Math.max(1, pd.total));
           this.totalLaneLength += pd.total;

@@ -6,7 +6,7 @@ import { stageBackdrop, sampleInfoCard } from './showcase.js';
 
 const initialState = () => ({
   ctx: null, hud: null, style: null, minimap: null, offs: [], rng: null,
-  tool: null, settings: { quality: 'high', studs: true }, hudVisible: true,
+  tool: null, settings: { quality: 'high', studs: true, oneWay: false }, hudVisible: true,
   day: 1, lastHours: null, lastMinute: -1, statsPoll: 0, hadTick: false, _night: undefined,
   burglaries: new Set(),
   pointer: { x: -1, y: -1 }, onKey: null, onPointer: null, backdrop: null,
@@ -122,6 +122,13 @@ function setHudVisible(v) {
   S.hud.setHudVisible(S.hudVisible);
 }
 
+/** One-way road build mode (HUD chip / O key). Persists across tool changes; tools applies it to each road drag. */
+function setOneWay(v) {
+  S.settings.oneWay = !!v;
+  S.hud?.setOneWay(S.settings.oneWay);
+  S.ctx?.events.emit('settings:changed', { oneWay: S.settings.oneWay });
+}
+
 function moveCameraTo(x, z) {
   const { camera, controls, world } = S.ctx;
   if (!controls) return;
@@ -156,6 +163,7 @@ function onKey(e) {
     case 'KeyH': setHudVisible(!S.hudVisible); break;
     case 'KeyB': selectTool(S.tool === 'bulldoze' ? null : 'bulldoze'); break;
     case 'KeyI': selectTool(S.tool === 'select' ? null : 'select'); break;
+    case 'KeyO': setOneWay(!S.settings.oneWay); break;
     default: return;
   }
 }
@@ -176,6 +184,9 @@ const api = {
   /** Select a tool (emits tool:selected). */
   setTool: (tool) => selectTool(tool),
   getTool: () => S.tool,
+  /** Toggle the one-way road build mode (emits settings:changed). */
+  setOneWay: (v) => setOneWay(v),
+  getOneWay: () => S.settings.oneWay,
   isSettingsOpen: () => S.hud?.isSettingsOpen() ?? false,
   isModalOpen: () => S.hud?.isModalOpen() ?? false,
   isInfoPanelOpen: () => S.hud?.isInfoPanelOpen() ?? false,
@@ -213,6 +224,7 @@ export default {
       tod: (h) => { ctx.clock.paused = true; ctx.clock.set(h); },
       quality: (q) => { S.settings.quality = q; S.hud.setQuality(q); ctx.events.emit('settings:changed', { quality: q }); },
       studs: (on) => { S.settings.studs = !!on; S.hud.setStuds(on); ctx.events.emit('settings:changed', { studs: !!on }); },
+      oneway: (on) => setOneWay(on),
       toggleUi: () => setHudVisible(!S.hudVisible),
       statClick: (key) => openStatModal(key),
     });
@@ -246,6 +258,7 @@ export default {
       ctx.events.on('world:cell', () => S.minimap?.markDirty()),
       ctx.events.on('road:added', () => S.minimap?.markDirty()),
       ctx.events.on('road:removed', () => S.minimap?.markDirty()),
+      ctx.events.on('road:changed', () => S.minimap?.markDirty()),
       ctx.events.on('terrain:changed', () => S.minimap?.markDirty()),
       ctx.events.on('zone:changed', () => S.minimap?.markDirty()),
       ctx.events.on('building:spawned', () => S.minimap?.markDirty()),
