@@ -549,7 +549,12 @@ export function lanePath(f, laneIndex, direction) {
   return fwd ? pts : pts.reverse();
 }
 
-export function lanesPerDirection(f) { return f.oneway ? f.spec.laneOffsets.length * 2 : f.spec.laneOffsets.length; }
+/** Lanes usable in one direction. Kinds with `lanes: 0` (pedestrian `path`) have no lanes at all — their
+ * `laneOffsets: [0]` is a placeholder for the geometry builders, not a lane. */
+export function lanesPerDirection(f) {
+  if (!(f.spec.lanes > 0)) return 0;
+  return f.oneway ? f.spec.laneOffsets.length * 2 : f.spec.laneOffsets.length;
+}
 
 /** Signed turn angle from incoming travel direction to outgoing arm direction; > 0 = right turn. */
 export function turnAngle(inDir, outDir) {

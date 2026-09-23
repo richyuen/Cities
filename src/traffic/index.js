@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import { LaneGraph } from './lanegraph.js';
 import { buildCarKits } from './models.js';
-import { createPool, spawnCar, stepCar, resolveGaps } from './sim.js';
+import { createPool, spawnCar, stepCar, resolveGaps, placeOnPath } from './sim.js';
 import { buildGridDemo, buildIntersectionDemo } from './showcase.js';
 
 const MAX_POOL = 300;
@@ -39,9 +39,39 @@ function ensureActive(count) {
   S.activeCount = n;
 }
 
+/** Re-point every active car at the rebuilt graph's cached paths (see rebuildGraph). A car whose current segment
+ * no longer exists — or whose lane's direction just became forbidden (one-way conversion/reversal) — is left
+ * inactive; ensureActive() respawns it on a fresh lane. */
+function repathCars() {
+  const allowed = S.graph.laneKeys.length ? new Set(S.graph.laneKeys) : null;
+  for (let i = 0; i < S.pool.length; i++) {
+    const car = S.pool[i];
+    if (!car.active) continue;
+    if (car.phase === 'lane' && allowed && !allowed.has(car.currentKey)) { car.active = false; continue; }
+    const pd = S.graph.getPath(car.currentKey);
+    if (!pd) continue;
+    car.pathData = pd;
+    car.total = pd.total;
+    if (car.s > pd.total) car.s = pd.total; // shorter segment: advance() carries the remainder next tick
+    // The next hop is cached too; a split can leave it pointing at a path that no longer exists (advance() would
+    // respawn the car mid-road). Re-commit only when it is actually gone, so live routes are otherwise untouched.
+    if (car.nextKey && !S.graph.getPath(car.nextKey)) {
+      const next = S.graph.commitNext(car.currentKey);
+      car.nextKey = next ? next.key : null;
+    }
+    placeOnPath(car); // correct height/yaw in the same frame, even for the frozen showcase hero
+  }
+}
+
 function rebuildGraph() {
   S.graph.rebuild();
   S.maxCars = computeMaxCars(S.ctx, S.graph) || DEFAULT_MAX_CARS;
+  // The road network can change *in place* without any lane key changing: an upgrade/downgrade rewrites an edge's
+  // kind/width (same id, new lane centres and — because the wider footprint samples higher terrain — a new bed
+  // height), and any new road joining an existing node moves that node's trims/heights. Cars cache their lane
+  // polyline, so without this they keep driving the old one: sunk below the new road surface and offset to the old
+  // lane centre until they happen to reach the end of the segment.
+  repathCars();
   const target = Math.round(S.maxCars * S.density);
   ensureActive(S.graph.ready ? target : 0);
   S.dirty = false;
@@ -288,13 +318,14 @@ const api = {
   getDensity() { return S.density; },
   getVehicleCount() { return S.activeCount; },
   getMaxCars() { return S.maxCars; },
-  /** [{x,y,z,heading}] for every active car (heading: radians, atan2 form, 0 = +X). */
+  /** [{x,y,z,heading,length}] for every active car (heading: radians, atan2 form, 0 = +X; length: metres — the
+   * body the car occupies, so callers can check that it clears the profile it spans). */
   getVehiclePositions() {
     const out = [];
     for (let i = 0; i < S.activeCount; i++) {
       const c = S.pool[i];
       if (!c.active) continue;
-      out.push({ x: c.pos.x, y: c.pos.y, z: c.pos.z, heading: c.heading });
+      out.push({ x: c.pos.x, y: c.pos.y, z: c.pos.z, heading: c.heading, length: c.spec.length });
     }
     return out;
   },
@@ -326,6 +357,9 @@ export default {
     S.unsub.push(ctx.events.on('road:added', bump));
     S.unsub.push(ctx.events.on('road:removed', bump));
     S.unsub.push(ctx.events.on('road:changed', bump));
+    // roads rebuilds its network off terrain:changed too; without this the lane heights would never refresh after
+    // a heightfield edit under an existing road (flatten/rebuildRegion), leaving every car at a stale y.
+    S.unsub.push(ctx.events.on('terrain:changed', bump));
     markDirty();
   },
 

@@ -9,7 +9,10 @@
 //   5. a path stays legacy (a pedestrian alley never splits a street);
 //   6. removing the drawn road heals the network back to its exact previous geometry and cell ownership;
 //   7. roads.api.audit() stays clean (crossings, band overlaps, near nodes, orphans, stale cells, bad lanes);
-//   8. the whole gesture sequence is deterministic across two fresh page loads.
+//   8. the whole gesture sequence is deterministic across two fresh page loads;
+//   9. traffic follows the road when an existing edge changes *in place* (an upgrade rewrites kind/width on the
+//      same edge id, and a heightfield edit under a live road moves it): no car may keep a stale lane polyline
+//      and render sunk below the new surface.
 //
 // Usage:  node tools/road-audit.mjs [--seed 1] [--verbose]
 // Exit code 1 if any check fails. The dev server must be running on http://127.0.0.1:5173.
@@ -437,6 +440,272 @@ async function pageSuite() {
     check('save/load: edge replay restores the road network', geomHash() === beforeHash, { before: beforeHash, after: geomHash(), counts: counts() });
     check('save/load: audit clean', a.ok, a);
     trace.push(geomHash());
+  }
+
+  // ---- 10. Traffic follows in-place road edits ("cars sink into the road") ------------------------------
+  // An upgrade rewrites an existing edge in place (same edge id, wider footprint -> a higher bed on a slope), and
+  // a heightfield edit under a live road moves it too. traffic caches each car's lane polyline when it spawns or
+  // advances, so a car that is not re-pointed at the rebuilt cache keeps driving the old polyline and renders
+  // below the new road surface. Both gestures below are player-reachable (upgrade tool, terrain flattening).
+  // Two invariants are checked after each gesture: every car sits on a *current* lane/turn path (stale geometry
+  // matches nothing), and its floor is at the *rendered* road surface it stands on — never below it (buried) and
+  // never more than a step above it (the body-conforming placement in traffic/placeOnPath).
+  {
+    const traffic = ctx.modules.get('traffic');
+    const tApi = traffic?.status === 'ok' ? traffic.api : null;
+    const MATCH_R = 0.6; // m; how far a car may sit from the current path it claims to be driving
+    if (!tApi?.getVehiclePositions) {
+      check('traffic: module available for the in-place-edit probe', false, { status: traffic?.status });
+    } else {
+      /** Every current drivable path — lane centrelines and intersection turns — as {pts, cum} point lists. */
+      const currentPaths = () => {
+        const paths = [];
+        const add = (pts) => {
+          if (!pts || pts.length < 2) return;
+          const cum = new Array(pts.length);
+          cum[0] = 0;
+          for (let i = 1; i < pts.length; i++) cum[i] = cum[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y, pts[i].z - pts[i - 1].z);
+          paths.push({ pts, cum });
+        };
+        for (const f of api.getNetwork().edges.values()) {
+          const n = api.lanesPerDirection(f.id);
+          if (!(n > 0)) continue;
+          for (const dir of ['forward', 'backward']) {
+            for (let l = 0; l < n; l++) add(api.getLanePath(f.id, l, dir));
+          }
+        }
+        for (const nd of api.getIntersections()) {
+          const conns = api.getLaneConnections(nd.nodeId) || [];
+          for (const c of conns) add(c.path);
+        }
+        return paths;
+      };
+      /** A car is on the road only if some *current* path runs under it (within MATCH_R). Stale geometry — the old
+       * bed height or the old lane centre — matches nothing, which is exactly the "car renders below the road"
+       * defect. Resolving this against the current paths (not snapToRoad, whose nearest edge is ambiguous for a
+       * car mid-turn) keeps the check exact. Height itself is checked against the rendered mesh by onSurface(). */
+      const drift = () => {
+        const t0 = performance.now();
+        const paths = currentPaths();
+        const r2 = MATCH_R * MATCH_R;
+        const out = { cars: 0, offPath: 0, at: null };
+        for (const car of tApi.getVehiclePositions()) {
+          out.cars++;
+          let best = Infinity;
+          for (const { pts } of paths) {
+            for (let i = 0; i + 1 < pts.length; i++) {
+              const a = pts[i], b = pts[i + 1];
+              const dx = b.x - a.x, dz = b.z - a.z;
+              const l2 = dx * dx + dz * dz;
+              let u = l2 > 1e-9 ? ((car.x - a.x) * dx + (car.z - a.z) * dz) / l2 : 0;
+              u = u < 0 ? 0 : u > 1 ? 1 : u;
+              const ex = a.x + dx * u - car.x, ez = a.z + dz * u - car.z;
+              if (ex * ex + ez * ez > r2) continue;
+              best = 0;
+              break;
+            }
+            if (best === 0) break;
+          }
+          if (!Number.isFinite(best)) { out.offPath++; if (!out.at) out.at = { x: +car.x.toFixed(1), z: +car.z.toFixed(1) }; }
+        }
+        out.ms = Math.round(performance.now() - t0);
+        return out;
+      };
+      /** No car's body may sit below the profile it spans. For each car: find the current path it stands on, take
+       * the profile it actually covers (its own length, clamped to the path), and require the car's floor to be at
+       * the body-conforming height for that profile — chord between the ends plus half the crest deviation (the
+       * balanced fit in traffic/placeOnPath). This is the "bus straddling a step is buried in the road" defect:
+       * a centre-only check misses it, and the old centre-height placement fails here on any profile kink. */
+      const bodyFit = () => {
+        const paths = currentPaths();
+        const r2 = MATCH_R * MATCH_R;
+        const out = { cars: 0, worst: 0, at: null };
+        for (const car of tApi.getVehiclePositions()) {
+          const half = (car.length || 4.3) * 0.5;
+          let hit = null;
+          for (const p of paths) {
+            const pts = p.pts;
+            for (let i = 0; i + 1 < pts.length; i++) {
+              const a = pts[i], b = pts[i + 1];
+              const dx = b.x - a.x, dz = b.z - a.z;
+              const l2 = dx * dx + dz * dz;
+              let u = l2 > 1e-9 ? ((car.x - a.x) * dx + (car.z - a.z) * dz) / l2 : 0;
+              u = u < 0 ? 0 : u > 1 ? 1 : u;
+              const ex = a.x + dx * u - car.x, ez = a.z + dz * u - car.z;
+              if (ex * ex + ez * ez > r2) continue;
+              hit = { pts: p.pts, cum: p.cum, s: p.cum[i] + u * (p.cum[i + 1] - p.cum[i]) };
+              break;
+            }
+            if (hit) break;
+          }
+          if (!hit) continue;
+          const total = hit.cum[hit.cum.length - 1];
+          const sB = Math.max(0, hit.s - half), sF = Math.min(total, hit.s + half);
+          if (sF - sB <= 0.4) continue; // too short to straddle anything: placement uses the local height
+          out.cars++;
+          const yAt = (s) => {
+            let i = 0;
+            while (i + 2 < hit.cum.length && hit.cum[i + 1] < s) i++;
+            const seg = hit.cum[i + 1] - hit.cum[i] || 1;
+            const u = Math.max(0, Math.min(1, (s - hit.cum[i]) / seg));
+            return hit.pts[i].y + (hit.pts[i + 1].y - hit.pts[i].y) * u;
+          };
+          const yB = yAt(sB), yF = yAt(sF), span = sF - sB;
+          let maxDev = 0, minDev = 0;
+          for (let i = 0; i < hit.pts.length; i++) {
+            const s = hit.cum[i];
+            if (s < sB || s > sF) continue;
+            const dev = hit.pts[i].y - (yB + (yF - yB) * ((s - sB) / span));
+            if (dev > maxDev) maxDev = dev;
+            else if (dev < minDev) minDev = dev;
+          }
+          const expected = (yB + yF) * 0.5 + Math.max(0, (maxDev + minDev) * 0.5);
+          const err = car.y - expected;
+          if (err < out.worst) { out.worst = err; out.at = { x: +car.x.toFixed(1), z: +car.z.toFixed(1), length: +(car.length || 0).toFixed(1) }; }
+        }
+        out.worst = +out.worst.toFixed(3);
+        return out;
+      };
+      /** ...and its floor must be at the road surface the car is standing on, measured against the *rendered* road
+       * meshes (the ground truth the player sees). A car left on stale geometry sits below that surface; the
+       * body-conforming placement (traffic/placeOnPath) never leaves it more than a step above it. */
+      const onSurface = () => {
+        const THREE = window.__city.THREE;
+        const ray = new THREE.Raycaster();
+        const down = new THREE.Vector3(0, -1, 0);
+        const targets = [];
+        ctx.scene.getObjectByName('roads').traverse((o) => { if (o.isMesh && !/studs/.test(o.name || '')) targets.push(o); });
+        const out = { cars: 0, worstLow: 0, worstHigh: 0, at: null };
+        for (const car of tApi.getVehiclePositions()) {
+          ray.set(new THREE.Vector3(car.x, car.y + 60, car.z), down);
+          const hit = ray.intersectObjects(targets, false)[0];
+          if (!hit) continue;
+          out.cars++;
+          const dy = car.y - hit.point.y;
+          if (dy < out.worstLow) { out.worstLow = dy; out.at = { x: +car.x.toFixed(1), z: +car.z.toFixed(1), mesh: hit.object.name }; }
+          if (dy > out.worstHigh) out.worstHigh = dy;
+        }
+        out.worstLow = +out.worstLow.toFixed(3);
+        out.worstHigh = +out.worstHigh.toFixed(3);
+        return out;
+      };
+      const carsOn = (id) => {
+        let n = 0;
+        for (const car of tApi.getVehiclePositions()) {
+          const s = api.snapToRoad(car.x, car.z, 12);
+          if (s && s.edgeId === id) n++;
+        }
+        return n;
+      };
+      /** No car may be rendered upside down. A rolled vehicle shows its flat underside at road level, which reads
+       * exactly like a car buried under the road — and Quaternion.setFromUnitVectors() produced precisely that for
+       * westbound cars on any grade. Reads the rendered instance matrices, so it checks what the player sees. */
+      const upright = () => {
+        const THREE = window.__city.THREE;
+        const m = new THREE.Matrix4();
+        const up = new THREE.Vector3();
+        let total = 0, flipped = 0, at = null;
+        const group = ctx.scene.getObjectByName('traffic');
+        group?.traverse((o) => {
+          if (!o.isInstancedMesh || !o.instanceColor) return; // body meshes carry per-car colours
+          for (let i = 0; i < o.count; i++) {
+            o.getMatrixAt(i, m);
+            up.set(0, 1, 0).transformDirection(m);
+            total++;
+            if (up.y < 0.9) {
+              flipped++;
+              if (!at) at = { x: +m.elements[12].toFixed(1), y: +m.elements[13].toFixed(2), z: +m.elements[14].toFixed(1), upY: +up.y.toFixed(2) };
+            }
+          }
+        });
+        return { total, flipped, at };
+      };
+      const midY = (f) => {
+        const s = api.snapToRoad((f.ax + f.bx) / 2, (f.az + f.bz) / 2, 24);
+        return s ? s.y : NaN;
+      };
+      // Probe the sloped streets that have traffic on them right now: an avenue's wider footprint samples higher
+      // terrain, so the bed rises and any car left on its old polyline sinks by that difference.
+      const cands = [];
+      for (const f of api.getNetwork().edges.values()) {
+        if (f.kind !== 'street' || f.L < 60) continue;
+        const pts = api.getLanePath(f.id, 0, 'forward');
+        let lo = Infinity, hi = -Infinity;
+        for (const p of pts) { lo = Math.min(lo, p.y); hi = Math.max(hi, p.y); }
+        if (!(hi - lo >= 0.8)) continue;
+        cands.push({ id: f.id, ax: f.ax, az: f.az, bx: f.bx, bz: f.bz, cars: carsOn(f.id) });
+      }
+      cands.sort((p, q) => q.cars - p.cars);
+      const batch = cands.slice(0, 25);
+      const before = batch.map((c) => { const f = api.getNetwork().edges.get(c.id); return f ? midY(f) : NaN; });
+      const ids = new Set();
+      for (const c of batch) if (world.upgradeRoad({ x: c.ax, z: c.az }, { x: c.bx, z: c.bz }, 'avenue')) ids.add(c.id);
+      await settle();
+      let bedMoved = 0;
+      for (let i = 0; i < batch.length; i++) {
+        if (!ids.has(batch[i].id)) continue;
+        const f = api.getNetwork().edges.get(batch[i].id);
+        if (f) bedMoved = Math.max(bedMoved, Math.abs(midY(f) - before[i]));
+      }
+      const drift1 = drift();
+      const surf1 = onSurface();
+      const body1 = bodyFit();
+      const up1 = upright();
+      check('traffic: upgrade probe moved the road bed', ids.size > 0 && bedMoved >= 0.05, { upgraded: ids.size, bedMoved: +bedMoved.toFixed(3) });
+      check('traffic: no car is rendered upside down', up1.total > 0 && up1.flipped === 0, up1);
+      check('traffic: cars stay on the current road network after an in-place upgrade', drift1.cars > 0 && drift1.offPath === 0, drift1);
+      check('traffic: cars stand on the road surface after an in-place upgrade',
+        surf1.cars > 0 && surf1.worstLow >= -0.25 && surf1.worstHigh <= 0.8, { ...surf1, tol: [-0.25, 0.8] });
+      check('traffic: no car body is buried in the road after an in-place upgrade',
+        body1.cars > 0 && body1.worst >= -0.08, { ...body1, tol: -0.08 });
+      // Pedestrian paths are not drivable (kind 'path' declares lanes: 0): they are narrow, kerb-height plates that
+      // other roads' sidewalks/terraces overlap, so a car on one renders buried under the road — the exact defect
+      // this section guards. Read the path centreline directly (getLanePath still returns it) so the check cannot
+      // go vacuous if lanesPerDirection ever starts reporting path lanes again.
+      {
+        const pathPoints = [];
+        let pathEdges = 0;
+        for (const f of api.getNetwork().edges.values()) {
+          if (f.kind !== 'path') continue;
+          const pts = api.getLanePath(f.id, 0, 'forward');
+          if (pts.length > 1) { pathEdges++; for (const p of pts) pathPoints.push(p); }
+        }
+        const r2 = MATCH_R * MATCH_R;
+        let onPath = 0, onPathAt = null;
+        for (const car of tApi.getVehiclePositions()) {
+          for (const p of pathPoints) {
+            const dx = p.x - car.x, dz = p.z - car.z;
+            if (dx * dx + dz * dz <= r2) { onPath++; onPathAt = { x: +car.x.toFixed(1), z: +car.z.toFixed(1) }; break; }
+          }
+        }
+        check('traffic: no car drives on a pedestrian path', pathEdges > 0 && onPath === 0, { pathEdges, carsOnPaths: onPath, at: onPathAt });
+      }
+      // Heightfield edit under those live roads: roads rebuilds off terrain:changed, so traffic must refresh too.
+      const flatten = ctx.modules.get('terrain')?.api?.flatten;
+      if (typeof flatten === 'function') {
+        for (const c of batch) {
+          if (!ids.has(c.id)) continue;
+          const { i, j } = world.worldToCell((c.ax + c.bx) / 2, (c.az + c.bz) / 2);
+          let top = -Infinity;
+          for (let jj = j - 1; jj <= j + 2; jj++) for (let ii = i - 1; ii <= i + 2; ii++) top = Math.max(top, world.getVertexHeight(ii, jj));
+          flatten(i - 1, j - 1, i + 1, j + 1, top + 0.8);
+        }
+        await settle();
+        const drift2 = drift();
+        const surf2 = onSurface();
+        const body2 = bodyFit();
+        const up2 = upright();
+        check('traffic: cars follow a heightfield edit under the road', drift2.cars > 0 && drift2.offPath === 0, drift2);
+        check('traffic: no car is rendered upside down after a heightfield edit', up2.total > 0 && up2.flipped === 0, up2);
+        check('traffic: cars stand on the road surface after a heightfield edit',
+          surf2.cars > 0 && surf2.worstLow >= -0.25 && surf2.worstHigh <= 0.8, { ...surf2, tol: [-0.25, 0.8] });
+        check('traffic: no car body is buried in the road after a heightfield edit',
+          body2.cars > 0 && body2.worst >= -0.08, { ...body2, tol: -0.08 });
+      }
+      // Leave the network as found; the heightfield edit above is a deliberate local test edit.
+      for (const c of batch) if (ids.has(c.id)) world.upgradeRoad({ x: c.ax, z: c.az }, { x: c.bx, z: c.bz }, 'street');
+      await settle();
+    }
   }
 
   return { checks, trace, baseline: { counts: baseline.counts, hash: baseline.hash } };

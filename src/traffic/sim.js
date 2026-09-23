@@ -76,20 +76,67 @@ function pickSafeS(pool, key, total, rng, myLen) {
 }
 
 const _tan = new THREE.Vector3();
-const _unitX = new THREE.Vector3(1, 0, 0);
+const _upWorld = new THREE.Vector3(0, 1, 0);
+const _up = new THREE.Vector3();
+const _left = new THREE.Vector3();
+const _basis = new THREE.Matrix4();
 
 /** Write car.pos/quat/heading from its current pathData+s. Called right after every spawn/respawn so a car has a
  * correct world position and orientation immediately — not just from the next stepCar() tick — since camera
  * presets (e.g. traffic:closeup) can read live car state via the public module before any simulation frame has
  * run (right after showcase() returns), and a car left at its (0,0,0) constructor default for that one moment
- * would otherwise throw off any camera built around "the nearest/best car right now". */
-function placeOnPath(car) {
-  const p = sampleAt(car.pathData, car.s);
-  car.pos.set(p.x, p.y, p.z);
+ * would otherwise throw off any camera built around "the nearest/best car right now". Also used by index.js after
+ * a graph rebuild to re-place cars on the freshly cached geometry in the same frame.
+ *
+ * The vehicle is a rigid body on a profile that is not smooth: lane profiles follow the terrain's 0.4 m plates,
+ * so they are ramps with kinks. Placing the body at its centre height and pitching it to the local tangent leaves
+ * a long vehicle (bus/van) buried inside the step it straddles. Instead the body rides its own chord — pitched to
+ * the secant between the profile points under its front and rear — lifted by half the crest deviation it spans:
+ * a rigid body cannot fit a kink, so the error is split evenly between the road poking through the floor and the
+ * wheels leaving the road (minimax). On a smooth slope this is exactly the old placement (chord mid == centre
+ * height, secant == local tangent, no deviation); only kinks and dips change. */
+export function placeOnPath(car) {
+  const pd = car.pathData;
+  const p = sampleAt(pd, car.s);
+  const half = (car.spec?.length ?? 4.3) * 0.5;
+  const sB = Math.max(0, car.s - half), sF = Math.min(pd.total, car.s + half);
+  let y = p.y;
   _tan.set(p.tx, p.ty, p.tz);
+  if (sF - sB > 0.4) {
+    const f = sampleAt(pd, sF), b = sampleAt(pd, sB);
+    const span = sF - sB;
+    const chordY = (s) => b.y + (f.y - b.y) * ((s - sB) / span);
+    // Every profile station the body spans (kinks live exactly at stations, so this catches every step). The body
+    // rides its chord lifted by the *balanced* offset — half the crest deviation — so a step under it is shared
+    // between "road pokes through the floor" and "wheels leave the road": minimax for a rigid body on a kinked
+    // profile, and a no-op on a smooth slope (no stations deviate from the chord there).
+    let maxDev = 0, minDev = 0;
+    const pts = pd.pts, cum = pd.cum;
+    for (let i = 0; i < pts.length; i++) {
+      const s = cum[i];
+      if (s < sB || s > sF) continue;
+      const d = pts[i].y - chordY(s);
+      if (d > maxDev) maxDev = d;
+      else if (d < minDev) minDev = d;
+    }
+    y = (b.y + f.y) * 0.5 + Math.max(0, (maxDev + minDev) * 0.5);
+    const fh = Math.hypot(f.x - b.x, f.z - b.z);
+    const hl = Math.hypot(p.tx, p.tz);
+    if (fh > 0.2 && hl > 1e-6) _tan.set(p.tx / hl, (f.y - b.y) / fh, p.tz / hl); // heading stays local, pitch is the secant
+  }
+  car.pos.set(p.x, y, p.z);
   if (_tan.lengthSq() > 1e-8) {
     _tan.normalize();
-    car.quat.setFromUnitVectors(_unitX, _tan);
+    // Orientation from an explicit basis (local +X along travel, local +Y as close to world up as possible).
+    // Quaternion.setFromUnitVectors(+X, tan) cannot be used here: it is degenerate for a tangent pointing along
+    // -X, where any tiny grade (every lane has one, following the terrain) makes it return a 180 deg *roll*
+    // instead of a yaw — a westbound car renders upside down, which reads as "the car is buried in the road".
+    _left.copy(_tan).cross(_upWorld);           // local +Z (car's left), perpendicular to travel
+    if (_left.lengthSq() < 1e-6) _left.set(0, 0, 1); // travel ~vertical: any perpendicular reference will do
+    _left.normalize();
+    _up.copy(_left).cross(_tan).normalize();    // local +Y = Z x X (no roll)
+    _basis.makeBasis(_tan, _up, _left);
+    car.quat.setFromRotationMatrix(_basis);
     car.heading = Math.atan2(_tan.z, _tan.x);
   }
 }

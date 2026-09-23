@@ -535,6 +535,7 @@ const api = {
       const inDir = inArm.outward ? 'backward' : 'forward';
       if (!directionAllowed(fin, inDir)) continue;
       const nIn = lanesPerDirection(fin);
+      if (!(nIn > 0)) continue; // lane-less arm (pedestrian path): nothing can drive out of it
       const travel = { x: -inArm.d.x, z: -inArm.d.z };
       for (const outArm of n.arms) {
         const fout = outArm.frame;
@@ -543,6 +544,7 @@ const api = {
         if (sameArm) { if (n.kind !== 'deadend') continue; }
         else if (!directionAllowed(fout, outDir)) continue;
         const nOut = lanesPerDirection(fout);
+        if (!(nOut > 0)) continue; // ...and nothing can drive into one
         const theta = turnAngle(travel, outArm.d);
         let turn = classifyTurn(theta);
         if (sameArm) turn = 'uturn';
