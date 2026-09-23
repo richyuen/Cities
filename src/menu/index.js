@@ -145,13 +145,16 @@ export default {
   order: 95,
   showcaseVariants: ['default'],
   presets: {
-    // Fixed close-up over the demo city's downtown intersection for the title screen background: elevated and
-    // offset from the road (unlike the core 'street' ground-level preset) so passing traffic reads as scale/life
-    // in the shot instead of driving straight into the lens or getting clamped against a building face by
-    // clampOutsideBuildings() — a literal street-level vantage sits inside the avenue/building footprints here.
+    // Fixed elevated view down the x=0 avenue for the title screen background, looking south at the downtown
+    // intersection from north of downtown. Anchoring on the avenue itself (rather than inside a block, as this
+    // preset used to) matters: roads are never buildable, so the view can't be blocked by a later layout change —
+    // the previous vantage sat inside the block the demo city's utility pass now fills with a power plant, whose
+    // cooling towers ended up right in front of the lens. Passing traffic reads as scale/life in the shot, the
+    // crosswalks and Central Park sit either side of the near field, and the tower cluster/skyline close the
+    // frame. fov 41 keeps the compression the old preset had.
     'menu:title': (world) => {
       const gh = (x, z) => world.getHeight(x, z);
-      return { pos: [46, 24 + gh(46, 58), 58], target: [2, 5, -4], fov: 41 };
+      return { pos: [0, 20 + gh(0, -105), -105], target: [0, 6, 40], fov: 41 };
     },
   },
   api: {
