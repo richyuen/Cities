@@ -1,5 +1,5 @@
 // simulation — deterministic, cheap city economy (RCI). Owns world.stats. Emits sim:tick at 2 Hz of game time.
-// Visuals exist only in showcase mode (Lego bar chart + DOM panel); in the full game this module is data-only.
+// Visuals exist only in showcase mode (Blox bar chart + DOM panel); in the full game this module is data-only.
 
 import { SimModel, TICK_DT, cityNameFor, POWER_RADIUS, WATER_RADIUS, POLICE_RADIUS } from './model.js';
 import { DesirabilityGrid } from './desirability.js';

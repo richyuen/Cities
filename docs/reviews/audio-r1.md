@@ -6,7 +6,7 @@ Module: `src/audio/` (engine.js, index.js, panel.js, speaker.js — folder conta
 default, night, rain. Presets: `audio:default`, `audio:closeup`, `audio:aerial`, `audio:street`. Extra shots: core `closeup`
 (15:00), core `skyline` (rain, 20:00), full game `overview` (15:00).
 
-The score is a Lego-rubric score of what the screenshots show. The code behind it is in much better shape than the
+The score is a Blox-rubric score of what the screenshots show. The code behind it is in much better shape than the
 pictures (see "What already works"); the visual showcase is what drags the number down.
 
 ## Numbers
@@ -53,7 +53,7 @@ calls and **no DOM panel** (panel only appears in showcase or with `?audiopanel=
    the plate a wet look with a variant-keyed material (`M.plastic('brightGreen', { roughness: 0.12, clearcoat: 1 })`),
    scatter a few `transClear` 2×2 tile "puddles" on the stud grid, and tint the cabinets' clearcoat; or rely on
    `environment` (issue 1) so `setWeather('rain')` actually renders rain streaks and wet roads.
-4. **Materials read flat and un-Lego.** `r1/audio_closeup-12.png`: no clearcoat highlights or sky reflection on the
+4. **Materials read flat and un-Blox.** `r1/audio_closeup-12.png`: no clearcoat highlights or sky reflection on the
    cabinets or plate; black cones render navy from hemisphere fill; the dust caps are `mediumStoneGrey` spheres that look
    like ping-pong balls; the amp face is a thin grey slab with two plain cylinders and a red disc; the display has no bezel
    and no glow. Fix: cones/caps as glossy black (`plastic('black', { roughness: 0.25, clearcoat: 1 })`), knobs as 2×2
@@ -96,5 +96,5 @@ calls and **no DOM panel** (panel only appears in showcase or with `?audiopanel=
 - **The panel is a genuinely useful instrument** (target ghost vs actual gain per layer, spectrum, output level, SFX log
   with positional markers, volumes) and the builder's `shots/audio/gesture-running.png` proves the live path: green LED,
   VU brick lit, spectrum moving, `place@ road@ bulldoze@ zone@ click×2 levelup×1 cash…` in the log.
-- The hi-fi prop itself is a reasonable Lego idea: bevelled bricks on the stud grid, studs on every top face, shared
+- The hi-fi prop itself is a reasonable Blox idea: bevelled bricks on the stud grid, studs on every top face, shared
   materials, geometry merged per colour (31 draw calls total including 14 400 instanced studs).

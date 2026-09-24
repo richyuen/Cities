@@ -134,7 +134,7 @@ since an empty demand HUD in every screenshot reads as "broken" at a glance, but
   mixed preset/time changes (clear weather) are all clean, solid, and correctly lit
   (`shots/game/r2c-diag/clean-recheck-*.png`). This is real, verifiable progress, not a claim taken on faith.
 - **Close/street-level rendering remains genuinely AAA-with-nits.** `shots/game/r2c/street-18.png`,
-  `closeup-21h5.png` show correct Lego stud/bevel styling, glossy clearcoat, believable window emissive lighting
+  `closeup-21h5.png` show correct Blox stud/bevel styling, glossy clearcoat, believable window emissive lighting
   through dusk→night, a lovely dusk sky gradient, and (new this round) visible rain-streak particles at street
   level during weather.
 - **Perf, errors, and determinism are all clean with real margin.** Zero console errors across 100+ shots this

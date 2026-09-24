@@ -113,7 +113,7 @@ r2 documented, with no regressions.
   with no regressions from r2.
 - **Rain remains a real, distinct wet look**, now with puddles that also read as water from directly overhead, not
   just at normal viewing angles.
-- **Materials read as glossy Lego ABS** at both showcase and macro range, unchanged and still convincing.
+- **Materials read as glossy Blox ABS** at both showcase and macro range, unchanged and still convincing.
 - **Web Audio graph, gesture gating, and the full API contract are correct and independently re-verified live** —
   silent until a real user gesture, all API functions behave as documented, zero console errors across 52 fresh
   captures plus a live interactive session, and all round-1/round-2 code nits (sorted/clamped rain-drop automation,

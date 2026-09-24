@@ -192,7 +192,7 @@ export class World {
         }
         ray.at(hi, p);
         const hHi = getH(p.x, p.z);
-        // A plate-quantized "Lego" ground has vertical riser faces between adjacent cells of different height
+        // A plate-quantized "Blox" ground has vertical riser faces between adjacent cells of different height
         // (see terrain/mesher.js flatPiece/edgeRisers) — a pure heightfield march can't represent a vertical
         // face directly (getH is one height per x,z), but the bisection above still converges tightly onto the
         // (x,z) boundary the riser sits on. If the ray's own y there lands between the two plates' heights, it

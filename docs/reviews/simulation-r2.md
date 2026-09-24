@@ -66,7 +66,7 @@ cranes and sale signs. All 36 critic JSONs + 13 extra-shot JSONs + the api-sanit
    `extra/closeup-preset-boom.png`). Bust shows a shorter, dimmer skyline, "FOR SALE" signs on unwanted lots, a red
    debt brick-stack on the treasury bar with the label board turning the treasury text red too
    (`extra/closeup-preset-bust.png`).
-8. **Generic DOM panel, no axes** → **FIXED.** The panel is now a proper Lego-plate: SVG stud strip along the top
+8. **Generic DOM panel, no axes** → **FIXED.** The panel is now a proper Blox-plate: SVG stud strip along the top
    edge, brick-red accent, dark-stone-grey gloss gradient with an inset highlight, bottom-left (never over the
    skyline). The chart has a real people axis (left, k-formatted), a real net-$/day axis (right, signed, colour-coded
    by sign), a 0/50/100% strip for happiness/traffic, and a labelled time axis ("-2:00 … now"). Legible at 1080p in
@@ -113,7 +113,7 @@ cranes and sale signs. All 36 critic JSONs + 13 extra-shot JSONs + the api-sanit
   "boxes on bare green."
 - Boom/bust/default are distinct in the model (verified live: population, happiness, occupancy, demand all diverge)
   *and* on screen (lit-window fraction, cranes, for-sale signs, a red debt bar).
-- The DOM panel is a legitimate Lego-plate UI now — stud strip, plastic bevel, dual-axis chart with real ticks —
+- The DOM panel is a legitimate Blox-plate UI now — stud strip, plastic bevel, dual-axis chart with real ticks —
   replacing the old generic dark debug HUD.
 - Engineering stayed clean through a big visual rewrite: deterministic, zero console errors across 49 captures
   (36 critic + 13 extra) plus a 4000-tick live sanity loop, clean API surface, no `Math.random`, folder still just

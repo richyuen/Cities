@@ -1,4 +1,4 @@
-// Deterministic height-field generation for the Lego baseplate landscape.
+// Deterministic height-field generation for the Blox baseplate landscape.
 // All heights in meters, quantized to PLATE (0.4 m) so the ground reads as stacked plates.
 
 import { PLATE, BRICK, BRICK2, quantize, smoothstep, mix } from './data.js';

@@ -7,7 +7,7 @@ export function renderCredits(ctx, nav) {
       h('button', { class: 'lc-menu-back', title: 'Back', html: icons.back, onclick: () => nav.back() }),
       h('div', { class: 'lc-menu-heading' }, 'Credits')),
     h('div', { class: 'lc-menu-credits' },
-      h('p', {}, h('b', {}, 'Lego Skylines'), ' — a Three.js Lego-brick city builder.'),
+      h('p', {}, h('b', {}, 'Blox Skylines'), ' — a Three.js Blox-brick city builder.'),
       h('p', {}, 'Built with Three.js, Vite, and a fully seeded, deterministic city simulation.'),
       h('p', {}, 'All assets are CC0 or procedurally generated.'),
       h('p', {}, `Seed ${ctx.seed}`)));

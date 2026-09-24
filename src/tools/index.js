@@ -273,7 +273,7 @@ function stampBuildable(ctx, i0, j0, w, d) {
   return true;
 }
 
-/** The terrain module renders a plate-quantized (stepped, "Lego brick") surface, not the smooth bilinear one
+/** The terrain module renders a plate-quantized (stepped, "Blox brick") surface, not the smooth bilinear one
  * world.getHeight() interpolates from — see terrain/data.js surfaceH(). Pointer raycasting must march against
  * whichever surface is actually on screen, or the resolved ground point (and so the selected cell) can drift
  * off from the pixel under the cursor wherever the two diverge. Falls back to world's own smooth height when

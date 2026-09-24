@@ -15,7 +15,7 @@ export function renderTitleScreen(ctx, nav) {
     h('div', { class: 'lc-menu-title-lockup' },
       h('div', { class: 'lc-menu-title-logo', html: icons.logo }),
       h('div', { class: 'lc-menu-title-word' },
-        h('div', { class: 'lc-menu-title-tag' }, 'Lego Skylines'),
+        h('div', { class: 'lc-menu-title-tag' }, 'Blox Skylines'),
         h('div', { class: 'lc-menu-title-name' }, cityName))),
     h('div', { class: 'lc-menu-list lc-menu-title-list' },
       item('Continue', icons.play, () => nav.resume(), { primary: true }),

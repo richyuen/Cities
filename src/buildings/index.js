@@ -4,7 +4,7 @@ import { BuildingBatcher } from './batching.js';
 import { UnservedIndicators, FireIndicators, FireDrones, BurglaryIndicators, PatrolCars } from './indicators.js';
 import { stageDefault, stageLevels, stageNight } from './showcase.js';
 
-// buildings — procedurally generates and renders Lego-style buildings for world.buildings records, and (in the
+// buildings — procedurally generates and renders Blox-style buildings for world.buildings records, and (in the
 // full game only) grows the city: spawns starter buildings on zoned+empty+road-adjacent cells when simulation
 // reports demand, and levels up buildings simulation flags as growth candidates.
 //

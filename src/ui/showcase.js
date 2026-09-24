@@ -1,5 +1,5 @@
 // Showcase backdrop for the UI module: a big green stud plate, a road cross, coloured brick "buildings" with
-// windows (emissive at night) and a few Lego trees. Only used by `?showcase=ui`; never in the full game.
+// windows (emissive at night) and a few Blox trees. Only used by `?showcase=ui`; never in the full game.
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 
@@ -139,7 +139,7 @@ export function stageBackdrop(ctx, variant, rng) {
   const winDay = mkWin(M.glass('transBlue', { opacity: 0.85 }));
   const winNight = mkWin(M.emissive('brightYellow', 2.2));
 
-  // Lego trees: instanced trunk + 3 stacked leaf bricks
+  // Blox trees: instanced trunk + 3 stacked leaf bricks
   const trunkGeo = new THREE.CylinderGeometry(0.55, 0.65, 3.2, 10).translate(0, 1.6, 0);
   geos.push(trunkGeo);
   const trunk = new THREE.InstancedMesh(trunkGeo, M.plastic('reddishBrown'), TREES.length);

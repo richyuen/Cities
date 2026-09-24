@@ -1,4 +1,4 @@
-// Lego-style car "models": a handful of shared geometries/materials, instanced per model.
+// Blox-style car "models": a handful of shared geometries/materials, instanced per model.
 // Local car space: +X forward (travel direction), +Z to the car's left... actually +Z is lateral (right-handed:
 // forward=+X, up=+Y, so +Z = to the car's left when facing +X). Origin sits on the ground under the car centre.
 

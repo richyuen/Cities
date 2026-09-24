@@ -26,7 +26,7 @@ Builder PNGs are byte-identical (closeup) or content-identical (default/water) t
 
 ## Ranked issues (most damaging first)
 
-1. **Mid/far terrain is washed out to a pale mint — reads as a heightmap demo, not saturated Lego plastic.**
+1. **Mid/far terrain is washed out to a pale mint — reads as a heightmap demo, not saturated Blox plastic.**
    Where: `r1c/terrain_default-12.png`, `r1c-extra/default-dist-120m.png`, `default-dist-200m.png`, `default-dist-400m.png`,
    `default-plateau-edge.png` (upper half), `default-hills-17h.png`.
    Split of blame: beyond ~600 m the wash is the **core fallback fog** (`fallbackLights.js`: `Fog(…, 600, 3000)`, colour =
@@ -51,19 +51,19 @@ Builder PNGs are byte-identical (closeup) or content-identical (default/water) t
    real studs out over the last 20 m (scale to 0 or alpha) instead of a binary per-chunk mask; (c) make the shader relief
    fade in by distance, not by chunk mask; (d) re-select chunks per 8 m cell ring rather than 64 m squares.
 
-3. **Water does not read as glossy translucent Lego water.** Where: `r1c-water/terrain_closeup-*.png` (opaque pale-lilac
+3. **Water does not read as glossy translucent Blox water.** Where: `r1c-water/terrain_closeup-*.png` (opaque pale-lilac
    sheet, no plates visible beneath), `r1c-extra/water-shore-top.png` (top-down: flat opaque #5aa8f0, nothing under it,
    seabed plates invisible), `water-shore-close.png` and `water-island.png` (regular wave-grid moiré/checker at distance,
    large blobby ripples near), `default-skirt-edge.png` (water turns lavender at grazing angle, stripe aliasing lower
    left), `default-river-bank.png` (river is pale lilac, not transBlue). Opacity 0.86 + `#1a72c8` + ior 1.33 + env 0.4
    gives an opaque milky blue with sky-coloured haze; the sand/blue seabed plates the mesher builds are never seen.
    Fix: use `transmission` (0.6–0.8) with `thickness` ≈ 2 and `attenuationColor` deep blue so the seabed plates and
-   their studs show through near the shore; keep `color` closer to Lego transBlue (#6ac6ff-ish, brighter and more
+   their studs show through near the shore; keep `color` closer to Blox transBlue (#6ac6ff-ish, brighter and more
    saturated); reduce `uWaveStrength` to ≈ 1.0 and fade waves out by 150 m (currently `wfade` keys on `fwidth` so the
    grid pattern survives to the horizon and aliases); add a Fresnel-driven sky reflection instead of flat clearcoat.
    No shoreline z-fighting seen (WATER_OFFSET −0.12 works) — keep that.
 
-4. **Hills read as contour-map noise, not Lego terraces.** Where: `r1c-extra/default-hills-17h.png`,
+4. **Hills read as contour-map noise, not Blox terraces.** Where: `r1c-extra/default-hills-17h.png`,
    `default-dist-400m.png` (upper strip), `default-core-overview.png` (top). Every slope is built from 0.4 m plate steps at
    2 m or 4 m sub-plate resolution (`cellCode` 2/4), so a 25 m hill becomes ~60 concentric 0.4 m ledges whose 0.9/0.68
    riser shading produces a scribble of thin green/grey lines with no readable shadow or silhouette. The reference hills
@@ -109,7 +109,7 @@ Builder PNGs are byte-identical (closeup) or content-identical (default/water) t
      disposed). `showcase()` with an unchanged variant rebuilds all 9 chunks + water + studs — cheap enough, but avoidable.
 
 ## What already works
-- The near field is genuinely Lego: real instanced studs at 0.8 m pitch with correct radius/height, per-plate colours,
+- The near field is genuinely Blox: real instanced studs at 0.8 m pitch with correct radius/height, per-plate colours,
   terraced plate edges with risers (`r1c-extra/default-close-2m.png`, `default-plateau-edge.png` lower half,
   `r1c/terrain_closeup-12.png`). This is the right foundation.
 - Colour banding logic is sound: tan beaches/river banks, brickYellow patches, dark-green woods, lime meadows, grey rock

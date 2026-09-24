@@ -47,7 +47,7 @@ the remaining gaps are minor polish, not structural defects.
    clearcoatRoughness: 0.7`, `flatShading: true` — a matte, faceted look distinct from the glossy hardware plastic.
    Verified independently at an extreme close-up the builder hadn't shot (`tree-large-alt2.png`, a different kind
    and location than the builder's `tree-medium.png`): unmistakably a cluster of separate lumpy, flat-shaded
-   facets — genuinely reads as stacked Lego foliage, not a smooth plastic sphere. The autumn colour variant
+   facets — genuinely reads as stacked Blox foliage, not a smooth plastic sphere. The autumn colour variant
    (visible in several shots) adds welcome variety.
 3. **hedge/flower_bed unadorned boxes → FIXED.** `hedge-block` is now a low base plus 3 overlapping rounded
    bevel-box lumps (`lumpL/lumpM/lumpR`, different heights/offsets) instead of one flat box — my own
@@ -75,7 +75,7 @@ the remaining gaps are minor polish, not structural defects.
    exact no-ops (77→77→77, `created.length === 0` both times). The guard works exactly as documented.
 
 ## What already works (carried over / reconfirmed)
-- **Individual hardware kinds remain well-made, distinct Lego assemblies**: streetlamp, hydrant, bench/park_bench,
+- **Individual hardware kinds remain well-made, distinct Blox assemblies**: streetlamp, hydrant, bench/park_bench,
   trash_bin, traffic light, road sign and the fountain (with its animated spray) all still read immediately as
   their real-world object at any distance — unchanged and still solid.
 - **Night behaviour remains correct**: lamp bulbs and traffic-light lenses still cycle correctly (visually

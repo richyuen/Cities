@@ -75,7 +75,7 @@ export class Hud {
     this.happy = stat('happy', 'Happiness', icons.happy(2));
     root.append(h('div', { class: 'lc-panel lc-top-left' },
       h('div', { class: 'lc-studs' }),
-      h('div', { class: 'lc-brand' }, h('div', { html: icons.logo }), h('div', { class: 'lc-city' }, h('div', { class: 'lc-city-name' }, cityName), h('div', { class: 'lc-city-sub' }, 'Lego Skylines'))),
+      h('div', { class: 'lc-brand' }, h('div', { html: icons.logo }), h('div', { class: 'lc-city' }, h('div', { class: 'lc-city-name' }, cityName), h('div', { class: 'lc-city-sub' }, 'Blox Skylines'))),
       h('div', { class: 'lc-divider' }),
       this.money.el, this.pop.el, this.jobs.el, this.happy.el));
 

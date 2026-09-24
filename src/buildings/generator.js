@@ -4,7 +4,7 @@ import {
   COMM_BODY, COMM_ACCENT, COMM_GLASS, IND_BODY_A, IND_BODY_B, IND_ACCENT, pick,
 } from './palette.js';
 
-// Procedural Lego-style building generator. Produces a flat list of { mat, geom } pieces already positioned in
+// Procedural Blox-style building generator. Produces a flat list of { mat, geom } pieces already positioned in
 // WORLD space (geom.translate baked in) so the batching layer can bucket by material and merge without further
 // transforms. Also returns roof-stud points (world space) and the computed overall height.
 //

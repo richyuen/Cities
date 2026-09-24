@@ -118,7 +118,7 @@ underlying number is legitimately near zero.
 ## What already works well (and it's a lot)
 
 - **Close/street-level rendering is genuinely AAA-with-nits.** `street-6h5/12/18/21h5.png` and `closeup-*.png` show
-  correct Lego stud/bevel styling, glossy ABS clearcoat catching highlights, believable per-window emissive
+  correct Blox stud/bevel styling, glossy ABS clearcoat catching highlights, believable per-window emissive
   lighting that switches on convincingly through dusk→night (`closeup-18.png`, `closeup-21h5.png`), warm
   streetlight pools and headlight-lit buses at night, and a lovely dusk sky gradient (`street-18.png`). No
   z-fighting, no shadow acne, no flat/unlit materials anywhere at this range.

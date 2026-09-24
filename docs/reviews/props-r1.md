@@ -2,7 +2,7 @@
 
 **Score: 6.2 / 10 — FAIL** (below the 8.5 pass bar). Perf, API correctness and night lighting are genuinely strong —
 close to AAA already — but the module's own showcase reads as an empty field with a lonely road rather than a lived-in
-street, and 5 of the 14 kinds (the three tree sizes, hedge, flower_bed) are primitive-shape Lego assemblies (a glossy
+street, and 5 of the 14 kinds (the three tree sizes, hedge, flower_bed) are primitive-shape Blox assemblies (a glossy
 ball on a stick; a plain green box) rather than distinct, readable objects. Zero console errors and comfortable perf
 margins throughout.
 
@@ -51,7 +51,7 @@ margins throughout.
    stages itself. Fix: either shorten the demo road / tighten the camera framing so more of the staged kinds are in
    frame at once, or call `populateAlongRoad`-style repetition (a few real 24m-spaced blocks) instead of one-of-each,
    so the showcase demonstrates the density the module can actually produce.
-2. **Trees (all 3 sizes) read as a glossy ball on a stick, not a Lego tree** (`shots/props/r1-extra/k-tree_small.png`,
+2. **Trees (all 3 sizes) read as a glossy ball on a stick, not a Blox tree** (`shots/props/r1-extra/k-tree_small.png`,
    `k-tree_medium.png`, `k-tree_large.png`, `shots/props/dev-3.png`). `tree-leaves` is a plain `UNIT_ICO` (icosahedron,
    1 subdivision) with the shared clearcoat/roughness-0.4 instance-colour plastic — up close it is an unmistakable
    smooth plastic balloon with a huge blown specular hot-spot, not "stacked leaf elements" per `REFERENCE.md` §1. Even
@@ -78,7 +78,7 @@ margins throughout.
    ones and were judged above.
 
 ## What already works
-- **Individual hardware kinds are well-made, distinct Lego assemblies at any distance**: streetlamp (base/shaft/tilted
+- **Individual hardware kinds are well-made, distinct Blox assemblies at any distance**: streetlamp (base/shaft/tilted
   neck/arm/head/bulb), hydrant (base/body/collar/dome/twin nozzles/bolt), bench/park_bench (legs/seat/backrest, correct
   frame-colour swap), trash_bin (body/domed lid), bus_stop (twin posts/beam/roof/sign/back+side panel/seat) and the
   fountain (stepped base → pedestal → bowl → rim, with an animated spray) all read immediately as their real-world

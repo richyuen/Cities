@@ -3,9 +3,9 @@
 **Score: 8.9 / 10 — PASS.** Zero console errors across every JSON captured this round (48 of my own + spot-checks of the
 builder's 35), perf far inside budget, no `Math.random`, folder untouched. All 9 round-2 issues are genuinely fixed —
 verified one by one at 1:1 zoom below — with no regressions and no new problems introduced. The HUD now reads as a
-shipped Lego city-builder's chrome: correct stud geometry with no clipping anywhere, glossy brick buttons, a full-colour
+shipped Blox city-builder's chrome: correct stud geometry with no clipping anywhere, glossy brick buttons, a full-colour
 icon set, clean layered overlays (tooltip/status/popover/inspect never collide), and tidy engineering (single-query
-toast trim, full state reset on dispose, explicit z-index tiers). This belongs in a AAA Lego city-builder's UI layer;
+toast trim, full state reset on dispose, explicit z-index tiers). This belongs in a AAA Blox city-builder's UI layer;
 docked half a point only for a couple of genuine-but-minor craft nits (below), not for anything that would look wrong
 in a shipped screenshot.
 

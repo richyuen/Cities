@@ -25,7 +25,7 @@ function zoneRectDirect(world, x0, z0, x1, z1, zone) {
   for (let j = a.j; j <= b.j; j++) for (let i = a.i; i <= b.i; i++) { const c = world.cellAt(i, j); if (c && c.type !== 'road' && c.type !== 'water') world.setZone(i, j, zone, 1); }
 }
 
-/** Places a real logical building (world.addBuilding) plus a simple Lego-box placeholder mesh, since the
+/** Places a real logical building (world.addBuilding) plus a simple Blox-box placeholder mesh, since the
  * `buildings` module (which would normally render it) doesn't exist yet in this build. */
 function placeDemoBuilding(ctx, extra, cx, cz, zone, color, level, height) {
   const world = ctx.world;
@@ -92,7 +92,7 @@ function addDecorativeRect(ctx, extra, bounds, colorName, name) {
  *      and its guardRemoveRoad patch on world.removeRoad is already installed) and a small context industrial
  *      zone patch.
  *   2. Two demo buildings are placed (B1 at (-70,-70), B2 at (70,-70)) as real World.buildings records with a
- *      hand-built Lego-box placeholder mesh each (the `buildings` module isn't built yet, so nothing else would
+ *      hand-built Blox-box placeholder mesh each (the `buildings` module isn't built yet, so nothing else would
  *      render them).
  *   3. A real zone:r paint (startDrag→updateDrag→finishDrag, driving finishZone -> zoning.api.setZoneRect) is
  *      committed over a rectangle near (-67,75) — since `zoning` renders committed cells itself as translucent

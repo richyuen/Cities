@@ -1,6 +1,6 @@
 // All HUD styling. Injected once as a single <style> tag by index.js. No external fonts or files.
-// Art direction: panels are glossy dark-stone-grey Lego plates with a real stud row along the top edge, a bevelled top
-// highlight, a dark bottom lip and a 1 px dark outer ring; primary actions are glossy Lego-yellow / red bricks.
+// Art direction: panels are glossy dark-stone-grey Blox plates with a real stud row along the top edge, a bevelled top
+// highlight, a dark bottom lip and a 1 px dark outer ring; primary actions are glossy Blox-yellow / red bricks.
 
 // 16x12 stud tile (inline SVG), 10 px cylinder at 16 px pitch: the plate's own plastic seen from above — top face in
 // the plate-hi tone with a crisp specular arc, side in the plate-lo tone, only a 0.6 px 30 % edge (no heavy outline).
@@ -54,7 +54,7 @@ export const CSS = `
 .lc-hud button:focus-visible { outline: 2px solid var(--lc-yellow); outline-offset: 2px; }
 .lc-num { font-family: var(--lc-display); font-weight: 900; font-variant-numeric: tabular-nums; letter-spacing: 0.2px; text-shadow: 0 1px 0 rgba(0,0,0,0.6), 0 2px 3px rgba(0,0,0,0.35); }
 
-/* ---------- Lego plate ---------- */
+/* ---------- Blox plate ---------- */
 /* stacking tiers (all inside the isolated .lc-hud root): plates 1, info card 2, toasts 3, settings popover 5, tooltip 8 */
 .lc-panel {
   position: absolute; pointer-events: auto; isolation: isolate; z-index: 1;

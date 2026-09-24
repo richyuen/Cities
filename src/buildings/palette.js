@@ -1,4 +1,4 @@
-// Colour tables for procedural buildings. Bold, varied Lego palette per zone (ARCHITECTURE §7).
+// Colour tables for procedural buildings. Bold, varied Blox palette per zone (ARCHITECTURE §7).
 
 export const RESI_BODY = ['brightRed', 'brightYellow', 'sandGreen', 'sandBlue', 'tan', 'brickYellow',
   'brightGreen', 'mediumLilac', 'brightOrange', 'white', 'lightStoneGrey', 'brightPink'];

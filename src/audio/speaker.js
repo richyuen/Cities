@@ -1,4 +1,4 @@
-// Showcase scene: a Lego-brick hi-fi (two speaker cabinets + an amp with LED, display and a 5-brick VU row) on a
+// Showcase scene: a Blox-brick hi-fi (two speaker cabinets + an amp with LED, display and a 5-brick VU row) on a
 // sea of green baseplates with a few scale props (pine trees, a lamp post, a park bench).
 // Materials are shared via ctx.materials; geometry is merged per material so the whole set stays ~20 draw calls.
 // Real studs cover the central plate and shrink out over [STUD_FADE_NEAR, STUD_FADE_FAR] while a procedural stud
@@ -8,7 +8,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const PLATE = 102.4; // metres of real studs (128 × 128 = 4 × 4 baseplates, so the LOD edge sits on a seam)
 const GROUND = 560; // metres of baseplate sea
-const PLATE_H = 0.32; // Lego plate thickness at 0.8 m stud pitch
+const PLATE_H = 0.32; // Blox plate thickness at 0.8 m stud pitch
 const BRICK_H = 0.96;
 const PITCH = 0.8;
 const BASEPLATE = 32 * PITCH; // 32 × 32 stud baseplate seams
@@ -179,7 +179,7 @@ export function buildSpeakerScene(ctx, { variant = 'default', rng } = {}) {
 
   // ---- props ---------------------------------------------------------------------------------------------------------
   const r = rng || ctx.rng.fork('audio-scene');
-  // pine tree: 1×1 round trunk + three stacked stepped layers (classic Lego tree element), sizes in stud units
+  // pine tree: 1×1 round trunk + three stacked stepped layers (classic Blox tree element), sizes in stud units
   const trunk = new THREE.CylinderGeometry(0.36, 0.4, BRICK_H * 2, 12);
   const tier = [M.bevelBox(4.8, 1.2, 4.8, 0.12), M.bevelBox(3.6, 1.1, 3.6, 0.12), M.bevelBox(2.4, 1.0, 2.4, 0.1), M.bevelBox(1.2, 1.0, 1.2, 0.1)];
   const tree = (x, z, s = 1, colors = ['darkGreen', 'brightGreen'], gy = y0) => {

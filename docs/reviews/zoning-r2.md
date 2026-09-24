@@ -94,7 +94,7 @@ residual issue than r1's — an "AAA with nits" nit, not a rubric-failing defect
    standard aerial/closeup camera angles and at true top-down 1:1 zoom — `shots/zoning/r2c-custom/noon_industrial_extreme.png`,
    `shots/zoning/r2c/zoning_closeup-12.png`, `shots/zoning/r2c-density/zoning_closeup-12.png`,
    `shots/zoning/r2c/zoning_default-12.png`/`-18.png`. Real improvement over r1's olive, but the top face (the
-   surface players actually look at from above) doesn't yet deliver on "official Lego colours" / "distinct,
+   surface players actually look at from above) doesn't yet deliver on "official Blox colours" / "distinct,
    confident orange next to r/c's saturated green/blue." Fix: either raise the top face's own `INTERIOR_SHADE`
    for industrial specifically (it currently shares the flat 0.8 constant with r/c, which was tuned for their
    already-saturated hues, not for a fainter-surviving orange), or reduce industrial's `BASE_OPACITY`/increase its

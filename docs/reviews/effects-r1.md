@@ -27,4 +27,4 @@ presented in the showcase is not, and AO is close to invisible.
 ## What already works
 - Anti-aliasing is genuinely clean: MSAA x4 into the HDR target + SMAA after `OutputPass` gives crisp stud rims and brick bevels at 3 m and at overview (`macro-3m-on.png`, `far-overview-on.png`); the post-off comparison shows obvious jaggies without it.
 - Pipeline plumbing is correct: read buffer pinned to the MSAA target so GTAO reads the live depth, no double tone mapping on the Color-background path, resize and dispose behave, no console errors in any of 61 JSONs, quality tiers switch live.
-- With the real environment loaded, night bloom on emissive windows and lamps reads as a Lego city at night should - warm, soft, not smeared (`env-tower-night-on.png`).
+- With the real environment loaded, night bloom on emissive windows and lamps reads as a Blox city at night should - warm, soft, not smeared (`env-tower-night-on.png`).

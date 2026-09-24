@@ -6,7 +6,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 // camera are uploaded into one InstancedMesh (one draw call). Refreshed when the camera moves > 12 m.
 
 const CHUNK = 64;
-const MIN_DIST = 0.5;   // Lego-legal: two studs can never be closer than this (pitch is 0.8)
+const MIN_DIST = 0.5;   // Blox-legal: two studs can never be closer than this (pitch is 0.8)
 const HASH = 1 / MIN_DIST;
 
 /** Compact stud accumulator: Float32Array xyz + Uint8Array colour index. Rejects studs overlapping earlier ones. */

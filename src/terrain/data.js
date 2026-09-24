@@ -1,7 +1,7 @@
 // Shared constants + per-cell classification of the height field for rendering and stud placement.
 import * as THREE from 'three';
 
-export const PLATE = 0.4;          // Lego plate height (m): all terrain heights are multiples of this
+export const PLATE = 0.4;          // Blox plate height (m): all terrain heights are multiples of this
 export const BRICK = 1.2;          // 3 plates: terrace riser used on moderate rises
 export const BRICK2 = 2.0;         // 5 plates: tall riser used on hill crests / plateau rim so terraces read as
                                     // thick rock ledges with a legible cast shadow instead of a hairline step

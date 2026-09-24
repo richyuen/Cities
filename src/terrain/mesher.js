@@ -1,4 +1,4 @@
-// Geometry builder: every cell becomes flat Lego plates (with vertical risers between levels), or a smooth ramp
+// Geometry builder: every cell becomes flat Blox plates (with vertical risers between levels), or a smooth ramp
 // in 'ramp' mode. Flat runs of equal plates are merged along rows; risers are emitted once, from the higher side
 // only, and skipped where they would sit well under water. The map edge gets a dark diorama base with a lip.
 import * as THREE from 'three';

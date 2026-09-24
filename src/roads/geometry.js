@@ -193,7 +193,7 @@ function outwardNormals(pts, ref) {
 }
 
 /**
- * Embankment as stepped Lego plate terraces: from the plate's outer edge (`top`, {x,y,z}) outward along `normals`,
+ * Embankment as stepped Blox plate terraces: from the plate's outer edge (`top`, {x,y,z}) outward along `normals`,
  * one 0.4 m step down per 0.8 m run until the terrain is reached. Each step carries a stud row.
  */
 function addTerraces(B, top, normals, edgeId) {

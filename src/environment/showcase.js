@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 
-// Lego lighting test scene: 200 m studded baseplate, ~30 stacks of beveled bricks, one glass brick, a tall tower.
+// Blox lighting test scene: 200 m studded baseplate, ~30 stacks of beveled bricks, one glass brick, a tall tower.
 // Exists only so the environment module's lighting can be judged; deterministic via the module's rng fork.
 
 const PITCH = 0.8, BRICK_H = 0.96, PLATE_T = 0.5;

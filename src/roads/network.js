@@ -5,7 +5,7 @@
 export const Y = { surface: 0.15, marking: 0.17, sidewalk: 0.35, curb: 0.38, verge: 0.35, lane: 0.16 };
 
 export const PITCH = 0.8;     // stud lattice (world x/z multiples of 0.8)
-export const PLATE = 0.4;     // Lego plate height; terrain heights are multiples of it
+export const PLATE = 0.4;     // Blox plate height; terrain heights are multiples of it
 
 // Cross-section per kind. w = carriageway half-width (== world width / 2). laneOffsets: lateral offset (to the right
 // of travel) of each lane centre, index 0 = rightmost lane. curb/sidewalk widths are outside the carriageway

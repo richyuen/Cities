@@ -2,7 +2,7 @@
 // radial chromatic aberration, and a small filmic "lift" for night. Runs in linear HDR space BEFORE bloom and
 // the OutputPass (ACES + sRGB), which is the single tone-mapping step for everything including the sky.
 export const GradeShader = {
-  name: 'LegoGradeShader',
+  name: 'BloxGradeShader',
   uniforms: {
     tDiffuse: { value: null },
     tAO: { value: null },

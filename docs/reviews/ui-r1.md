@@ -2,7 +2,7 @@
 
 **Score: 7.5 / 10 — FAIL** (pass needs ≥ 8.5). Zero console errors, perf trivially within budget; the HUD is complete,
 clean and functional, but it is a generic dark-glass dashboard with a handful of layout collisions and sub-11px type,
-not yet a shipped Lego-game HUD.
+not yet a shipped Blox-game HUD.
 
 ## Numbers
 | run | shots | minFps | maxDrawCalls | errors |
@@ -25,10 +25,10 @@ rebuild 0.7 ms every 2 s; camera-marker compose < 0.05 ms. One `<style id="lc-ui
 - Spec completeness: top bar (money/pop/jobs/happiness with mood icon) ✓, weather/clock/day/speed/time slider ✓, grouped toolbar ✓, RCI bars ✓ (reads `payload.demand`, core request filed), toasts ✓, inspect panel ✓, tooltip (anchored + mouse-following) ✓, status line ✓, settings popover (quality/studs/HUD) ✓, minimap with click-to-move ✓, hide-HUD pill ✓.
 
 ## Ranked issues (most damaging first)
-1. **Generic "dark dashboard" art direction — nothing about the chrome says Lego.** Every PNG. Panels are the same flat
-   14 px-radius charcoal glass you would find in any web admin template; the only Lego cues are the 30 px logo brick and a
-   5 px "studline" dotted stripe that reads as a perforation, not studs. A shipped Lego game HUD uses chunky rounded
-   plastic slabs (brick-plate panels with real 2×N stud rows on the top edge, bevelled highlights), Lego-yellow /
+1. **Generic "dark dashboard" art direction — nothing about the chrome says Blox.** Every PNG. Panels are the same flat
+   14 px-radius charcoal glass you would find in any web admin template; the only Blox cues are the 30 px logo brick and a
+   5 px "studline" dotted stripe that reads as a perforation, not studs. A shipped Blox game HUD uses chunky rounded
+   plastic slabs (brick-plate panels with real 2×N stud rows on the top edge, bevelled highlights), Blox-yellow /
    bright-red accent buttons with a glossy top highlight, and a rounder, heavier display face for numbers.
    Fix: make `.lc-panel` a plate — 2-tone plastic (dark-stone-grey body, lighter bevel `inset 0 2px 0 rgba(255,255,255,.18)`, `0 3px 0 rgba(0,0,0,.35)` bottom lip), replace `.lc-studline` with proper 8-px studs (radial gradient with highlight + shadow, pitch 16 px, sitting *on top* of the panel edge, not inside it); give active tool / speed buttons a glossy brick look; consider a rounded display font (e.g. system `"Segoe UI Black"`/`Arial Black` for values). Keep the glass blur, but the plastic must read.
 2. **Settings popover collides with the open inspect panel.** `dev-interact.png`, `x-interact-stack.png`: both are
@@ -61,7 +61,7 @@ rebuild 0.7 ms every 2 s; camera-marker compose < 0.05 ms. One `<style id="lc-ui
 8. **Icon set is uneven in weight and detail at 28 px.** `ui_default-12.png` toolbar: `Highway` (tiny green sign +
    converging lines) and `Path` (tan squiggle with a blob tree) are mush at size; `Inspect` is a bare white arrow while
    `Homes/Shops/Industry` are full-colour illustrations; `Dezone` is a dashed box. Fix: normalise to one style — solid
-   coloured Lego-brick silhouettes with 1.5 px dark outline, no sub-2 px strokes, and give Inspect/Bulldoze the same
+   coloured Blox-brick silhouettes with 1.5 px dark outline, no sub-2 px strokes, and give Inspect/Bulldoze the same
    colour treatment (magnifier on a yellow brick, yellow bulldozer already OK).
 9. **Panels lose edge definition on the night sky.** `x-far.png`, `ui_*-21h5.png`: charcoal glass on a blue-grey sky at
    ~0.74 alpha; the 14 %-white border almost vanishes and the panels look muddy. Fix: raise border to 22 % and add a

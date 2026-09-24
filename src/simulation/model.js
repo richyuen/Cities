@@ -85,7 +85,7 @@ export function cityLevelFor(pop) {
   return lvl;
 }
 
-const SYL_A = ['Brick', 'Stud', 'Plate', 'Block', 'Tile', 'Lego', 'Peg', 'Knob', 'Clutch', 'Minifig', 'Bevel', 'Baseplate'];
+const SYL_A = ['Brick', 'Stud', 'Plate', 'Block', 'Tile', 'Blox', 'Peg', 'Knob', 'Clutch', 'Minifig', 'Bevel', 'Baseplate'];
 const SYL_B = ['haven', 'port', 'ville', 'burg', 'ford', 'field', 'ton', 'mouth', 'bridge', 'stead', 'wick', 'dale'];
 export function cityNameFor(rng) {
   return rng.pick(SYL_A) + rng.pick(SYL_B);

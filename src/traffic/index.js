@@ -1,4 +1,4 @@
-// traffic — Lego-style cars driving the `roads` lane network. All cars are plain data (no per-car Object3D),
+// traffic — Blox-style cars driving the `roads` lane network. All cars are plain data (no per-car Object3D),
 // rendered through a handful of InstancedMesh sets (grouped by car model) rewritten every frame.
 
 import * as THREE from 'three';

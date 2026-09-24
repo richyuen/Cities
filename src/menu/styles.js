@@ -1,5 +1,5 @@
 // All menu styling. Injected once as its own <style> tag (mirrors src/ui/styles.js's pattern, independent sheet,
-// own class namespace so it can never collide with ui's). Same Lego-plate visual language, copied not shared.
+// own class namespace so it can never collide with ui's). Same Blox-plate visual language, copied not shared.
 export const CSS = `
 .lc-menu {
   --lc-plate-hi: rgba(84, 91, 103, 0.94);
@@ -97,7 +97,7 @@ export const CSS = `
    sibling selector since ui's root is a DOM sibling that comes BEFORE .lc-menu (init order), which CSS can't select. */
 body.lc-menu-open .lc-show-ui { display: none !important; }
 
-/* ---------- panel (Lego-plate card, same chrome as ui's .lc-panel) ---------- */
+/* ---------- panel (Blox-plate card, same chrome as ui's .lc-panel) ---------- */
 /* No explicit pointer-events here (inherits from whichever backdrop's .open state currently applies): this class
    is shared by the title/pause panel AND the confirm dialog card, and the confirm host lives permanently in the
    DOM, centered on screen, even while closed — an unconditional auto here would make it swallow clicks meant

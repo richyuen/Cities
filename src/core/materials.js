@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 
-// Lego palette + shared PBR plastic materials + stud instancer.
+// Blox palette + shared PBR plastic materials + stud instancer.
 
 export const PALETTE = {
   brightRed: '#C4281C', brightBlue: '#0D69AB', brightYellow: '#F5CD2F', brightGreen: '#4B9F4A', darkGreen: '#287F46',

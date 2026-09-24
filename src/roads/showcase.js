@@ -102,7 +102,7 @@ function stageHighway(add) {
   add([0, 176], [0, 216], 'street');
 }
 
-/** Lego "lots": bevelled light-grey plates with studs between roads; only for composition. Returns { studs, mesh }. */
+/** Blox "lots": bevelled light-grey plates with studs between roads; only for composition. Returns { studs, mesh }. */
 export function stageLots(ctx, group, variant) {
   const studs = [];
   if (variant !== 'default') return { studs, mesh: null };

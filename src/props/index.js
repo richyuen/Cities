@@ -1,4 +1,4 @@
-// props — minifig-scale Lego street furniture and nature. Renders world.props (all instanced, grouped by
+// props — minifig-scale Blox street furniture and nature. Renders world.props (all instanced, grouped by
 // role) and auto-populates streetlamps/traffic lights/street furniture along roads and at intersections, plus
 // seeded park scatter, in the full game (never in showcase — showcase stages its scenes explicitly).
 import * as THREE from 'three';

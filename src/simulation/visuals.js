@@ -1,6 +1,6 @@
-// Showcase-only visuals: a Lego baseplate with the synthetic district (brick-stack buildings whose height and lit
+// Showcase-only visuals: a Blox baseplate with the synthetic district (brick-stack buildings whose height and lit
 // windows follow occupancy, road plates with stud sidewalks, lamp posts, park trees, cranes on growth candidates,
-// "for sale" signs on unwanted lots) and a live 3D bar chart built from Lego bricks with printed label tiles.
+// "for sale" signs on unwanted lots) and a live 3D bar chart built from Blox bricks with printed label tiles.
 // Everything is instanced / merged: ~30 draw calls before shadows. No lights except 4 pooled warm spots on the chart
 // lamp posts at night (ARCHITECTURE §7: local night lights on props only).
 

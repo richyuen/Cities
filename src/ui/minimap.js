@@ -1,7 +1,7 @@
 // Minimap: paints world.cells (type/zone/height) + road edges into an offscreen canvas whenever the world is marked
 // dirty (throttled to 2 Hz), then composites it with the camera marker on the visible canvas. Click recentres the camera.
 // Four things could read as "green" on a 194 px map, so they are pulled apart: baseplate = mid grass green, homes =
-// Lego bright yellow-green (matches the toolbar zone icon), parks = dark teal with a checker dot hatch.
+// Blox bright yellow-green (matches the toolbar zone icon), parks = dark teal with a checker dot hatch.
 const COL = {
   water: [30, 142, 192], road: [63, 69, 76], park: [20, 110, 90], parkDot: [42, 148, 120],
   zoneR: [205, 228, 110], zoneC: [130, 185, 240], zoneI: [250, 190, 120],

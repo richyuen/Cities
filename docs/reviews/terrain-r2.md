@@ -92,14 +92,14 @@ it dies" note rather than scoring it as a failure.
    cascade texel size, shading light floored ≥ 2.5°), but the module could help more on its own side: the tallest
    risers in this map are still only 1.2 m (one brick) over a run that can be 8 m of sub-plate width, which is a
    shallow enough wall that even a working shadow map would show only a thin sliver at low sun angles. Combined with
-   #4, this is the main thing keeping hills/plateau from reading as physically-lit Lego terraces.
+   #4, this is the main thing keeping hills/plateau from reading as physically-lit Blox terraces.
 9. **Code nits** — **fixed.** `updateWaterTypes` now calls `world.setCell(...)` (emits `world:cell`); `dispose()`
    restores flipped water cells to `'none'` and resets `world.seaLevel`; `api.rebuildRegion` calls `clampRegion`
    before use so unordered corners work. Verified by reading `src/terrain/index.js` directly (see call sites for
    `updateWaterTypes`, `dispose`, `rebuildRegion`).
 
 ## Fresh judgement against the reference
-The near field is genuinely Lego and now holds its saturation much further out — walking the same patch from 2 m to
+The near field is genuinely Blox and now holds its saturation much further out — walking the same patch from 2 m to
 200 m (`r2c-extra/default-patch-*.png`) no longer shows the r1 "heightmap demo" wash, and the water finally looks like
 tinted plastic over visible seabed plates rather than an opaque lilac sheet. The skirt reads as a proper display base.
 Set against the reference's punchy, physically-lit rock terraces and sun-raked baseplate, though, this still falls

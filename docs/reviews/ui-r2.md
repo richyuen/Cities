@@ -1,7 +1,7 @@
 # ui — round 2 critic review
 
 **Score: 8.3 / 10 — FAIL** (pass needs ≥ 8.5; short by nits). Zero console errors in all 62 JSONs, perf trivially within
-budget. Round 1's 11 issues are all genuinely fixed (10 fully, 1 partially). The HUD now reads as a Lego game HUD: dark
+budget. Round 1's 11 issues are all genuinely fixed (10 fully, 1 partially). The HUD now reads as a Blox game HUD: dark
 stone-grey plates with a stud row, bevel + dark lip + outer ring, glossy yellow/red brick buttons, heavy display numerals,
 a single consistent icon style. What keeps it under the AAA bar is the hero element itself: the stud row is rendered as
 a dark, heavily-outlined "zipper" that is clipped to a sliver at both ends of every plate, plus a handful of small craft
@@ -50,7 +50,7 @@ clears toast timers, disposes backdrop geometries, removes the style tag.
    `.lc-studs` is `left:12px; right:12px; background: … center top / 18px 12px repeat-x`, so unless the strip width is a
    multiple of 18 px both ends show a 1–5 px partial stud (top-left panel: dark sliver at x≈29; top-right: half stud
    under the gear; toolbar: half stud at the right corner; RCI: two hairline slivers; minimap, inspect card likewise).
-   On the signature Lego element, at every corner, this is the first thing an art director circles. Fix:
+   On the signature Blox element, at every corner, this is the first thing an art director circles. Fix:
    `background-repeat: space` (or `round`) with `background-position: left top`, or size the strip to
    `calc(round(down, 100% - 24px, 18px))` and centre it; alternatively render the studs as N inline `<i>` elements.
 2. **Studs read as a dark rivet/zipper chain, not plastic studs.** `c-1x.png` (1:1 crop of the top-left bar at night):
@@ -73,7 +73,7 @@ clears toast timers, disposes backdrop geometries, removes the style tag.
    12px> }` (or translate it down with a 150 ms transition) so the card stays visible.
 6. **Minimap greens are indistinguishable.** Legend `Homes #3c963c` vs `Parks #287f46` vs baseplate `rgb(62,140,60)` vs
    R-zone `rgb(140,205,140)` — four greens on a 194 px canvas. Fix: parks → dark teal-green with a dot hatch, or homes →
-   Lego bright yellow-green (`#a5ca18`) matching the toolbar zone icon.
+   Blox bright yellow-green (`#a5ca18`) matching the toolbar zone icon.
 7. **Dezone is still the only monochrome glyph** (dashed grey box + red slash) in an otherwise full-colour brick set.
    Fix: a grey 2×2 plate with a red "no" slash, drawn with the same outline treatment.
 8. **Toast stack is centred with ragged widths** (`dev-r2-crop-toasts.png`): three different widths stepped around the
@@ -85,8 +85,8 @@ clears toast timers, disposes backdrop geometries, removes the style tag.
    today only because the info card is hidden — give the popover its own stacking context via the root instead.
 
 ## What already works
-- The chrome finally says Lego: plate gradient + bevel + lip + ring reads as moulded plastic on day, dusk and night skies
-  alike; the yellow brick active-tool button and red pause brick are exactly the accent language a shipped Lego game uses.
+- The chrome finally says Blox: plate gradient + bevel + lip + ring reads as moulded plastic on day, dusk and night skies
+  alike; the yellow brick active-tool button and red pause brick are exactly the accent language a shipped Blox game uses.
 - Zero regressions in behaviour: toasts cap at 3 with a working "+N" pill, status line ellipsises above the bar, tooltip
   flips correctly at the screen corner (`x-mouse-tip-corner.png`), negative treasury turns red, sad face at 22 %, rain
   icon, moon at night, edge chevron on the minimap when the camera leaves the fitted window.

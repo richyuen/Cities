@@ -147,7 +147,7 @@ anything but close range. Low priority, unchanged in severity from round 2.
   the exact drawCalls-spike frame — a genuine side benefit of no longer needing to force `effects`' composer to
   reallocate on every camera cut.
 - **Close/street-level rendering remains genuinely AAA-with-nits.** `shots/game/r3c/street-18.png`,
-  `closeup-21h5.png`, and the churn-session's grown-city shots show correct Lego stud/bevel styling, glossy
+  `closeup-21h5.png`, and the churn-session's grown-city shots show correct Blox stud/bevel styling, glossy
   clearcoat, believable window emissive lighting through dusk→night, a lovely dusk sky gradient, and — critically —
   `fresh-skyline-rain-tod15.png` and `fresh-street-rain-tod15.png` show that weather rendering (rain streaks, fog
   haze, wet-looking road) is actually well-executed *everywhere except* the specific broken combination in issue #1.

@@ -1,4 +1,4 @@
-// Shared unit geometries + small matrix/merge helpers used to build one fixed-size procedural Lego
+// Shared unit geometries + small matrix/merge helpers used to build one fixed-size procedural Blox
 // assembly per prop kind. Everything here is pure (no ctx) so it can be created once at module load.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';

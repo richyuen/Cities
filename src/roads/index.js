@@ -4,7 +4,7 @@ import { GeoAcc, buildEdge, buildNode } from './geometry.js';
 import { StudField, StudList } from './studs.js';
 import { stageTerrain, stageNetwork, stageLots, buildFallbackGround } from './showcase.js';
 
-// roads — renders world.roads as Lego road plates (merged geometry, ≤ 10 draw calls) and exposes lane geometry.
+// roads — renders world.roads as Blox road plates (merged geometry, ≤ 10 draw calls) and exposes lane geometry.
 // Depends on terrain when that module exists in the build (Vite resolves the glob at build time); until the terrain
 // module lands, roads runs standalone with a flat/showcase height field so it can be screenshotted.
 const TERRAIN_PRESENT = Object.keys(import.meta.glob('../terrain/index.js')).length > 0;

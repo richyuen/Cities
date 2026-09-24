@@ -55,7 +55,7 @@ this round since nothing touches that path).
    `r2c/audio_default-12.png` (bright, dry, blue sky) to `r2c-rain/audio_default-12.png` (grey, streaked, damp
    ground, glossier cabinets). Minor residual: from the steep aerial preset the puddles read as flat pale
    rectangles rather than glossy water (no grazing-angle reflection at that camera pitch) — see ranked issue 2.
-4. **Materials flat and un-Lego** — **fixed.** Cones and dust caps are now glossy black with visible clearcoat
+4. **Materials flat and un-Blox** — **fixed.** Cones and dust caps are now glossy black with visible clearcoat
    highlights and sky reflections (`r2c/extra-macro-amp.png`); knobs are 2×2 round tiles with a centre stud; the
    power button is a glossy `transRed` round tile with an emissive core; the display is a black bezel with an
    inset `emissive('mediumAzur', 4)` glow; the VU bricks show real colour-separated highlights at macro range. This
@@ -123,7 +123,7 @@ false)` round-tripped without throwing, `api.getAnalyser()` → truthy, `api.sfx
   `page.mouse.click` start.
 - **Rain is a real, distinct wet look** — streaks, overcast sky, glossier clearcoat, visible puddles — no longer a
   no-op relative to the dry variant.
-- **Materials read as glossy Lego ABS** at both showcase and macro range: highlighted clearcoat cones, round-tile
+- **Materials read as glossy Blox ABS** at both showcase and macro range: highlighted clearcoat cones, round-tile
   knobs with a stud, an emissive display bezel, and a convincingly plastic power button.
 - **The panel is legible and now honest** about its own spectrum resolution, with no more mid-pair text wrapping.
 - **Web Audio graph, gesture gating, and the full API contract are correct and independently re-verified live** —

@@ -1,4 +1,4 @@
-// Hand-drawn inline SVG icons (24x24 viewBox). One style across the set: solid Lego-coloured silhouettes with a 2 px
+// Hand-drawn inline SVG icons (24x24 viewBox). One style across the set: solid Blox-coloured silhouettes with a 2 px
 // dark outline (paint-order: stroke, so the outline sits behind the fill), no strokes thinner than 2 px so nothing
 // turns to mush at 28 px. `currentColor` for monochrome UI glyphs.
 const svg = (body, extra = '') => `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" ${extra}>${body}</svg>`;
@@ -49,7 +49,7 @@ export const icons = {
   check: svg(`<path d="M5 12.5l4.5 4.5L19 7.5" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>`),
   warn: svg(`<path d="M12 3.5 21.5 20h-19z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M12 9.5v5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="17" r="1.2" fill="currentColor"/>`),
 
-  // ---- tools: roads (road plates seen from above, grass verges as Lego green) ----
+  // ---- tools: roads (road plates seen from above, grass verges as Blox green) ----
   'road:street': svg(`<rect x="2" y="2" width="20" height="20" rx="2" fill="${GREEN}" ${O}/>
     <rect x="6" y="2" width="12" height="20" fill="${ROAD}"/>
     <path d="M12 4.5v3.5M12 10.3v3.5M12 16v3.5" stroke="${YEL}" stroke-width="2" stroke-linecap="round"/>`),

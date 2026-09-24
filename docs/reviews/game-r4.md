@@ -120,7 +120,7 @@ against the settled code before and after this window.
   the 500-600ms buildings stall is gone (zero spikes >16.7ms in an 8s steady-state window, vs. 2 spikes of ~600ms
   before), and the official batch's `minFps` went from a budget-failing 48.2 to a comfortable 92.2.
 - **Close/street-level rendering remains genuinely AAA-with-nits**, unchanged in quality from rounds 1-3:
-  `shots/game/r4c/street-18.png` (glossy Lego clearcoat, warm window glow, lovely dusk sky gradient),
+  `shots/game/r4c/street-18.png` (glossy Blox clearcoat, warm window glow, lovely dusk sky gradient),
   `shots/game/r4c/closeup-21h5.png` (crisp night bloom, headlit bus, crosswalk detail) — and now, new this round,
   `overview`/`aerial` are *also* consistently AAA-quality under every weather/tod combination tested, closing the
   gap REFERENCE.md's "atmosphere" and "living city" bars previously exposed at exactly the game's two primary "look

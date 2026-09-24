@@ -1,4 +1,4 @@
-// UI module: AAA-style Lego city-builder HUD rendered into ctx.dom (#ui-root). DOM only — zero draw calls in the game.
+// UI module: AAA-style Blox city-builder HUD rendered into ctx.dom (#ui-root). DOM only — zero draw calls in the game.
 import { CSS } from './styles.js';
 import { Hud, h, fmtMoney } from './hud.js';
 import { Minimap } from './minimap.js';

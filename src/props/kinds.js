@@ -1,4 +1,4 @@
-// Procedural Lego-style geometry for every prop kind. Each kind is 1-4 "roles" (role = one InstancedMesh:
+// Procedural Blox-style geometry for every prop kind. Each kind is 1-4 "roles" (role = one InstancedMesh:
 // fixed geometry + fixed/instance-coloured material). Every role's geometry is authored in prop-local space
 // with the origin at the ground-contact point and "forward" = local +Z (the `rot` field on a placed prop is
 // a plain Y rotation that turns +Z into the world facing direction — see geo.dirToRot).
@@ -54,7 +54,7 @@ export function buildRoleGeometry(ctx) {
   // -- trees: unit trunk / unit leaf-blob, sized + placed per instance by kinds.buildTree() below ------------
   // Leaf blob is itself 4 overlapping low-poly (undivided icosahedron) lobes bunched off-centre so even a
   // single instance reads as a lumpy foliage clump rather than one smooth sphere; buildTree() then stacks
-  // 2-4 of these (independently sized/rotated/offset) per tree for a genuinely stacked Lego-tree silhouette.
+  // 2-4 of these (independently sized/rotated/offset) per tree for a genuinely stacked Blox-tree silhouette.
   G['tree-trunk'] = UNIT_CYL;
   {
     const lobeA = xf(new THREE.IcosahedronGeometry(0.62, 0), mat(0, 0, 0, 0, 0, 0));

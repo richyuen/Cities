@@ -1,4 +1,4 @@
-# ARCHITECTURE — Lego City (Three.js 0.186 + Vite 8, plain ES modules)
+# ARCHITECTURE — Blox City (Three.js 0.186 + Vite 8, plain ES modules)
 
 This document is the contract. Builders read it before writing code. Only the **integrator** may change `src/core/`
 or this file. Builders own exactly one folder under `src/` and never touch another module's folder.
@@ -9,8 +9,8 @@ or this file. Builders own exactly one folder under `src/` and never touch anoth
 - **Assets**: CC0 only — Poly Haven, ambientCG, or procedural. Every downloaded file is listed in `public/assets/manifest.json` with source URL and license. If an asset is missing, the module must fall back to procedural and keep working.
 - **Isolation**: a module that throws in `init/update/showcase` is marked failed and skipped; it must never take the app down. Don't rely on another module having succeeded; check `ctx.modules.get('id')?.status === 'ok'`.
 - **Perf budget** (full demo city, 1920×1080): **≥ 50 fps**, **≤ 1500 draw calls**, **gpuMs ≤ 20 ms** (the authoritative perf metric — see §7). Use `InstancedMesh`, merged geometry, texture atlases. Per-module budgets in §7.
-  **Triangle count is not budgeted** (revised after Wave 3): the original 3 M ceiling was set before any geometry existed and proved unrealistic for a stud/bevel Lego art style — terrain + CSM shadows alone cost ~1.8 M, and 234 buildings in isolation already cost ~2.3 M (see `docs/reviews/demo-*.md`). The real demo city runs 14.7–20 M triangles at 73+ fps / ≤12.8 ms GPU time on the reference RTX 4070 Ti with 700–780 draw calls — both real budgets pass with large margin. Triangle count is a proxy, not a target; gpuMs is ground truth. Don't gut city density to chase a triangle number when fps/gpuMs/draw-calls all pass.
-- **Look**: "Lego Skylines" — see `docs/REFERENCE.md`. Glossy ABS plastic, studs, bold palette, physically plausible lighting. **Never programmer art**: no flat-colored `MeshBasicMaterial` for world objects, no un-shadowed scenes, no default cubes.
+  **Triangle count is not budgeted** (revised after Wave 3): the original 3 M ceiling was set before any geometry existed and proved unrealistic for a stud/bevel Blox art style — terrain + CSM shadows alone cost ~1.8 M, and 234 buildings in isolation already cost ~2.3 M (see `docs/reviews/demo-*.md`). The real demo city runs 14.7–20 M triangles at 73+ fps / ≤12.8 ms GPU time on the reference RTX 4070 Ti with 700–780 draw calls — both real budgets pass with large margin. Triangle count is a proxy, not a target; gpuMs is ground truth. Don't gut city density to chase a triangle number when fps/gpuMs/draw-calls all pass.
+- **Look**: "Blox Skylines" — see `docs/REFERENCE.md`. Glossy ABS plastic, studs, bold palette, physically plausible lighting. **Never programmer art**: no flat-colored `MeshBasicMaterial` for world objects, no un-shadowed scenes, no default cubes.
 - **Showcase**: every module ships `showcase(ctx, variant)` staging a representative scene of *only that module* (plus whatever core provides). `?showcase=<id>` loads only core + that module + its `deps` (transitively).
 - **Verification**: nothing is "done" until `node tools/shot.mjs --showcase <id> ...` produced a PNG you looked at, with `errors: []` in the JSON.
 
@@ -27,7 +27,7 @@ src/core/                   INTEGRATOR ONLY
   renderer.js   WebGLRenderer, color management, shadows, resize, stats
   camera.js     PerspectiveCamera + orbit/pan controls + presets (§6)
   assets.js     texture/HDRI loader with manifest + procedural fallbacks
-  materials.js  Lego palette + shared MeshPhysicalMaterial presets + stud instancer
+  materials.js  Blox palette + shared MeshPhysicalMaterial presets + stud instancer
   showcase.js   ?showcase= runner
   debug.js      window.__city API (§5)
   context.js    builds ctx
@@ -154,9 +154,9 @@ Console errors are captured from page load. `errors` must be `[]` to pass.
 Controls: left-drag orbit, right-drag pan, wheel zoom, WASD pan. Camera never goes below terrain + 1 m.
 
 ## 7. Visual standard & materials
-- Lego palette (`ctx.materials.palette`): `brightRed, brightBlue, brightYellow, brightGreen, darkGreen, white, black, darkStoneGrey, mediumStoneGrey, lightStoneGrey, tan, brickYellow, reddishBrown, darkOrange, brightOrange, mediumAzur, darkAzur, lime, mediumLilac, sandGreen, sandBlue, darkRed, transClear, transBlue, transYellow, transRed`.
+- Blox palette (`ctx.materials.palette`): `brightRed, brightBlue, brightYellow, brightGreen, darkGreen, white, black, darkStoneGrey, mediumStoneGrey, lightStoneGrey, tan, brickYellow, reddishBrown, darkOrange, brightOrange, mediumAzur, darkAzur, lime, mediumLilac, sandGreen, sandBlue, darkRed, transClear, transBlue, transYellow, transRed`.
 - `ctx.materials.plastic(name, { roughness=0.35, clearcoat=0.6, clearcoatRoughness=0.15 })` returns a cached shared `MeshPhysicalMaterial`. Share materials; never create per-object materials in loops.
-- Studs: everything horizontal that is "Lego" gets studs (ground plates, roofs, road shoulders). Use `ctx.materials.studs()` which returns an `InstancedMesh` helper: `studs.add(x,y,z,colorName)`, `studs.commit()`, `studs.clear()`. Stud pitch in-world **0.8 m** (1 cell = 10 × 10 studs). Stud radius 0.24 m, height 0.17 m. Use LOD: studs fade beyond ~250 m.
+- Studs: everything horizontal that is "Blox" gets studs (ground plates, roofs, road shoulders). Use `ctx.materials.studs()` which returns an `InstancedMesh` helper: `studs.add(x,y,z,colorName)`, `studs.commit()`, `studs.clear()`. Stud pitch in-world **0.8 m** (1 cell = 10 × 10 studs). Stud radius 0.24 m, height 0.17 m. Use LOD: studs fade beyond ~250 m.
 - Lighting is owned by `environment`: sun `DirectionalLight` (3-cascade via `three/addons/csm/CSM.js`), sky hemisphere/ambient, HDRI/procedural environment map for reflections, fog. Other modules must not add lights except local point lights for night (props/buildings; pooled, ≤ 48 real point lights, rest emissive-only).
 - Post (`effects`): SMAA, GTAO, bloom (threshold ≥ 1.0, subtle), vignette. Tone mapping ACES filmic is set by core renderer; exposure is set by environment via `ctx.renderer.toneMappingExposure`.
 - Roads: dark grey plates, white/yellow lane markings, curbs, stud sidewalks; intersections with proper corner geometry, no z-fighting (use `polygonOffset` or small Y offsets). One-way edges additionally print lane arrows (white, ~12 m apart, on every usable lane) pointing along the permitted flow; two-way roads are unchanged.

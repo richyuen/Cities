@@ -17,7 +17,7 @@ const STATIC_ROLE_COLOR = {
 
 const INSTANCE_COLOR_ROLES = new Set(['hedge-block', 'sign-face', 'tree-leaves', 'flowerbed-base', 'flowerbed-flower']);
 // Foliage roles get a matte, low-clearcoat, flat-shaded material tuned specifically so leaf/hedge clusters
-// read as Lego foliage rather than the shared glossy-plastic look used by hardware roles (sign-face etc.).
+// read as Blox foliage rather than the shared glossy-plastic look used by hardware roles (sign-face etc.).
 const FOLIAGE_INSTANCE_ROLES = new Set(['tree-leaves', 'hedge-block']);
 
 // role -> { name, dayIntensity, nightIntensity } for the dynamic emissive roles we animate ourselves.

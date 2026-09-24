@@ -90,7 +90,7 @@ whether the composer is on or off.
 
 - **AA is still excellent**: MSAA x4 + SMAA gives crisp stud rims and brick bevels from 2.5 m macro
   (`r2c-extra/macro-2h5m.png`) to full overview, with no jaggies visible anywhere in the 60+ shots reviewed.
-- **Night is now a convincing Lego night**: deep blue sky with stars, warm window pools that read individually lit
+- **Night is now a convincing Blox night**: deep blue sky with stars, warm window pools that read individually lit
   (not a single glowing slab), soft contained lamp glow, all correctly absent in every daytime shot.
 - **Pipeline plumbing remains correct**: resize and dispose are clean, draw-call overhead is stable at +20 across
   every preset/tod pair tested, and quality tiers switch live with no errors.

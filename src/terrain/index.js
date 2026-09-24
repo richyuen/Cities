@@ -1,4 +1,4 @@
-// terrain — the Lego baseplate landscape the city sits on: stepped plate terrain, studs, water.
+// terrain — the Blox baseplate landscape the city sits on: stepped plate terrain, studs, water.
 import * as THREE from 'three';
 import { TerrainData, PLATE, WATER_OFFSET, STUD_PITCH, quantize } from './data.js';
 import { generateHeightField, variantParams, riverZ } from './heightgen.js';

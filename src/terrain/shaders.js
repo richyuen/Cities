@@ -93,7 +93,7 @@ export function patchStudMaterial(mat, uniforms) {
 }
 
 /**
- * Water: translucent Lego trans-blue. Depth under the surface is read from the height field, Beer-Lambert
+ * Water: translucent Blox trans-blue. Depth under the surface is read from the height field, Beer-Lambert
  * attenuation gives the body colour and the alpha (shallows show the seabed plates, deep water is saturated
  * blue), Fresnel makes grazing views reflect the sky; wave normals fade out by ~150 m so nothing aliases.
  * Blending is One / OneMinusSrcAlpha with the body pre-weighted by (1 - transmittance) and the specular added

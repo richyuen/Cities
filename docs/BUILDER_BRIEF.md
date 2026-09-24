@@ -1,7 +1,7 @@
 # Builder brief (read fully before writing code)
 
-You are one builder agent in a multi-agent pipeline building an AAA-looking, Lego-brick-styled city builder
-("Lego Skylines") in Three.js 0.186 + Vite 8, plain ES modules. Project root: `C:\Git\Cities`.
+You are one builder agent in a multi-agent pipeline building an AAA-looking, Blox-brick-styled city builder
+("Blox Skylines") in Three.js 0.186 + Vite 8, plain ES modules. Project root: `C:\Git\Cities`.
 
 ## Read first
 1. `ARCHITECTURE.md` — the contract (module API, ctx, world model, events, budgets, visual standard).
