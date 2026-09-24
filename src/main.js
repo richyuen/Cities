@@ -3,10 +3,13 @@ import { Registry } from './core/registry.js';
 import { loaders, ALL_MODULE_IDS } from './core/modules.js';
 import { installDebugApi } from './core/debug.js';
 import { installFallbackLights } from './core/fallbackLights.js';
+import { createBootScreen } from './core/bootScreen.js';
 
 const params = new URLSearchParams(location.search);
 const container = document.getElementById('app');
 const dom = document.getElementById('ui-root');
+// Drives the inline overlay from index.html for the whole boot; see core/bootScreen.js.
+const bootScreen = createBootScreen();
 
 const app = {
   frame: 0,
@@ -17,14 +20,16 @@ const app = {
 };
 
 async function boot() {
+  bootScreen.setProgress({ phase: 'context', done: 0, total: 1, label: 'Preparing the engine…' });
   const ctx = await createContext({ container, dom, params });
+  bootScreen.setProgress({ phase: 'context', done: 1, total: 1 });
   const registry = new Registry(ctx, loaders);
   const debug = installDebugApi(ctx, registry, app);
 
   // Which modules to load: full game = all; showcase = that module + transitive deps.
   const showcaseId = params.get('showcase');
   const variant = params.get('variant') || 'default';
-  const recs = await registry.loadAll(ALL_MODULE_IDS);
+  const recs = await registry.loadAll(ALL_MODULE_IDS, (p) => bootScreen.setProgress(p));
   let ids;
   if (showcaseId) {
     if (!recs.has(showcaseId)) ctx.error(`[boot] unknown showcase module "${showcaseId}". Known: ${ALL_MODULE_IDS.join(', ')}`);
@@ -50,7 +55,10 @@ async function boot() {
     installFallbackLights(ctx);
   }
 
-  await registry.initAll(recs, ids);
+  await registry.initAll(recs, ids, (p) => bootScreen.setProgress(p));
+  // Everything is built; the remaining wait is the first frame compiling shaders/uploading textures. Keep the
+  // player informed rather than leaving the last module's label up for the whole compile.
+  bootScreen.status('Warming up the renderer…');
 
   app.stageShowcase = async (id, v = 'default') => {
     ctx.world.clearContent();
@@ -107,11 +115,13 @@ async function boot() {
     if (!once) requestAnimationFrame(() => app.tick());
   };
   requestAnimationFrame(() => app.tick());
+  app.after(1, () => bootScreen.ready()); // first frame is on the canvas: fade the overlay out
   app.after(2, () => { debug.ready = true; ctx.log('[boot] ready'); });
 }
 
 boot().catch((e) => {
   console.error('[boot] fatal:', e);
+  bootScreen.fail(e);
   window.__city = window.__city || {};
   window.__city.ready = true;
   window.__city.fatal = String(e?.stack || e);

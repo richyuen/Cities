@@ -2,6 +2,16 @@
 // A module that throws in load/init is marked 'failed' and skipped; update() errors are counted and the module is
 // disabled after 3 consecutive errors. The app never goes down because of one module.
 
+/** Yield until after the next paint, so DOM updates queued by an onProgress report (the boot screen's status
+ *  label) are visible before the next init blocks the main thread with heavy synchronous work (city generation,
+ *  terrain meshing). rAF runs before paint, so the task queued from it lands after it. */
+function yieldToPaint() {
+  return new Promise((resolve) => {
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => setTimeout(resolve, 0));
+    else setTimeout(resolve, 0);
+  });
+}
+
 export class Registry {
   constructor(ctx, loaders) {
     this.ctx = ctx;
@@ -10,8 +20,13 @@ export class Registry {
     this.ordered = [];
   }
 
-  async loadAll(ids) {
+  /** `onProgress({ phase: 'load', id, done, total })` is called before each module starts and once when the
+   *  phase finishes (id null), for the boot screen. Optional: omit it and behavior is unchanged. */
+  async loadAll(ids, onProgress) {
     const recs = new Map();
+    const total = ids.length;
+    let done = 0;
+    onProgress?.({ phase: 'load', id: null, done, total });
     for (const id of ids) {
       const rec = { id, status: 'pending', module: null, api: {}, error: null, errors: 0, initMs: 0 };
       recs.set(id, rec);
@@ -19,8 +34,10 @@ export class Registry {
       if (!loader) {
         rec.status = 'failed'; rec.error = `no loader for module "${id}"`;
         this.ctx.error(`[registry] ${rec.error}`);
+        done++;
         continue;
       }
+      onProgress?.({ phase: 'load', id, done, total });
       try {
         const mod = await loader();
         const m = mod.default;
@@ -33,7 +50,9 @@ export class Registry {
         this.ctx.error(`[registry] failed to load module "${id}":`, e);
         this.ctx.events.emit('module:failed', { id, error: rec.error });
       }
+      done++;
     }
+    onProgress?.({ phase: 'load', id: null, done, total });
     return recs;
   }
 
@@ -72,18 +91,29 @@ export class Registry {
     return out;
   }
 
-  async initAll(recs, ids) {
+  /** `onProgress({ phase: 'init', id, done, total })` mirrors loadAll. Before each init we also yield a paint
+   *  (see yieldToPaint) so the status label for the module about to run is on screen before it can freeze. */
+  async initAll(recs, ids, onProgress) {
     const order = Registry.sort(recs, ids);
+    const total = order.length;
+    let done = 0;
+    onProgress?.({ phase: 'init', id: null, done, total });
     for (const id of order) {
       const rec = recs.get(id);
       this.records.set(id, rec);
-      if (rec.status !== 'loaded') continue;
+      if (rec.status !== 'loaded') {
+        done++;
+        continue;
+      }
       const missing = (rec.module.deps || []).filter((d) => this.records.get(d)?.status !== 'ok');
       if (missing.length) {
         rec.status = 'skipped'; rec.error = `deps not ok: ${missing.join(', ')}`;
         this.ctx.log(`[registry] skipping "${id}": ${rec.error}`);
+        done++;
         continue;
       }
+      onProgress?.({ phase: 'init', id, done, total });
+      if (onProgress) await yieldToPaint();
       const t0 = performance.now();
       try {
         this.ctx.log(`[registry] init ${id}`);
@@ -97,7 +127,9 @@ export class Registry {
         try { rec.module.dispose?.(this.ctx); } catch (_) { /* ignore */ }
       }
       rec.initMs = performance.now() - t0;
+      done++;
     }
+    onProgress?.({ phase: 'init', id: null, done, total });
     this.ordered = order.map((id) => this.records.get(id)).filter((r) => r.status === 'ok');
     return order;
   }

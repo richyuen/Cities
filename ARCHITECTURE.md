@@ -23,6 +23,7 @@ src/core/                   INTEGRATOR ONLY
   rng.js        sfc32 seeded RNG: fork(), float(), int(), range(), pick(), chance(), noise2D()
   clock.js      time of day, day length, pause, timeScale, sun direction
   registry.js   module loader, dependency order, failure isolation
+  bootScreen.js boot overlay controller (markup + CSS are inline in index.html so they paint pre-bundle)
   renderer.js   WebGLRenderer, color management, shadows, resize, stats
   camera.js     PerspectiveCamera + orbit/pan controls + presets (§6)
   assets.js     texture/HDRI loader with manifest + procedural fallbacks

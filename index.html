@@ -14,11 +14,95 @@
     #app canvas { display: block; width: 100%; height: 100%; }
     #ui-root { position: fixed; inset: 0; pointer-events: none; font-family: system-ui, sans-serif; }
     #ui-root > * { pointer-events: auto; }
+
+    /* ---------- boot overlay ----------
+       Inline (not injected from JS) on purpose: it must paint before the app bundle and every module has
+       loaded, so the player never sees a blank screen. src/core/bootScreen.js drives it (progress reports,
+       ready/fail) and the markup below is the only copy — keep the element ids in sync. Own `lc-boot`
+       namespace, same Lego-plate language as src/menu/styles.js and src/ui/styles.js. */
+    .lc-boot {
+      --lc-yellow: #F7C948;
+      --lc-text: #f5f7fa;
+      --lc-muted: rgba(230, 236, 244, 0.66);
+      --lc-display: "Fredoka", "Arial Rounded MT Bold", "Segoe UI Black", "Arial Black", "Segoe UI", system-ui, sans-serif;
+      position: fixed; inset: 0; z-index: 9999; display: grid; place-items: center;
+      background: radial-gradient(ellipse at 50% 38%, #18202e 0%, #0b0f16 62%, #070a10 100%);
+      font-family: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+      font-size: 14px; color: var(--lc-text); line-height: 1.3;
+      user-select: none; -webkit-font-smoothing: antialiased;
+      transition: opacity 0.45s ease;
+    }
+    .lc-boot * { box-sizing: border-box; }
+    .lc-boot--done { opacity: 0; pointer-events: none; }
+    .lc-boot-card { width: min(520px, calc(100vw - 64px)); display: flex; flex-direction: column; gap: 22px; }
+    .lc-boot-lockup { display: flex; align-items: center; gap: 16px; }
+    .lc-boot-logo { width: 62px; height: 62px; flex: none; filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.6)); }
+    .lc-boot-logo svg { display: block; width: 100%; height: 100%; }
+    .lc-boot-tag { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 2.4px; color: var(--lc-muted); }
+    .lc-boot-name { font-family: var(--lc-display); font-size: 40px; font-weight: 900; letter-spacing: 0.4px; line-height: 1.05;
+      text-shadow: 0 3px 0 rgba(0, 0, 0, 0.5), 0 8px 24px rgba(0, 0, 0, 0.6); }
+    .lc-boot-bar {
+      position: relative; height: 16px; border-radius: 8px; overflow: hidden;
+      background: rgba(0, 0, 0, 0.5); border: 1px solid rgba(255, 255, 255, 0.16);
+      box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.6), 0 1px 0 rgba(255, 255, 255, 0.06);
+    }
+    .lc-boot-fill {
+      height: 100%; width: 100%; transform: scaleX(0); transform-origin: left center; will-change: transform;
+      background: linear-gradient(180deg, #ffe37a 0%, #f9cf4f 46%, #e9b224 54%, #f0bd33 100%);
+      box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.45), inset 0 -2px 0 rgba(0, 0, 0, 0.25);
+      animation: lc-boot-pulse 1.6s ease-in-out infinite;
+    }
+    @keyframes lc-boot-pulse { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.16); } }
+    .lc-boot--ready .lc-boot-fill { animation: none; }
+    .lc-boot-row { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+    .lc-boot-status { font-size: 13.5px; font-weight: 600; letter-spacing: 0.2px; color: var(--lc-muted); min-height: 1.2em; }
+    .lc-boot-pct { font-size: 13px; font-weight: 700; color: var(--lc-text); opacity: 0.85; font-variant-numeric: tabular-nums; }
+    .lc-boot-error {
+      padding: 12px 14px; border-radius: 10px; border: 1px solid rgba(227, 52, 47, 0.55);
+      background: rgba(227, 52, 47, 0.12); color: #ffb3ae; font-size: 12.5px; line-height: 1.5;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; word-break: break-word;
+      max-height: 140px; overflow: auto;
+    }
+    .lc-boot--error .lc-boot-fill { background: linear-gradient(180deg, #ff8a80 0%, #e3342f 55%, #b3231f 100%); animation: none; }
+    .lc-boot--error .lc-boot-bar { border-color: rgba(227, 52, 47, 0.6); }
+    @media (max-width: 520px) { .lc-boot-name { font-size: 32px; } }
+    @media (prefers-reduced-motion: reduce) { .lc-boot { transition: none; } .lc-boot-fill { animation: none; } }
   </style>
 </head>
 <body>
   <div id="app"></div>
   <div id="ui-root"></div>
+
+  <div id="lc-boot" class="lc-boot">
+    <div class="lc-boot-card">
+      <div class="lc-boot-lockup">
+        <div class="lc-boot-logo" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M4 9.5 12 6l8 3.5v8L12 21l-8-3.5z" fill="#c4281c" stroke="#1a1e25" stroke-width="2" stroke-linejoin="round" paint-order="stroke"/>
+            <path d="M4 9.5 12 13v8l-8-3.5z" fill="#a52117"/>
+            <path d="M12 13l8-3.5v8L12 21z" fill="#7f1911"/>
+            <ellipse cx="8.5" cy="9" rx="1.9" ry="1" fill="#e45a4f"/><ellipse cx="8.5" cy="8.3" rx="1.9" ry="1" fill="#f07064"/>
+            <ellipse cx="15.5" cy="9" rx="1.9" ry="1" fill="#e45a4f"/><ellipse cx="15.5" cy="8.3" rx="1.9" ry="1" fill="#f07064"/>
+            <ellipse cx="12" cy="6.9" rx="1.9" ry="1" fill="#e45a4f"/><ellipse cx="12" cy="6.2" rx="1.9" ry="1" fill="#f07064"/>
+            <ellipse cx="12" cy="11.2" rx="1.9" ry="1" fill="#e45a4f"/><ellipse cx="12" cy="10.5" rx="1.9" ry="1" fill="#f07064"/>
+          </svg>
+        </div>
+        <div class="lc-boot-word">
+          <div class="lc-boot-tag">Lego Skylines</div>
+          <div class="lc-boot-name" id="lc-boot-name">Brickport</div>
+        </div>
+      </div>
+      <div class="lc-boot-bar" id="lc-boot-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Loading Lego Skylines">
+        <div class="lc-boot-fill" id="lc-boot-fill"></div>
+      </div>
+      <div class="lc-boot-row">
+        <div class="lc-boot-status" id="lc-boot-status" role="status" aria-live="polite">Loading…</div>
+        <div class="lc-boot-pct" id="lc-boot-pct">0%</div>
+      </div>
+      <div class="lc-boot-error" id="lc-boot-error" hidden></div>
+    </div>
+  </div>
+
   <script type="module" src="/src/main.js"></script>
 </body>
 </html>
