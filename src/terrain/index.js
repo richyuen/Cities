@@ -268,6 +268,9 @@ export default {
 
     S.unsub.push(ctx.events.on('terrain:changed', onTerrainChanged));
     S.unsub.push(ctx.events.on('world:cell', onCell));
+    S.unsub.push(ctx.events.on('settings:changed', (p = {}) => {
+      if (p.studs !== undefined) S.studs.setEnabled(p.studs);
+    }));
 
     generate('default');
     S.studs.update(0, ctx.camera, true);

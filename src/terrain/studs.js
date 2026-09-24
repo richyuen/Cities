@@ -78,6 +78,7 @@ export class StudManager {
     this._lastCam = new THREE.Vector3(Infinity, 0, 0);
     this.count = 0;
     this.effRadius = radius;
+    this.enabled = true;
   }
 
   key(cx, cz) { return cz * this.nx + cx; }
@@ -199,7 +200,7 @@ export class StudManager {
     this.near.count = nn; this.far.count = nf;
     this.near.instanceMatrix.needsUpdate = true; this.near.instanceColor.needsUpdate = true;
     this.far.instanceMatrix.needsUpdate = true; this.far.instanceColor.needsUpdate = true;
-    this.near.visible = nn > 0; this.far.visible = nf > 0;
+    this.near.visible = this.enabled && nn > 0; this.far.visible = this.enabled && nf > 0;
     if (nn > 0) this.near.computeBoundingSphere();
     if (nf > 0) this.far.computeBoundingSphere();
     this.count = nn + nf;
@@ -210,5 +211,12 @@ export class StudManager {
     this.near.dispose(); this.far.dispose();
     this.geoNear.dispose(); this.geoFar.dispose();
     this.cache.clear();
+  }
+
+  /** UI "Show studs" toggle: hide both instanced meshes (the ground shader relief keeps the plate look). */
+  setEnabled(v) {
+    this.enabled = !!v;
+    this.near.visible = this.enabled && this.near.count > 0;
+    this.far.visible = this.enabled && this.far.count > 0;
   }
 }

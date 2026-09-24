@@ -7,8 +7,8 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 // with building count. A 256x256-cell world at 128-cell chunks is a fixed 2x2 = 4 chunks, so even a dense city
 // that eventually touches most of the ~70-colour palette in every chunk stays at 4 x ~90 = well under the 400
 // draw-call budget (a smaller chunk size scales worse: a saturated 16-chunk grid could reach 16 x 90 = 1440).
-// Roof studs use a real per-chunk InstancedMesh (ctx.materials.studs()) so a tower's roof doesn't cost per-stud
-// triangles beyond one instance each.
+// Roof/ledge studs are handed to a BuildingStudField (studfield.js): one distance-culled InstancedMesh for the
+// whole module, so a fully studded roof costs one instance per stud and far studs are simply not uploaded.
 const CHUNK_CELLS = 128;
 
 export class BuildingBatcher {
@@ -18,11 +18,12 @@ export class BuildingBatcher {
   // even for the single most-reused palette colour's bucket in the most densely-built chunk.
   static SLICE_GEOMS = 48;
 
-  constructor(ctx, group, dynMats) {
+  constructor(ctx, group, dynMats, studField) {
     this.ctx = ctx;
     this.group = group;
     this.dynMats = dynMats;
-    this.chunks = new Map();     // chunkKey -> { group, meshes: Map<matKey, Mesh>, studs }
+    this.studField = studField || null;
+    this.chunks = new Map();     // chunkKey -> { group, meshes: Map<matKey, Mesh> }
     this.buildings = new Map();  // id -> { chunkKey, parts, studs, height, kind, cx, cz, baseY }
     this.dirtyChunks = new Set();
     // In-progress incremental rebuild of one chunk, or null. A chunk can contain hundreds of buildings (see
@@ -47,6 +48,7 @@ export class BuildingBatcher {
     const chunkKey = this.chunkKeyFor(i, j);
     if (prev) { for (const g of prev.parts) g.geom.dispose(); this._markChunkDirty(prev.chunkKey); }
     this.buildings.set(id, { ...data, chunkKey });
+    this.studField?.set(id, data.studs);
     this._markChunkDirty(chunkKey);
   }
 
@@ -55,6 +57,7 @@ export class BuildingBatcher {
     if (!b) return;
     for (const g of b.parts) g.geom.dispose();
     this.buildings.delete(id);
+    this.studField?.remove(id);
     this._markChunkDirty(b.chunkKey);
   }
 
@@ -108,7 +111,6 @@ export class BuildingBatcher {
   _beginChunkRebuild(key) {
     let chunk = this.chunks.get(key);
     const buckets = new Map();
-    const studPts = [];
     let any = false;
     for (const b of this.buildings.values()) {
       if (b.chunkKey !== key) continue;
@@ -117,24 +119,22 @@ export class BuildingBatcher {
         if (!buckets.has(p.mat)) buckets.set(p.mat, []);
         buckets.get(p.mat).push(p.geom);
       }
-      for (const s of b.studs) studPts.push(s);
     }
     if (!any) {
       if (chunk) {
         for (const m of chunk.meshes.values()) { chunk.group.remove(m); m.geometry.dispose(); }
-        chunk.studs?.clear();
         this.group.remove(chunk.group);
         this.chunks.delete(key);
       }
       return null;
     }
     if (!chunk) {
-      chunk = { group: new THREE.Group(), meshes: new Map(), studs: this.ctx.materials.studs({ maxCount: 8000, castShadow: false }) };
+      chunk = { group: new THREE.Group(), meshes: new Map() };
       chunk.group.name = `buildings-chunk-${key}`;
       this.group.add(chunk.group);
       this.chunks.set(key, chunk);
     }
-    return { key, chunk, entries: [...buckets], idx: 0, seen: new Set(), studPts };
+    return { key, chunk, entries: [...buckets], idx: 0, seen: new Set() };
   }
 
   /** Processes a bucket's mergeGeometries() in small slices (the actual expensive work) until `state` is fully
@@ -196,9 +196,6 @@ export class BuildingBatcher {
     for (const [matKey, mesh] of [...chunk.meshes]) {
       if (!seen.has(matKey)) { chunk.group.remove(mesh); mesh.geometry.dispose(); chunk.meshes.delete(matKey); }
     }
-    chunk.studs.clear();
-    for (const s of state.studPts) chunk.studs.add(s.x, s.y, s.z, s.color);
-    chunk.studs.commit(chunk.group);
     return true;
   }
 
@@ -212,9 +209,13 @@ export class BuildingBatcher {
   stats() {
     let draws = 0, tris = 0;
     for (const chunk of this.chunks.values()) {
-      draws += chunk.meshes.size + (chunk.studs?.mesh ? 1 : 0);
+      draws += chunk.meshes.size;
       for (const m of chunk.meshes.values()) tris += (m.geometry.index ? m.geometry.index.count : m.geometry.attributes.position.count) / 3;
-      if (chunk.studs?.mesh) tris += (chunk.studs.mesh.geometry.index?.count || 0) / 3 * chunk.studs.mesh.count;
+    }
+    if (this.studField && this.studField.count > 0) {
+      draws += 1;
+      const g = this.studField.geometry;
+      tris += ((g.index?.count || 0) / 3) * this.studField.count;
     }
     return { draws, tris: Math.round(tris) };
   }
@@ -222,13 +223,13 @@ export class BuildingBatcher {
   dispose() {
     for (const chunk of this.chunks.values()) {
       for (const m of chunk.meshes.values()) { chunk.group.remove(m); m.geometry.dispose(); }
-      chunk.studs?.clear();
       this.group.remove(chunk.group);
     }
     this.chunks.clear();
     for (const b of this.buildings.values()) for (const g of b.parts) g.geom.dispose();
     this.buildings.clear();
     this.dirtyChunks.clear();
+    this.studField?.clear();
     this._rebuild = null;
   }
 }

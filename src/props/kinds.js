@@ -51,27 +51,32 @@ export function buildRoleGeometry(ctx) {
     G['bench-planks'] = merge([seat, back]);
   }
 
-  // -- trees: unit trunk / unit leaf-blob, sized + placed per instance by kinds.buildTree() below ------------
-  // Leaf blob is itself 4 overlapping low-poly (undivided icosahedron) lobes bunched off-centre so even a
-  // single instance reads as a lumpy foliage clump rather than one smooth sphere; buildTree() then stacks
-  // 2-4 of these (independently sized/rotated/offset) per tree for a genuinely stacked Blox-tree silhouette.
+  // -- trees: unit trunk / unit leaf-plate cluster, sized + placed per instance by kinds.buildTree() below ----
+  // The canopy cluster is a *stack of Blox plates* (bevel boxes of decreasing size, jittered and rotated) rather
+  // than a smooth blob, so a tree reads as stacked elements. buildTree() then stacks 2-4 of these clusters per
+  // tree for a genuinely stepped, layered silhouette, and caps the top with a real stud ('tree-top' role).
   G['tree-trunk'] = UNIT_CYL;
   {
-    const lobeA = xf(new THREE.IcosahedronGeometry(0.62, 0), mat(0, 0, 0, 0, 0, 0));
-    const lobeB = xf(new THREE.IcosahedronGeometry(0.5, 0), mat(0.46, 0.16, 0.08, 0, 0, 0));
-    const lobeC = xf(new THREE.IcosahedronGeometry(0.46, 0), mat(-0.38, -0.1, 0.3, 0, 0, 0));
-    const lobeD = xf(new THREE.IcosahedronGeometry(0.42, 0), mat(-0.06, 0.26, -0.4, 0, 0, 0));
-    G['tree-leaves'] = merge([lobeA, lobeB, lobeC, lobeD]);
+    const plate = (w, h, d, x, y, z, ry) => xf(bb(w, h, d, 0.14), mat(x, y, z, 0, ry, 0));
+    G['tree-leaves'] = merge([
+      plate(1.75, 0.52, 1.65, 0, -0.34, 0, 0),
+      plate(1.5, 0.5, 1.4, 0.18, -0.06, 0.1, 0.5),
+      plate(1.2, 0.48, 1.12, -0.16, 0.2, 0.08, -0.6),
+      plate(0.85, 0.44, 0.8, 0.03, 0.44, -0.06, 1.0),
+    ]);
   }
+  // One stud for the top of the canopy (LEGO tree canopies are stud-topped). Owned geometry (not a shared
+  // UNIT_* const), so props/index.js may dispose it on teardown.
+  G['tree-top'] = xf(UNIT_CYL, mat(0, 0, 0, 0, 0, 0, 0.24, 0.17, 0.24));
 
-  // -- hedge: one 2 m run, built as a low base plus 3 overlapping rounded lumps so the top silhouette reads as
-  // individual bush lumps rather than one smooth crate; abutted end-to-end by the placement code -------------
+  // -- hedge: one 2 m run, built as a low base plate plus two offset, slightly rotated plates on top so the
+  // silhouette reads as stacked Blox plates with a bulging top rather than one smooth crate; abutted end-to-end
+  // by the placement code --------------------------------------------------------------------------------------
   {
-    const base = xf(bb(2.0, 0.34, 0.58, 0.04), mat(0, 0, 0, 0, 0, 0));
-    const lumpL = xf(bb(0.92, 0.56, 0.5, 0.16), mat(-0.56, 0.32, 0, 0, 0, 0));
-    const lumpM = xf(bb(0.92, 0.64, 0.5, 0.16), mat(0, 0.4, 0, 0, 0, 0));
-    const lumpR = xf(bb(0.92, 0.54, 0.5, 0.16), mat(0.56, 0.3, 0, 0, 0, 0));
-    G['hedge-block'] = merge([base, lumpL, lumpM, lumpR]);
+    const base = xf(bb(2.0, 0.32, 0.62, 0.05), mat(0, 0, 0, 0, 0, 0));
+    const mid = xf(bb(1.86, 0.34, 0.58, 0.1), mat(0.05, 0.28, 0, 0, 0.03, 0));
+    const top = xf(bb(1.62, 0.32, 0.52, 0.12), mat(-0.08, 0.58, 0, 0, -0.03, 0));
+    G['hedge-block'] = merge([base, mid, top]);
   }
 
   // -- flower head: short stem + small rounded bloom, scattered per-instance inside a flower_bed's soil box --
@@ -110,7 +115,9 @@ export function buildRoleGeometry(ctx) {
     G['busstop-frame'] = merge([postA, postB, beam]);
     const roof = xf(bb(3.1, 0.07, 1.3, 0.02), mat(0, 2.42, 0.05, 0, 0, 0));
     const sign = xf(bb(0.46, 0.32, 0.05, 0.02), mat(1.0, 2.75, -0.45, 0, 0, 0));
-    G['busstop-roof'] = merge([roof, sign]);
+    // studs on the shelter roof plate (a real Blox canopy top)
+    const roofStuds = [-0.8, 0, 0.8].map((sx) => xf(UNIT_CYL, mat(sx, 2.455, 0.05, 0, 0, 0, 0.24, 0.17, 0.24)));
+    G['busstop-roof'] = merge([roof, sign, ...roofStuds]);
     const back = xf(bb(2.9, 1.5, 0.06, 0.02), mat(0, 0, -0.48, 0, 0, 0));
     const side = xf(bb(0.06, 1.5, 0.9, 0.02), mat(-1.3, 0, -0.05, 0, 0, 0));
     G['busstop-panel'] = merge([back, side]);
@@ -183,14 +190,16 @@ export function buildKindParts(kind, prng) {
   }
 }
 
-/** trunk + 2-4 stacked, offset, independently-rotated leaf-blob clusters (each already a lumpy 4-lobe blob —
- * see tree-leaves in buildRoleGeometry), seeded jitter + rare autumn colour variant. Forcing a minimum of 2
- * clusters even on tree_small keeps every tree size reading as "stacked foliage", never a single ball. */
+/** trunk + 2-4 stacked, offset, independently-rotated plate clusters (each already a stepped 4-plate canopy —
+ * see tree-leaves in buildRoleGeometry), seeded jitter + rare autumn colour variant, plus a real stud capping
+ * the top cluster. Forcing a minimum of 2 clusters even on tree_small keeps every tree size reading as stacked
+ * foliage, never a single ball. */
 function buildTree(prng, trunkR, trunkH, minClusters, maxClusters, leafR) {
   const parts = [{ role: 'tree-trunk', local: mat(0, 0, 0, 0, 0, 0, trunkR, trunkH, trunkR) }];
   const autumn = prng.chance(0.12);
   const palette = autumn ? AUTUMN_COLORS : LEAF_COLORS;
   const n = prng.int(minClusters, maxClusters);
+  let top = null;
   for (let k = 0; k < n; k++) {
     const t = n === 1 ? 0.72 : k / (n - 1);
     const y = trunkH * (0.5 + 0.48 * t);
@@ -198,8 +207,11 @@ function buildTree(prng, trunkR, trunkH, minClusters, maxClusters, leafR) {
     const jx = prng.range(-leafR * 0.5, leafR * 0.5), jz = prng.range(-leafR * 0.5, leafR * 0.5);
     const jy = prng.range(-leafR * 0.12, leafR * 0.12);
     const ry = prng.range(0, Math.PI * 2);
-    parts.push({ role: 'tree-leaves', local: mat(jx, y + jy, jz, 0, ry, 0, r, r * 0.82, r), color: prng.pick(palette) });
+    const color = prng.pick(palette);
+    parts.push({ role: 'tree-leaves', local: mat(jx, y + jy, jz, 0, ry, 0, r, r * 0.82, r), color });
+    top = { x: jx, y: y + jy + 0.88 * r * 0.82, z: jz, color };
   }
+  if (top) parts.push({ role: 'tree-top', local: mat(top.x, top.y, top.z), color: top.color });
   return parts;
 }
 

@@ -15,10 +15,12 @@ const STATIC_ROLE_COLOR = {
   'tree-trunk': 'reddishBrown',
 };
 
-const INSTANCE_COLOR_ROLES = new Set(['hedge-block', 'sign-face', 'tree-leaves', 'flowerbed-base', 'flowerbed-flower']);
-// Foliage roles get a matte, low-clearcoat, flat-shaded material tuned specifically so leaf/hedge clusters
-// read as Blox foliage rather than the shared glossy-plastic look used by hardware roles (sign-face etc.).
-const FOLIAGE_INSTANCE_ROLES = new Set(['tree-leaves', 'hedge-block']);
+const INSTANCE_COLOR_ROLES = new Set(['hedge-block', 'sign-face', 'tree-leaves', 'tree-top', 'flowerbed-base', 'flowerbed-flower']);
+// Foliage roles get a matte, low-clearcoat material tuned specifically so leaf/hedge clusters read as Blox
+// foliage rather than the shared glossy-plastic look used by hardware roles (sign-face etc.). Only the hedge
+// keeps flat shading - its lumps are low-poly bevel boxes whose facets read as a clipped bush; the tree canopy
+// is a stack of smooth molded plates, so it shades smooth like the ABS it is meant to be.
+const FOLIAGE_INSTANCE_ROLES = new Set(['tree-leaves', 'hedge-block', 'tree-top']);
 
 // role -> { name, dayIntensity, nightIntensity } for the dynamic emissive roles we animate ourselves.
 const EMISSIVE_ROLES = {
@@ -38,10 +40,14 @@ export function buildRoleMaterials(ctx) {
   }
   for (const role of INSTANCE_COLOR_ROLES) {
     const foliage = FOLIAGE_INSTANCE_ROLES.has(role);
-    const material = foliage
-      ? M.plastic('white', { instanceColor: true, roughness: 0.88, clearcoat: 0.04, clearcoatRoughness: 0.7 })
-      : M.plastic('white', { instanceColor: true, roughness: 0.4, clearcoat: 0.5 });
-    if (foliage && !material.flatShading) { material.flatShading = true; material.needsUpdate = true; }
+    // Distinct opt sets per family: `plastic()` caches by opts, so the hedge's flat-shaded material can never
+    // leak its flatShading onto the smooth tree-canopy material (or vice versa).
+    const material = role === 'hedge-block'
+      ? M.plastic('white', { instanceColor: true, roughness: 0.92, clearcoat: 0.03, clearcoatRoughness: 0.75 })
+      : foliage
+        ? M.plastic('white', { instanceColor: true, roughness: 0.88, clearcoat: 0.04, clearcoatRoughness: 0.7 })
+        : M.plastic('white', { instanceColor: true, roughness: 0.4, clearcoat: 0.5 });
+    if (role === 'hedge-block' && !material.flatShading) { material.flatShading = true; material.needsUpdate = true; }
     roles.set(role, { material, instanceColor: true, castShadow: true, receiveShadow: true });
   }
   for (const [role, spec] of Object.entries(EMISSIVE_ROLES)) {

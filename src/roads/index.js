@@ -657,6 +657,12 @@ export default {
     // in-place edits (upgrade/downgrade/one-way conversion) keep the edge id but change its cross-section
     S.unsub.push(ctx.events.on('road:changed', bump));
     S.unsub.push(ctx.events.on('terrain:changed', bump));
+    // UI "Show studs" toggle: hide both stud fields (sidewalk + infill) without dropping their cached data.
+    S.unsub.push(ctx.events.on('settings:changed', (p = {}) => {
+      if (p.studs === undefined) return;
+      S.studs.mesh.visible = !!p.studs;
+      S.infill.mesh.visible = !!p.studs;
+    }));
     rebuild();
   },
 

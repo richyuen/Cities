@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { generateBuilding } from './generator.js';
 import { BuildingBatcher } from './batching.js';
+import { BuildingStudField } from './studfield.js';
 import { UnservedIndicators, FireIndicators, FireDrones, BurglaryIndicators, PatrolCars } from './indicators.js';
 import { stageDefault, stageLevels, stageNight } from './showcase.js';
 
@@ -41,7 +42,7 @@ const REBUILD_BUDGET_MS = 2.5;
 const LEVEL_UP_BUDGET_MS = 2;
 
 const S = {
-  ctx: null, group: null, batcher: null, indicators: null, fireIndicators: null, fireDrones: null,
+  ctx: null, group: null, batcher: null, studField: null, indicators: null, fireIndicators: null, fireDrones: null,
   burglaryIndicators: null, patrolCars: null, dynMats: null, rng: null, unsub: [],
   pendingDirty: false, lastEvent: 0, growthAcc: 0, growthTick: 0, growthRng: null,
   tweens: [], variant: null, closeupTarget: null,
@@ -299,7 +300,9 @@ export default {
     S.group.name = 'buildings';
     ctx.scene.add(S.group);
     S.dynMats = makeDynMats(ctx);
-    S.batcher = new BuildingBatcher(ctx, S.group, S.dynMats);
+    S.studField = new BuildingStudField(ctx.materials, { capacity: 40000, radius: 170 });
+    S.group.add(S.studField.mesh);
+    S.batcher = new BuildingBatcher(ctx, S.group, S.dynMats, S.studField);
     S.indicators = new UnservedIndicators();
     S.group.add(S.indicators.group);
     S.fireIndicators = new FireIndicators();
@@ -333,6 +336,9 @@ export default {
     }));
     S.unsub.push(ctx.events.on('time:changed', ({ isNight, daylight }) => updateNight(ctx, isNight, daylight)));
     updateNight(ctx, ctx.clock.isNight, ctx.clock.daylight);
+    S.unsub.push(ctx.events.on('settings:changed', (p = {}) => {
+      if (p.studs !== undefined && S.studField) S.studField.setEnabled(p.studs);
+    }));
 
     // pick up any buildings that already exist in the world (e.g. reload mid-game)
     for (const b of ctx.world.buildings.values()) regenerateBuilding(ctx, b);
@@ -359,6 +365,7 @@ export default {
       // LEVEL_UP_BUDGET_MS comment above).
       drainLevelUps(ctx, LEVEL_UP_BUDGET_MS);
     }
+    S.studField?.update(ctx.camera);
     updateTweens(dt);
     S.fireIndicators?.update(dt);
     S.fireDrones?.update(dt, ctx);
@@ -379,6 +386,8 @@ export default {
     S.tweens.length = 0;
     S.batcher?.dispose();
     S.batcher = null;
+    S.studField?.dispose();
+    S.studField = null;
     S.indicators?.dispose();
     S.indicators = null;
     S.fireIndicators?.dispose();
