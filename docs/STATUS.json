@@ -1,5 +1,5 @@
 {
-  "updated": "2026-09-24T18:00:00.000Z",
+  "updated": "2026-09-24T20:30:00.000Z",
   "modules": {
     "terrain": {
       "score": 7.3,
@@ -193,6 +193,20 @@
         "no independent critic round yet"
       ],
       "review": "docs/reviews/transit-r1.md",
+      "wave": 0
+    },
+    "civics": {
+      "score": 0,
+      "round": 0,
+      "pass": false,
+      "errors": 0,
+      "fps": 0,
+      "drawCalls": 0,
+      "issues": [
+        "new in this commit: school + hospital civic buildings, education/health coverage radii, level-3 education gate, happiness/RCI-demand effects, HUD/modal/inspect/save-load/demo wiring",
+        "no independent critic round yet"
+      ],
+      "review": "docs/reviews/civics-r1.md",
       "wave": 0
     },
     "tools": {

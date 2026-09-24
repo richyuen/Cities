@@ -110,6 +110,20 @@ export const icons = {
     <circle cx="12" cy="6.2" r="1.3" fill="${YEL}" ${O}/>`),
   'utility:police': svg(`<path d="M12 2.4 20.6 5.9v6.3c0 5.1-3.7 8.4-8.6 10.4-4.9-2-8.6-5.3-8.6-10.4V5.9z" fill="${BLUE}" ${O}/>
     <path d="M12 6.2 13.5 9.5l3.6.4-2.7 2.4.8 3.5-3.2-1.8-3.2 1.8.8-3.5-2.7-2.4 3.6-.4z" fill="${WHITE}"/>`),
+  // school: yellow classroom hall with a red pitched roof, glazed bays, white door and a flag
+  'utility:school': svg(`<path d="M2.6 10.6 12 3.4l9.4 7.2z" fill="${RED}" ${O}/>
+    <rect x="4" y="10" width="16" height="10" rx="1.4" fill="${YEL}" ${O}/>
+    <rect x="10.2" y="13.6" width="3.6" height="6.4" rx="0.6" fill="${WHITE}" ${O}/>
+    <rect x="5.6" y="13.2" width="3.4" height="3.2" rx="0.6" fill="#a6d8ec" ${O}/>
+    <rect x="15" y="13.2" width="3.4" height="3.2" rx="0.6" fill="#a6d8ec" ${O}/>
+    <path d="M12 3.4V1.2" stroke="${GREY}" stroke-width="1.6" stroke-linecap="round"/>
+    <path d="M12.6 1h3.6l-1.2 1.5 1.2 1.5h-3.6z" fill="${BLUE}"/>`),
+  // hospital: white ward block with a big red cross, blue glazing band and a roof beacon
+  'utility:hospital': svg(`<rect x="3.5" y="7.5" width="17" height="12.5" rx="1.5" fill="${WHITE}" ${O}/>
+    <rect x="10.4" y="9.4" width="3.2" height="9" rx="0.5" fill="${RED}"/>
+    <rect x="7.6" y="12.2" width="8.8" height="3.2" rx="0.5" fill="${RED}"/>
+    <rect x="5" y="16.4" width="4.4" height="2.2" rx="0.5" fill="#a6d8ec"/><rect x="14.6" y="16.4" width="4.4" height="2.2" rx="0.5" fill="#a6d8ec"/>
+    <circle cx="18.4" cy="6.2" r="1.6" fill="${RED}" ${O}/>`),
 
   // ---- tools: transit ----
   // bus-stop flag: pole + coloured sign with a bus glyph, on a stud-topped footing

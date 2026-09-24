@@ -21,7 +21,23 @@ export const UNSERVED_OCC_CAP = 0.45;          // occupancy ceiling for a buildi
 // needs roughly one utility pair per suburb block plus a denser grid elsewhere — ~1.7x as many utility buildings
 // as the old, gap-riddled anchor scheme this was originally tuned against. Left at the old rate, the extra upkeep
 // alone pushed a warmed-up demo city's treasury steadily negative even at healthy occupancy (verified in-browser).
-export const UPKEEP_UTILITY = { power_plant: 1.5, water_tower: 0.75, fire_department: 1.0, police_station: 1.2 };  // money/tick, each
+export const UPKEEP_UTILITY = { power_plant: 1.5, water_tower: 0.75, fire_department: 1.0, police_station: 1.2, school: 1.1, hospital: 1.4 };  // money/tick, each
+
+// Education & healthcare. Same shape as the police block above: a civic building stamps a Chebyshev coverage
+// radius, coverage is capacity-weighted city-wide (like power/water), and the two stats feed happiness and RCI
+// demand. They differ in what they change: a school speeds up level-ups and is required for a building to reach
+// level 3 (an educated neighbourhood supports density), while a hospital attracts residents (healthier city →
+// higher housing demand) and lifts happiness a little more than a school does.
+// Starting points — tune in-browser like every other constant in this file.
+export const SCHOOL_RADIUS = 14;             // cells (Chebyshev) — one school covers a neighbourhood
+export const HOSPITAL_RADIUS = 16;           // cells (Chebyshev) — a hospital serves a wider district than a school
+export const MATURE_TICKS = 20;              // ticks at occupancy ≥ 0.9 before a building may level up
+export const MATURE_TICKS_SCHOOLED = 12;     // school coverage speeds that up (and is required for level 3)
+export const EDUCATION_HAPPINESS_WEIGHT = 0.07;   // weight of education coverage in hTarget
+export const HEALTH_HAPPINESS_WEIGHT = 0.08;      // weight of health coverage in hTarget
+export const HEALTH_DEMAND_BONUS = 0.10;     // added to residential pressure at full health coverage
+export const EDUCATION_COMMERCE_BONUS = 0.12; // added to commercial pressure at full education coverage
+export const EDUCATION_INDUSTRY_BONUS = 0.06; // added to industrial pressure at full education coverage
 
 // Fire simulation. Response time is straight-line Chebyshev distance to the nearest fire_department (no road
 // pathfinding exists anywhere in this codebase) — closer station → shorter, less damaging fire. Numbers below are
@@ -120,7 +136,9 @@ export class SimModel {
     this.powerCoverage = null;
     this.waterCoverage = null;
     this.policeCoverage = null;
-    this.utilities = [];                               // { id, kind: 'power_plant'|'water_tower'|'fire_department'|'police_station', i, j, w, d }
+    this.schoolCoverage = null;
+    this.hospitalCoverage = null;
+    this.utilities = [];                               // { id, kind: 'power_plant'|'water_tower'|'fire_department'|'police_station'|'school'|'hospital', i, j, w, d }
     this.roadCells = 0;
     this.growth = [];                                 // building ids that should level up (refreshed per tick)
     this.newCandidates = [];                          // ids that became candidates this tick
@@ -145,7 +163,7 @@ export class SimModel {
       workforce: 0, capacity: { r: 0, c: 0, i: 0 }, occupancy: { r: 0, c: 0, i: 0 }, jobsC: 0, jobsI: 0,
       demand: { r: 0, c: 0, i: 0 }, parkShare: 0, income: 0, expenses: 0, buildings: 0, roads: 0, net: 0, debt: 0, wealth: 0, services: 1,
       bankrupt: false, bankruptTicks: 0, powerCoverage: 0, waterCoverage: 0, crime: 0, policeCoverage: 0, burglaries: 0,
-      transitCoverage: 0,
+      transitCoverage: 0, educationCoverage: 0, healthCoverage: 0,
       day: 1, tick: 0, cityName: this.cityName, cityLevel: 0, cityLevelName: LEVEL_NAMES[0],
     };
   }
@@ -158,7 +176,8 @@ export class SimModel {
     const seed = ((b.seed | 0) ^ Math.imul(idh, 0x27d4eb2f)) | 0;
     return {
       b, occ: this.startOccupancy, rate: 0.005 + 0.012 * hashInt(seed), level: clamp(b.level | 0, 1, 3),
-      mature: 0, nearPark: false, powered: false, watered: false, policed: false, roadConnected: false, notified: false, cap: 0,
+      mature: 0, nearPark: false, powered: false, watered: false, policed: false, schooled: false, hospitaled: false,
+      roadConnected: false, notified: false, cap: 0,
       fireSeed: seed ^ 0x5bd1e995,
       crimeSeed: seed ^ 0x27d4eb2f,
     };
@@ -230,7 +249,8 @@ export class SimModel {
   }
 
   _isUtilityKind(kind) {
-    return kind === 'power_plant' || kind === 'water_tower' || kind === 'fire_department' || kind === 'police_station';
+    return kind === 'power_plant' || kind === 'water_tower' || kind === 'fire_department' || kind === 'police_station'
+      || kind === 'school' || kind === 'hospital';
   }
 
   syncBuildings(world) {
@@ -257,6 +277,8 @@ export class SimModel {
       s.powered = this.powerCoverage ? this.powerCoverage[b.j * this._w + b.i] === 1 : false;
       s.watered = this.waterCoverage ? this.waterCoverage[b.j * this._w + b.i] === 1 : false;
       s.policed = this.policeCoverage ? this.policeCoverage[b.j * this._w + b.i] === 1 : false;
+      s.schooled = this.schoolCoverage ? this.schoolCoverage[b.j * this._w + b.i] === 1 : false;
+      s.hospitaled = this.hospitalCoverage ? this.hospitalCoverage[b.j * this._w + b.i] === 1 : false;
       s.roadConnected = this._roadConnectedFor(b);
       if (!s.powered || !s.watered || !s.roadConnected) this.unserved.push(b.id);
     } else this.dirtyStatic = true;
@@ -316,16 +338,22 @@ export class SimModel {
     const powerCov = (this.powerCoverage && this.powerCoverage.length === n) ? this.powerCoverage : new Uint8Array(n);
     const waterCov = (this.waterCoverage && this.waterCoverage.length === n) ? this.waterCoverage : new Uint8Array(n);
     const policeCov = (this.policeCoverage && this.policeCoverage.length === n) ? this.policeCoverage : new Uint8Array(n);
-    powerCov.fill(0); waterCov.fill(0); policeCov.fill(0);
+    const schoolCov = (this.schoolCoverage && this.schoolCoverage.length === n) ? this.schoolCoverage : new Uint8Array(n);
+    const hospitalCov = (this.hospitalCoverage && this.hospitalCoverage.length === n) ? this.hospitalCoverage : new Uint8Array(n);
+    powerCov.fill(0); waterCov.fill(0); policeCov.fill(0); schoolCov.fill(0); hospitalCov.fill(0);
     for (const b of this.utilities) {
       const ci = Math.min(w - 1, b.i + ((b.w || 1) >> 1)), cj = Math.min(h - 1, b.j + ((b.d || 1) >> 1));
       if (b.kind === 'power_plant') SimModel._stampRadius(powerCov, w, h, ci, cj, POWER_RADIUS);
       else if (b.kind === 'water_tower') SimModel._stampRadius(waterCov, w, h, ci, cj, WATER_RADIUS);
       else if (b.kind === 'police_station') SimModel._stampRadius(policeCov, w, h, ci, cj, POLICE_RADIUS);
+      else if (b.kind === 'school') SimModel._stampRadius(schoolCov, w, h, ci, cj, SCHOOL_RADIUS);
+      else if (b.kind === 'hospital') SimModel._stampRadius(hospitalCov, w, h, ci, cj, HOSPITAL_RADIUS);
     }
     this.powerCoverage = powerCov;
     this.waterCoverage = waterCov;
     this.policeCoverage = policeCov;
+    this.schoolCoverage = schoolCov;
+    this.hospitalCoverage = hospitalCov;
 
     const unserved = this.unserved; unserved.length = 0;
     for (const s of this.list) {
@@ -334,6 +362,8 @@ export class SimModel {
       s.powered = powerCov[idx] === 1;
       s.watered = waterCov[idx] === 1;
       s.policed = policeCov[idx] === 1;
+      s.schooled = schoolCov[idx] === 1;
+      s.hospitaled = hospitalCov[idx] === 1;
       s.roadConnected = this._roadConnectedFor(s.b);
       if (!s.powered || !s.watered || !s.roadConnected) unserved.push(s.b.id);
     }
@@ -345,7 +375,7 @@ export class SimModel {
     if (this.dirtyStatic) this._recomputeStatic(world);
     const P = this.pressure, list = this.list;
     let pop = 0, jobsC = 0, jobsI = 0, capR = 0, capC = 0, capI = 0, parkW = 0;
-    let poweredCap = 0, wateredCap = 0, policedCap = 0, totalCap = 0;
+    let poweredCap = 0, wateredCap = 0, policedCap = 0, schooledCap = 0, hospitaledCap = 0, totalCap = 0;
     const growth = this.growth; growth.length = 0;
     const fresh = this.newCandidates; fresh.length = 0;
     // neutral demand → ~80% occupied; strong negative demand empties buildings, positive fills them
@@ -387,6 +417,8 @@ export class SimModel {
       const served = s.powered && s.watered;
       totalCap += cap; if (s.powered) poweredCap += cap; if (s.watered) wateredCap += cap;
       if (s.policed) policedCap += cap;
+      if (s.schooled) schooledCap += cap;
+      if (s.hospitaled) hospitaledCap += cap;
       let target = zone === 'r' ? tR : zone === 'c' ? tC : tI;
       if (!served) target = Math.min(target, UNSERVED_OCC_CAP);
       if (b.onFire) target = Math.min(target, FIRE_ACTIVE_OCC_CAP);
@@ -399,7 +431,10 @@ export class SimModel {
       if (s.occ >= 0.9) {
         s.mature++;
         const pz = zone === 'r' ? P.r : zone === 'c' ? P.c : P.i;
-        if (served && lvl < 3 && s.mature >= 20 && pz > 0.15) {
+        // School coverage both accelerates maturity and is required to reach level 3 — the missing "educated
+        // neighbourhood supports density" step. Hospital coverage is a happiness/demand service, not a gate.
+        const matureNeed = s.schooled ? MATURE_TICKS_SCHOOLED : MATURE_TICKS;
+        if (served && lvl < 3 && s.mature >= matureNeed && pz > 0.15 && (lvl < 2 || s.schooled)) {
           growth.push(b.id);
           if (!s.notified) { s.notified = true; fresh.push(b.id); }
         }
@@ -435,26 +470,35 @@ export class SimModel {
     // crime: slow-moving city-wide pressure. Population, unemployment, taxes and debt push it up; police coverage
     // (share of capacity within POLICE_RADIUS of a station) suppresses it, never below the CRIME_BASE floor.
     const policeShare = totalCap ? policedCap / totalCap : 0;
+    // Education/health are capacity-weighted like the other coverage stats (a tower block counts for more than a
+    // shed). Education gates level-3 growth as well; health is happiness + residential demand only.
+    const education = totalCap ? schooledCap / totalCap : 0;
+    const health = totalCap ? hospitaledCap / totalCap : 0;
     const crimeTarget = clamp01(CRIME_BASE + (pop / CRIME_POP_SCALE) * 0.9 + 0.25 * (1 - employment)
       + 0.3 * taxPain + 0.3 * debt + (this.bankrupt ? 0.2 : 0)) * (1 - CRIME_POLICE_MAX_REDUCTION * policeShare);
     this.crime += (crimeTarget - this.crime) * CRIME_RAMP;
-    // a fully employed, park-rich, uncongested, low-tax, solvent city tops out around 0.95; a bus network adds
-    // up to +0.10 (a city that is genuinely walkable by transit is a happier one)
-    const hTarget = 0.42 * employment + 0.22 * Math.min(1, parkShare * 1.6) + 0.18 * (1 - this.traffic)
-      + 0.1 * (1 - taxPain) + 0.08 * wealth + 0.1 * transit - 0.3 * debt - FIRE_HAPPINESS_WEIGHT * this.firePressure
+    // a fully employed, park-rich, uncongested, low-tax, solvent, schooled and healthy city tops out around 1.0
+    // (weights trimmed from their pre-civics values so the two new services are a real lever, not saturation)
+    const hTarget = 0.40 * employment + 0.20 * Math.min(1, parkShare * 1.6) + 0.16 * (1 - this.traffic)
+      + 0.09 * (1 - taxPain) + 0.07 * wealth + 0.09 * transit + EDUCATION_HAPPINESS_WEIGHT * education
+      + HEALTH_HAPPINESS_WEIGHT * health - 0.3 * debt - FIRE_HAPPINESS_WEIGHT * this.firePressure
       - CRIME_HAPPINESS_WEIGHT * this.crime;
     this.happiness += (clamp01(hTarget) - this.happiness) * 0.05;
 
     // RCI demand pressures (SimCity-style): residential wants a jobs surplus + happiness; commercial follows the
-    // workforce; industrial follows the workforce but is crowded out by a commercial glut.
+    // workforce; industrial follows the workforce but is crowded out by a commercial glut. Civics tilt the mix:
+    // a healthy city attracts residents, an educated one supports more shops and lighter industry.
     const wantedPop = jobs / WORKFORCE_SHARE * 1.05 + 150;
     const wantedC = workforce * 0.45 + 20;
     const wantedI = workforce * 0.55 + 30 - 0.5 * Math.max(0, jobsC - wantedC);
     const rel = (want, have) => (want - have) / Math.max(want, have, 1);
     // a bankrupt city (debt → 1) sheds residents and businesses
-    const pR = 0.7 * rel(wantedPop, pop) + 0.5 * (this.happiness - 0.5) + 0.15 - (tax.r - 0.09) * 4 + pol.demandBias - 0.5 * debt;
-    const pC = rel(wantedC, jobsC) + 0.2 * (this.happiness - 0.5) - (tax.c - 0.09) * 4 + pol.demandBias - 0.4 * debt;
-    const pI = rel(wantedI, jobsI) + 0.1 * (this.happiness - 0.5) - (tax.i - 0.09) * 4 + pol.demandBias - 0.4 * debt;
+    const pR = 0.7 * rel(wantedPop, pop) + 0.5 * (this.happiness - 0.5) + 0.15 - (tax.r - 0.09) * 4 + pol.demandBias
+      - 0.5 * debt + HEALTH_DEMAND_BONUS * health;
+    const pC = rel(wantedC, jobsC) + 0.2 * (this.happiness - 0.5) - (tax.c - 0.09) * 4 + pol.demandBias - 0.4 * debt
+      + EDUCATION_COMMERCE_BONUS * education;
+    const pI = rel(wantedI, jobsI) + 0.1 * (this.happiness - 0.5) - (tax.i - 0.09) * 4 + pol.demandBias - 0.4 * debt
+      + EDUCATION_INDUSTRY_BONUS * education;
     P.r += (clamp(pR, -1, 1) - P.r) * 0.08;
     P.c += (clamp(pC, -1, 1) - P.c) * 0.08;
     P.i += (clamp(pI, -1, 1) - P.i) * 0.08;
@@ -500,6 +544,7 @@ export class SimModel {
     st.powerCoverage = totalCap ? poweredCap / totalCap : 0; st.waterCoverage = totalCap ? wateredCap / totalCap : 0;
     st.crime = this.crime; st.policeCoverage = policeShare; st.burglaries = this.burglaries.size;
     st.transitCoverage = transit;
+    st.educationCoverage = education; st.healthCoverage = health;
     st.day = this.day; st.tick = this.tick; st.cityName = this.cityName; st.cityLevel = cityLevel; st.cityLevelName = LEVEL_NAMES[cityLevel];
 
     // history ring
@@ -551,14 +596,24 @@ export class SimModel {
     return true;
   }
 
-  /** 0..1 fraction of RCI building capacity currently within power/water coverage. */
-  getUtilityCoverage() { return { power: this.stats.powerCoverage || 0, water: this.stats.waterCoverage || 0 }; }
+  /** 0..1 fraction of RCI building capacity currently within power/water/education/health coverage. */
+  getUtilityCoverage() {
+    return {
+      power: this.stats.powerCoverage || 0, water: this.stats.waterCoverage || 0,
+      education: this.stats.educationCoverage || 0, health: this.stats.healthCoverage || 0,
+    };
+  }
 
-  /** { powered, watered, policed, roadConnected } for any tracked building id; utilities themselves always read as served. */
+  /** { powered, watered, policed, schooled, hospitaled, roadConnected } for any tracked building id; utilities themselves always read as served. */
   getBuildingCoverage(id) {
-    if (this._isUtilityKind(this.utilities.find((u) => u.id === id)?.kind)) return { powered: true, watered: true, policed: true, roadConnected: true };
+    if (this._isUtilityKind(this.utilities.find((u) => u.id === id)?.kind)) {
+      return { powered: true, watered: true, policed: true, schooled: true, hospitaled: true, roadConnected: true };
+    }
     const s = this.byId.get(id);
-    return s ? { powered: s.powered, watered: s.watered, policed: s.policed, roadConnected: s.roadConnected } : null;
+    return s ? {
+      powered: s.powered, watered: s.watered, policed: s.policed, schooled: s.schooled, hospitaled: s.hospitaled,
+      roadConnected: s.roadConnected,
+    } : null;
   }
 
   /** Ids of tracked (non-utility) buildings currently missing road, power, or water. */

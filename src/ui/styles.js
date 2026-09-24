@@ -266,11 +266,11 @@ export const CSS = `
 .lc-status > span { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 
 /* ---------- toolbar (bottom-centre) ---------- */
-.lc-toolbar { left: 50%; bottom: 16px; transform: translateX(-50%); display: flex; align-items: flex-end; gap: 2px; padding: 10px 10px 10px; }
-.lc-group { display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 0 2px; }
+.lc-toolbar { left: 50%; bottom: 16px; transform: translateX(-50%); display: flex; align-items: flex-end; gap: 2px; padding: 8px 8px 8px; }
+.lc-group { display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 0 1px; }
 .lc-group-lbl { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 1.3px; color: var(--lc-muted); }
 .lc-group-btns { display: flex; gap: 2px; }
-.lc-tool { width: 54px; height: 60px; border-radius: 10px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+.lc-tool { width: 52px; height: 60px; border-radius: 10px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
   background: linear-gradient(180deg, rgba(255,255,255,0.1), rgba(255,255,255,0.04)); border: 1px solid rgba(0,0,0,0.35);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.12), 0 1px 0 rgba(0,0,0,0.3); transition: background 0.12s, transform 0.12s, box-shadow 0.15s, border-color 0.12s; }
 .lc-tool svg { width: 28px; height: 28px; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.55)); }
@@ -279,7 +279,7 @@ export const CSS = `
 .lc-tool.on { transform: translateY(-2px); }
 .lc-tool.on span { color: #3a2800; text-shadow: 0 1px 0 rgba(255,255,255,0.35); }
 .lc-tool.danger.on span { color: #fff; text-shadow: 0 1px 0 rgba(0,0,0,0.35); }
-.lc-toolbar .lc-divider { margin: 18px 5px 2px; height: 60px; align-self: flex-end; }
+.lc-toolbar .lc-divider { margin: 18px 2px 2px; height: 60px; align-self: flex-end; }
 
 /* ---------- minimap (bottom-right) ---------- */
 .lc-minimap { right: 16px; bottom: 16px; padding: 10px 10px 8px; display: flex; flex-direction: column; gap: 7px; width: 216px; }

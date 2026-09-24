@@ -340,14 +340,15 @@ function resolveUtilityBlocks(nx, nz, utilA, utilB, isParkFn, preferB) {
   return chosen;
 }
 
-/** Per district, pick two non-park blocks to also host the civic services: the blocks whose centres sit closest
- * to the district's block-grid centre (row-major scan, first minimum wins), the second pick excluding the first.
- * This deliberately does NOT look for "free" land: the utility stride above already claims nearly every block in
- * the industrial/waterfront/suburb districts, so the stations are sited into a block that has a power/water pair
- * (see placeServiceBuilding, which is called *after* placeUtilityPair). */
+/** Per district, pick five non-park blocks to host the civic services: the blocks whose centres sit closest to
+ * the district's block-grid centre (row-major scan, first minimum wins), each next pick excluding the previous
+ * ones. Two of the five are schools (education coverage has to blanket a district before level-3 growth opens
+ * up) and one is a hospital. This deliberately does NOT look for "free" land: the utility stride above already
+ * claims nearly every block in the industrial/waterfront/suburb districts, so the services are sited into blocks
+ * that have a power/water pair (see placeServiceBuilding, which is called *after* placeUtilityPair). */
 function pickServiceBlocks(nx, nz, isParkFn) {
   const out = [];
-  for (let pick = 0; pick < 2; pick++) {
+  for (let pick = 0; pick < 5; pick++) {
     let best = null;
     for (let a = 0; a < nx; a++) {
       for (let b = 0; b < nz; b++) {
@@ -359,7 +360,10 @@ function pickServiceBlocks(nx, nz, isParkFn) {
     }
     if (best) out.push(best.key);
   }
-  return { fire: new Set(out.slice(0, 1)), police: new Set(out.slice(1, 2)) };
+  return {
+    fire: new Set(out.slice(0, 1)), police: new Set(out.slice(1, 2)),
+    school: new Set(out.slice(2, 4)), hospital: new Set(out.slice(4, 5)),
+  };
 }
 
 /**
@@ -399,7 +403,7 @@ function buildDowntown(ctx, rng) {
   // (2,1) is the one signature level-3 tower block below — keep it out of the service picks so a 2x2 station
   // doesn't displace the skyline's single level-3 tower.
   const svc = pickServiceBlocks(nx, nz, (a, b) => isPark(a, b) || (a === 2 && b === 1));
-  let buildings = 0, parkCells = 0, power = 0, water = 0, fire = 0, police = 0;
+  let buildings = 0, parkCells = 0, power = 0, water = 0, fire = 0, police = 0, school = 0, hospital = 0;
   for (let a = 0; a < nx; a++) {
     for (let b = 0; b < nz; b++) {
       const rect = blockRect(DOWNTOWN_X, DOWNTOWN_Z, a, b, MARGIN);
@@ -415,6 +419,8 @@ function buildDowntown(ctx, rng) {
       }
       if (svc.fire.has(`${a},${b}`)) fire += placeServiceBuilding(ctx, rect, 'fire_department');
       if (svc.police.has(`${a},${b}`)) police += placeServiceBuilding(ctx, rect, 'police_station');
+      if (svc.school.has(`${a},${b}`)) school += placeServiceBuilding(ctx, rect, 'school');
+      if (svc.hospital.has(`${a},${b}`)) hospital += placeServiceBuilding(ctx, rect, 'hospital');
       const zone = (a + b) % 2 === 0 ? 'c' : 'r';
       // One signature tower block (the other inner block besides the park) stays level 3; everything else in
       // downtown is level 2 — keeps a real skyline peak without every block paying a level-3 tower's triangle cost.
@@ -422,7 +428,7 @@ function buildDowntown(ctx, rng) {
       buildings += fillBlock(ctx, rng, rect, zone, level, { gap: 3 }).buildings;
     }
   }
-  return { buildings, parkCells, power, water, fire, police };
+  return { buildings, parkCells, power, water, fire, police, school, hospital };
 }
 
 function buildIndustrial(ctx, rng) {
@@ -438,7 +444,7 @@ function buildIndustrial(ctx, rng) {
   const utilA = utilityIndices(INDUSTRIAL_X, strideA), utilB = utilityIndices(INDUSTRIAL_Z, strideB);
   const utilBlocks = resolveUtilityBlocks(nx, nz, utilA, utilB, () => false, strideB >= strideA);
   const svc = pickServiceBlocks(nx, nz, () => false);
-  let buildings = 0, power = 0, water = 0, fire = 0, police = 0;
+  let buildings = 0, power = 0, water = 0, fire = 0, police = 0, school = 0, hospital = 0;
   for (let a = 0; a < nx; a++) {
     for (let b = 0; b < nz; b++) {
       const rect = blockRect(INDUSTRIAL_X, INDUSTRIAL_Z, a, b, MARGIN);
@@ -448,11 +454,13 @@ function buildIndustrial(ctx, rng) {
       }
       if (svc.fire.has(`${a},${b}`)) fire += placeServiceBuilding(ctx, rect, 'fire_department');
       if (svc.police.has(`${a},${b}`)) police += placeServiceBuilding(ctx, rect, 'police_station');
+      if (svc.school.has(`${a},${b}`)) school += placeServiceBuilding(ctx, rect, 'school');
+      if (svc.hospital.has(`${a},${b}`)) hospital += placeServiceBuilding(ctx, rect, 'hospital');
       const level = (a + b) % 2 === 0 ? 1 : 2;
       buildings += fillBlock(ctx, rng, rect, 'i', level, { gap: 4 }).buildings;
     }
   }
-  return { buildings, power, water, fire, police };
+  return { buildings, power, water, fire, police, school, hospital };
 }
 
 function buildWaterfront(ctx, rng) {
@@ -473,7 +481,7 @@ function buildWaterfront(ctx, rng) {
   const utilA = utilityIndices(WATERFRONT_X, strideA), utilB = utilityIndices(WATERFRONT_Z, strideB);
   const utilBlocks = resolveUtilityBlocks(nx, nz, utilA, utilB, isPark, strideB >= strideA);
   const svc = pickServiceBlocks(nx, nz, isPark);
-  let buildings = 0, parkCells = 0, power = 0, water = 0, fire = 0, police = 0;
+  let buildings = 0, parkCells = 0, power = 0, water = 0, fire = 0, police = 0, school = 0, hospital = 0;
   for (let a = 0; a < nx; a++) {
     for (let b = 0; b < nz; b++) {
       const rect = blockRect(WATERFRONT_X, WATERFRONT_Z, a, b, MARGIN);
@@ -489,6 +497,8 @@ function buildWaterfront(ctx, rng) {
       }
       if (svc.fire.has(`${a},${b}`)) fire += placeServiceBuilding(ctx, rect, 'fire_department');
       if (svc.police.has(`${a},${b}`)) police += placeServiceBuilding(ctx, rect, 'police_station');
+      if (svc.school.has(`${a},${b}`)) school += placeServiceBuilding(ctx, rect, 'school');
+      if (svc.hospital.has(`${a},${b}`)) hospital += placeServiceBuilding(ctx, rect, 'hospital');
       const zone = (a + b) % 2 === 0 ? 'c' : 'r';
       buildings += fillBlock(ctx, rng, rect, zone, 2, { gap: 3 }).buildings;
     }
@@ -500,7 +510,7 @@ function buildWaterfront(ctx, rng) {
   }));
   for (let k = 0; k < pts.length - 1; k++) world.addRoad(pts[k], pts[k + 1], 'path');
 
-  return { buildings, parkCells, power, water, fire, police, coastXs, xLines: WATERFRONT_X, zLines: WATERFRONT_Z };
+  return { buildings, parkCells, power, water, fire, police, school, hospital, coastXs, xLines: WATERFRONT_X, zLines: WATERFRONT_Z };
 }
 
 function buildSuburb(ctx, rng) {
@@ -522,7 +532,7 @@ function buildSuburb(ctx, rng) {
   const utilA = utilityIndices(SUBURB_X, strideA), utilB = utilityIndices(SUBURB_Z, strideB);
   const utilBlocks = resolveUtilityBlocks(nx, nz, utilA, utilB, isPark, strideB >= strideA);
   const svc = pickServiceBlocks(nx, nz, isPark);
-  let buildings = 0, parkCells = 0, power = 0, water = 0, fire = 0, police = 0;
+  let buildings = 0, parkCells = 0, power = 0, water = 0, fire = 0, police = 0, school = 0, hospital = 0;
   for (let a = 0; a < nx; a++) {
     for (let b = 0; b < nz; b++) {
       const rect = blockRect(SUBURB_X, SUBURB_Z, a, b, MARGIN);
@@ -539,11 +549,13 @@ function buildSuburb(ctx, rng) {
       }
       if (svc.fire.has(`${a},${b}`)) fire += placeServiceBuilding(ctx, rect, 'fire_department');
       if (svc.police.has(`${a},${b}`)) police += placeServiceBuilding(ctx, rect, 'police_station');
+      if (svc.school.has(`${a},${b}`)) school += placeServiceBuilding(ctx, rect, 'school');
+      if (svc.hospital.has(`${a},${b}`)) hospital += placeServiceBuilding(ctx, rect, 'hospital');
       const level = rng.chance(0.15) ? 2 : 1;
       buildings += fillBlock(ctx, rng, rect, 'r', level, { gap: 4, fillChance: 0.32 }).buildings;
     }
   }
-  return { buildings, parkCells, power, water, fire, police };
+  return { buildings, parkCells, power, water, fire, police, school, hospital };
 }
 
 function connectDistricts(ctx) {
@@ -577,6 +589,8 @@ export function buildCity(ctx, rng) {
     water: downtown.water + industrial.water + waterfront.water + suburb.water,
     fire: downtown.fire + industrial.fire + waterfront.fire + suburb.fire,
     police: downtown.police + industrial.police + waterfront.police + suburb.police,
+    school: downtown.school + industrial.school + waterfront.school + suburb.school,
+    hospital: downtown.hospital + industrial.hospital + waterfront.hospital + suburb.hospital,
   };
 
   return {

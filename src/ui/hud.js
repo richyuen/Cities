@@ -26,7 +26,7 @@ export const TOOL_GROUPS = [
     toggle: ['road:oneway', '1-Way', 'One-way roads — drag to set the travel direction'] },
   { label: 'Zones', tools: [['zone:r', 'Homes'], ['zone:c', 'Shops'], ['zone:i', 'Industry'], ['zone:none', 'Dezone']] },
   { label: 'Parks', tools: [['park', 'Park'], ['trees', 'Trees'], ['plaza', 'Plaza']] },
-  { label: 'Utilities', tools: [['utility:power', 'Power Plant'], ['utility:water', 'Water Tower'], ['utility:firedept', 'Fire Department'], ['utility:police', 'Police Station']] },
+  { label: 'Utilities', tools: [['utility:power', 'Power'], ['utility:water', 'Water'], ['utility:firedept', 'Fire Dept'], ['utility:police', 'Police'], ['utility:school', 'School'], ['utility:hospital', 'Hospital']] },
   { label: 'Transit', tools: [['transit:stop', 'Bus Stop'], ['transit:line', 'Bus Line'], ['transit:lines', 'Lines']] },
   { label: 'Tools', tools: [['bulldoze', 'Bulldoze', 'B'], ['select', 'Inspect', 'I']] },
   { label: 'Hazards', tools: [['hazard:fire', 'Start Fire'], ['hazard:burglary', 'Start Burglary']] },
@@ -170,8 +170,11 @@ export class Hud {
     this.powerCov = utilRow('power', 'Power');
     this.waterCov = utilRow('water', 'Water');
     this.transitCov = utilRow('transit', 'Transit');
+    this.schoolCov = utilRow('school', 'School');
+    this.healthCov = utilRow('health', 'Health');
     root.append(h('div', { class: 'lc-panel lc-utilities' }, h('div', { class: 'lc-studs' }),
-      h('div', { class: 'lc-rci-title' }, 'Coverage'), this.powerCov.el, this.waterCov.el, this.transitCov.el));
+      h('div', { class: 'lc-rci-title' }, 'Coverage'), this.powerCov.el, this.waterCov.el, this.transitCov.el,
+      this.schoolCov.el, this.healthCov.el));
 
     // ---- toolbar ----
     const bar = h('div', { class: 'lc-panel lc-toolbar' }, h('div', { class: 'lc-studs' }));
@@ -229,10 +232,12 @@ export class Hud {
     const set = (el, v) => { const p = `${Math.round(Math.max(0, Math.min(1, v || 0)) * 100)}%`; if (el._h !== p) { el._h = p; el.style.height = p; } };
     set(this.rci.r, r); set(this.rci.c, c); set(this.rci.i, i);
   }
-  setUtilities(power, water, transit) {
+  setUtilities(power, water, transit, education, health) {
     setText(this.powerCov.value, `${Math.round(Math.max(0, Math.min(1, power || 0)) * 100)}%`);
     setText(this.waterCov.value, `${Math.round(Math.max(0, Math.min(1, water || 0)) * 100)}%`);
     if (this.transitCov) setText(this.transitCov.value, `${Math.round(Math.max(0, Math.min(1, transit || 0)) * 100)}%`);
+    if (this.schoolCov) setText(this.schoolCov.value, `${Math.round(Math.max(0, Math.min(1, education || 0)) * 100)}%`);
+    if (this.healthCov) setText(this.healthCov.value, `${Math.round(Math.max(0, Math.min(1, health || 0)) * 100)}%`);
   }
 
   // ---------- clock / speed / weather ----------

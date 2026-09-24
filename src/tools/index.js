@@ -32,6 +32,8 @@ const UTILITY_DEF = {
   water: { kind: 'water_tower', label: 'Water Tower', w: 2, d: 2, cost: 4000 },
   firedept: { kind: 'fire_department', label: 'Fire Department', w: 2, d: 2, cost: 6000 },
   police: { kind: 'police_station', label: 'Police Station', w: 2, d: 2, cost: 5000 },
+  school: { kind: 'school', label: 'School', w: 2, d: 2, cost: 5000 },
+  hospital: { kind: 'hospital', label: 'Hospital', w: 2, d: 2, cost: 8000 },
 };
 
 const S = {
@@ -311,7 +313,15 @@ function pickBuildingId(ctx, x, z, i, j) {
   return ctx.world.cellAt(i, j)?.buildingId || null;
 }
 
-const UTILITY_KINDS = new Set(['power_plant', 'water_tower', 'police_station']);
+// kind -> key in simulation.getUtilityRadii() (kinds without a coverage radius, e.g. fire_department, are absent).
+const UTILITY_RADIUS_KEY = {
+  power_plant: 'power', water_tower: 'water', police_station: 'police', school: 'school', hospital: 'hospital',
+};
+// ghost/decal colour for each coverage ring (cached glass names — see ghostMat).
+const UTILITY_GHOST_COLOR = {
+  power_plant: 'transYellow', water_tower: 'transBlue', police_station: 'brightBlue',
+  school: 'transYellow', hospital: 'brightRed',
+};
 
 function prettyKind(kind) {
   if (!kind) return 'Building';
@@ -320,10 +330,10 @@ function prettyKind(kind) {
 
 function buildingInfoHtml(ctx, b) {
   const zone = b.zone || null;
-  const isUtility = UTILITY_KINDS.has(b.kind);                                   // has a coverage radius
-  const isService = b.kind === 'fire_department' || b.kind === 'police_station'; // civic service, not a network utility
-  const isCivic = isUtility || isService;
-  const tag = isCivic ? `<span class="lc-tag" style="background:#666">${isService ? 'Civic' : 'Utility'}</span>`
+  const isNetwork = b.kind === 'power_plant' || b.kind === 'water_tower';     // network utility (Utility tag)
+  const isCivic = isNetwork || b.kind === 'fire_department' || b.kind === 'police_station'
+    || b.kind === 'school' || b.kind === 'hospital';                          // ploppable civic/utility building
+  const tag = isCivic ? `<span class="lc-tag" style="background:#666">${isNetwork ? 'Utility' : 'Civic'}</span>`
     : zone ? `<span class="lc-tag ${zone}">${ZONE_LABEL[zone] || zone}</span>` : `<span class="lc-tag" style="background:#666">Unzoned</span>`;
   const cells = (b.w || 1) * (b.d || 1);
   const kind = prettyKind(b.kind);
@@ -331,9 +341,10 @@ function buildingInfoHtml(ctx, b) {
       <span>Height</span><span>${Number.isFinite(b.height) ? b.height.toFixed(1) : b.height} m</span>
       <span>Footprint</span><span>${b.w}&times;${b.d} (${cells} cell${cells === 1 ? '' : 's'})</span>`;
   const sim = ctx.modules.get('simulation');
-  if (isUtility) {
+  const radiusKey = UTILITY_RADIUS_KEY[b.kind];
+  if (radiusKey) {
     const radii = sim?.status === 'ok' ? safeCall(() => sim.api?.getUtilityRadii?.()) : null;
-    const cellsR = radii ? (b.kind === 'power_plant' ? radii.power : b.kind === 'water_tower' ? radii.water : radii.police) : null;
+    const cellsR = radii ? radii[radiusKey] : null;
     if (cellsR != null) rows += `<span>Coverage radius</span><span>${Math.round(cellsR * ctx.world.cellSize)} m</span>`;
   } else if (zone) {
     const cov = sim?.status === 'ok' ? safeCall(() => sim.api?.getBuildingCoverage?.(b.id)) : null;
@@ -341,7 +352,9 @@ function buildingInfoHtml(ctx, b) {
       rows += `<span>Road</span><span>${cov.roadConnected ? 'Yes' : 'No'}</span>
       <span>Powered</span><span>${cov.powered ? 'Yes' : 'No'}</span>
       <span>Watered</span><span>${cov.watered ? 'Yes' : 'No'}</span>
-      <span>Policed</span><span>${cov.policed ? 'Yes' : 'No'}</span>`;
+      <span>Policed</span><span>${cov.policed ? 'Yes' : 'No'}</span>
+      <span>Schooled</span><span>${cov.schooled ? 'Yes' : 'No'}</span>
+      <span>Hospital</span><span>${cov.hospitaled ? 'Yes' : 'No'}</span>`;
     }
   }
   if (b.onFire || b.damage > 0) {
@@ -919,16 +932,16 @@ function buildGhosts(ctx) {
 function showCoverageRing(ctx, b) {
   const mesh = S.ghosts?.coverage;
   if (!mesh) return;
-  const isUtility = b && UTILITY_KINDS.has(b.kind);
-  const sim = isUtility ? ctx.modules.get('simulation') : null;
+  const radiusKey = b ? UTILITY_RADIUS_KEY[b.kind] : null;
+  const sim = radiusKey ? ctx.modules.get('simulation') : null;
   const radii = sim?.status === 'ok' ? safeCall(() => sim.api?.getUtilityRadii?.()) : null;
-  const cellsR = radii ? (b.kind === 'power_plant' ? radii.power : b.kind === 'water_tower' ? radii.water : b.kind === 'police_station' ? radii.police : null) : null;
+  const cellsR = radii && radiusKey ? radii[radiusKey] : null;
   if (cellsR == null) { mesh.visible = false; return; }
   const ci = b.i + ((b.w || 1) >> 1), cj = b.j + ((b.d || 1) >> 1);
   const bounds = rectBounds(ctx, ci - cellsR, cj - cellsR, ci + cellsR, cj + cellsR);
   mesh.position.set(bounds.cx, bounds.y + 0.15, bounds.cz);
   mesh.scale.set(bounds.w, 0.15, bounds.d);
-  mesh.material = ghostMat(ctx, b.kind === 'power_plant' ? 'transYellow' : b.kind === 'water_tower' ? 'transBlue' : 'brightBlue');
+  mesh.material = ghostMat(ctx, UTILITY_GHOST_COLOR[b.kind] || 'brightBlue');
   mesh.visible = true;
 }
 

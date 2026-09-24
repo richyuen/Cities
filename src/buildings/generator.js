@@ -723,6 +723,94 @@ function generatePoliceStation(ctx, b, rng, halfW, halfD, cx, cz, groundY) {
   };
 }
 
+// Civic school: a low ochre classroom hall with white course bands, glazed bays, a red-canopied entrance and a
+// bell tower (brick stack, warm bell, red pyramid cap, flag). Fixed composition (ignores b.level — civic
+// buildings never grow), small 2x2-cell footprint. Coverage radius / effects live in simulation/model.js.
+function generateSchool(ctx, b, rng, halfW, halfD, cx, cz, groundY) {
+  const parts = [];
+  const studs = [];
+  const storyH = 6.0;
+  box(ctx, parts, 'brightYellow', halfW * 2, storyH, halfD * 2, cx, groundY, cz, 0.05);
+  interiorLiner(parts, 'brightYellow', halfW * 2, storyH, halfD * 2, cx, groundY, cz);
+  plinth(ctx, parts, 'darkStoneGrey', cx, cz, halfW, halfD, groundY, 0.35, 0.08);
+  courseBands(parts, 'white', cx, cz, halfW, halfD, groundY + 0.35, groundY + storyH, { pitch: 1.3 });
+  const roofTop = flatRoof(ctx, parts, studs, 'darkStoneGrey', cx, cz, halfW, halfD, groundY + storyH, { capH: 0.3, parapetH: 0.35 });
+  // classroom windows on the long (+z / -z) faces: white frame, trans-blue glazing; about half get a lit overlay
+  // (winWarm/winCool emissive, dead by day — see buildings/index.js updateNight) so the school glows after dark
+  for (const sz of [1, -1]) {
+    for (const ox of [-1, 1]) {
+      const wx = cx + ox * halfW * 0.48, wz = cz + sz * halfD;
+      plainBox(parts, 'white', 3.6, 2.5, 0.12, wx, groundY + 3.2, wz + sz * 0.06);
+      plainBox(parts, 'transBlue', 3.1, 2.05, 0.08, wx, groundY + 3.2, wz + sz * 0.13);
+      if (rng.chance(0.55)) plainBox(parts, rng.chance(0.5) ? 'winWarm' : 'winCool', 2.7, 1.75, 0.02, wx, groundY + 3.2, wz + sz * 0.18);
+    }
+  }
+  // entrance on the +z face: white portal, glazed double door, red canopy
+  plainBox(parts, 'white', 3.6, 3.4, 0.14, cx, groundY + 1.9, cz + halfD - 0.02);
+  plainBox(parts, 'transClear', 2.4, 2.7, 0.08, cx, groundY + 1.55, cz + halfD + 0.09);
+  plainBox(parts, 'brightRed', 4.2, 0.22, 1.1, cx, groundY + 3.75, cz + halfD + 0.5);
+  // bell tower at a back corner: brick stack, warm bell, red pyramid cap, flag
+  const tx = cx - halfW * 0.52, tz = cz - halfD * 0.52;
+  const towerH = 3.4 + rng.range(0, 0.8);
+  brickStack(ctx, parts, studs, 'brightYellow', tx, tz, 2.0, 2.0, roofTop, towerH, { studTop: false });
+  plainBox(parts, 'white', 0.9, 0.7, 0.9, tx, roofTop + towerH - 0.55, tz);
+  cylinder(parts, 'brightRed', 0.02, 1.65, 1.15, 4, tx, roofTop + towerH, tz);
+  const poleH = 1.6;
+  cylinder(parts, 'lightStoneGrey', 0.06, 0.07, poleH, 6, tx, roofTop + towerH + 1.15, tz);
+  plainBox(parts, 'brightRed', 0.9, 0.55, 0.06, tx + 0.48, roofTop + towerH + 1.15 + poleH - 0.4, tz);
+
+  return {
+    parts, studs,
+    height: storyH + 0.65 + towerH + 1.15 + poleH, kind: 'school',
+  };
+}
+
+// Civic hospital: a white ward block with grey courses, a glazed entrance under a big red cross, an ambulance bay
+// and a rooftop helipad with a white H plus a red beacon. Fixed composition (ignores b.level), 2x2-cell footprint.
+function generateHospital(ctx, b, rng, halfW, halfD, cx, cz, groundY) {
+  const parts = [];
+  const studs = [];
+  const storyH = 7.4;
+  box(ctx, parts, 'white', halfW * 2, storyH, halfD * 2, cx, groundY, cz, 0.05);
+  interiorLiner(parts, 'white', halfW * 2, storyH, halfD * 2, cx, groundY, cz);
+  plinth(ctx, parts, 'lightStoneGrey', cx, cz, halfW, halfD, groundY, 0.35, 0.08);
+  courseBands(parts, 'lightStoneGrey', cx, cz, halfW, halfD, groundY + 0.35, groundY + storyH, { pitch: 1.3 });
+  const roofTop = flatRoof(ctx, parts, studs, 'lightStoneGrey', cx, cz, halfW, halfD, groundY + storyH, { capH: 0.3, parapetH: 0.35 });
+  const deck = roofTop - 0.35;
+  // entrance on the +z face: glazed bay, white canopy, lit sign board behind a red cross (the cross bars and the
+  // board sit at strictly increasing depths so no two faces are coplanar)
+  plainBox(parts, 'transClear', 4.6, 3.0, 0.08, cx, groundY + 1.7, cz + halfD + 0.09);
+  plainBox(parts, 'white', 5.6, 0.22, 1.3, cx, groundY + 3.55, cz + halfD + 0.5);
+  plainBox(parts, 'signGlow', 3.2, 3.2, 0.06, cx, groundY + 4.9, cz + halfD + 0.04);
+  plainBox(parts, 'brightRed', 0.85, 2.2, 0.12, cx, groundY + 4.9, cz + halfD + 0.10);
+  plainBox(parts, 'brightRed', 2.2, 0.85, 0.12, cx, groundY + 4.9, cz + halfD + 0.14);
+  // ward windows: two framed, glazed bays per side face, some lit at night
+  for (const sx of [1, -1]) {
+    for (const oz of [-0.55, 0.55]) {
+      const wx = cx + sx * halfW, wz = cz + oz * halfD;
+      plainBox(parts, 'lightStoneGrey', 0.12, 2.0, 2.6, wx + sx * 0.05, groundY + 4.7, wz);
+      plainBox(parts, 'transBlue', 0.08, 1.6, 2.2, wx + sx * 0.11, groundY + 4.7, wz);
+      if (rng.chance(0.6)) plainBox(parts, 'winCool', 0.02, 1.45, 2.0, wx + sx * 0.16, groundY + 4.7, wz);
+    }
+  }
+  // ambulance bay on the -z face
+  plainBox(parts, 'brightRed', 3.4, 3.0, 0.14, cx - halfW * 0.4, groundY + 1.55, cz - halfD - 0.05);
+  // rooftop helipad + white H, and a red beacon mast at the opposite corner
+  const hx = cx + halfW * 0.42, hz = cz + halfD * 0.35;
+  cylinder(parts, 'mediumStoneGrey', 3.0, 3.0, 0.26, 16, hx, deck, hz);
+  plainBox(parts, 'white', 0.5, 0.1, 3.2, hx - 0.85, deck + 0.31, hz);
+  plainBox(parts, 'white', 0.5, 0.1, 3.2, hx + 0.85, deck + 0.31, hz);
+  plainBox(parts, 'white', 1.7, 0.1, 0.5, hx, deck + 0.31, hz);
+  const mastH = 1.5 + rng.range(0, 0.5);
+  cylinder(parts, 'lightStoneGrey', 0.07, 0.09, mastH, 8, cx - halfW * 0.5, deck, cz - halfD * 0.5);
+  plainBox(parts, 'beacon', 0.3, 0.3, 0.3, cx - halfW * 0.5, deck + mastH + 0.15, cz - halfD * 0.5);
+
+  return {
+    parts, studs,
+    height: storyH + 0.65 + mastH + 0.3, kind: 'hospital',
+  };
+}
+
 /** Generate a building's world-space geometry parts + roof stud points + computed height/kind. */
 export function generateBuilding(ctx, b, rng) {
   const cs = ctx.world.cellSize;
@@ -741,6 +829,8 @@ export function generateBuilding(ctx, b, rng) {
   else if (b.kind === 'water_tower') out = generateWaterTower(ctx, b, rng, halfW, halfD, cx, cz, groundY);
   else if (b.kind === 'fire_department') out = generateFireDepartment(ctx, b, rng, halfW, halfD, cx, cz, groundY);
   else if (b.kind === 'police_station') out = generatePoliceStation(ctx, b, rng, halfW, halfD, cx, cz, groundY);
+  else if (b.kind === 'school') out = generateSchool(ctx, b, rng, halfW, halfD, cx, cz, groundY);
+  else if (b.kind === 'hospital') out = generateHospital(ctx, b, rng, halfW, halfD, cx, cz, groundY);
   else if (b.zone === 'c') out = generateCommercial(ctx, b, rng, halfW, halfD, cx, cz, groundY);
   else if (b.zone === 'i') out = generateIndustrial(ctx, b, rng, halfW, halfD, cx, cz, groundY);
   else out = generateResidential(ctx, b, rng, halfW, halfD, cx, cz, groundY);

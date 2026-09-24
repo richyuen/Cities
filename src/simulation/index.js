@@ -1,7 +1,7 @@
 // simulation — deterministic, cheap city economy (RCI). Owns world.stats. Emits sim:tick at 2 Hz of game time.
 // Visuals exist only in showcase mode (Blox bar chart + DOM panel); in the full game this module is data-only.
 
-import { SimModel, TICK_DT, cityNameFor, POWER_RADIUS, WATER_RADIUS, POLICE_RADIUS } from './model.js';
+import { SimModel, TICK_DT, cityNameFor, POWER_RADIUS, WATER_RADIUS, POLICE_RADIUS, SCHOOL_RADIUS, HOSPITAL_RADIUS } from './model.js';
 import { DesirabilityGrid } from './desirability.js';
 import { stageCity } from './citygen.js';
 import { createVisuals } from './visuals.js';
@@ -42,6 +42,7 @@ function publish(st) {
     employment: st.employment, demand: { ...st.demand }, day: st.day, tick: st.tick,
     cityName: st.cityName, cityLevel: st.cityLevel, cityLevelName: st.cityLevelName,
     powerCoverage: st.powerCoverage, waterCoverage: st.waterCoverage, transitCoverage: st.transitCoverage,
+    educationCoverage: st.educationCoverage, healthCoverage: st.healthCoverage,
   });
 }
 
@@ -75,14 +76,14 @@ const api = {
   getTaxRate(zone) { return zone ? S.model.taxRate[zone] : { ...S.model.taxRate }; },
   /** Debit the treasury by `amount`; returns false (no-op) if unaffordable. */
   spend(amount) { return S.model.spend(amount); },
-  /** 0..1 fraction of RCI capacity within power/water coverage. */
+  /** 0..1 fraction of RCI capacity within power/water/education/health coverage. */
   getUtilityCoverage() { return S.model.getUtilityCoverage(); },
-  /** { powered, watered, policed, roadConnected } for a building id, or null if untracked. */
+  /** { powered, watered, policed, schooled, hospitaled, roadConnected } for a building id, or null if untracked. */
   getBuildingCoverage(id) { return S.model.getBuildingCoverage(id); },
   /** ids of tracked buildings currently missing road, power, or water. */
   getUnservedBuildings() { return S.model.getUnservedBuildings(); },
   /** utility coverage radius in cells (Chebyshev; multiply by ctx.world.cellSize for meters). */
-  getUtilityRadii() { return { power: POWER_RADIUS, water: WATER_RADIUS, police: POLICE_RADIUS }; },
+  getUtilityRadii() { return { power: POWER_RADIUS, water: WATER_RADIUS, police: POLICE_RADIUS, school: SCHOOL_RADIUS, hospital: HOSPITAL_RADIUS }; },
   /** police coverage radius in cells (Chebyshev). */
   getPoliceRadii() { return { police: POLICE_RADIUS }; },
   /** { crime, policeCoverage, burglaries } — crime/policeCoverage are 0..1, burglaries is the active count. */

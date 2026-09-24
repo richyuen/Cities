@@ -67,7 +67,8 @@ export default {
       + `${stats.totalBuildings} buildings (downtown ${stats.downtown.buildings}, industrial ${stats.industrial.buildings}, `
       + `waterfront ${stats.waterfront.buildings}, suburb ${stats.suburb.buildings}), ${stats.totalParkCells} park cells, `
       + `${stats.utilities.power} power plants + ${stats.utilities.water} water towers + `
-      + `${stats.utilities.fire} fire depts + ${stats.utilities.police} police stations, `
+      + `${stats.utilities.fire} fire depts + ${stats.utilities.police} police stations + `
+      + `${stats.utilities.school} schools + ${stats.utilities.hospital} hospitals, `
       + `${busStops} bus stops + ${busLine ? 1 : 0} bus line, warmed-up population ${pop}`);
   },
 
