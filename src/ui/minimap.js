@@ -101,11 +101,22 @@ export class Minimap {
     g.imageSmoothingEnabled = span >= 96; // crisp blocks when zoomed in, smooth when showing the whole map
     g.clearRect(0, 0, W, H);
     g.drawImage(this.off, i0, j0, span, span, 0, 0, W, H);
-    // camera marker: dot at camera ground position + view cone toward the orbit target
     const cam = this.ctx.camera, tgt = this.ctx.controls?.target;
     if (!cam) return;
     const cs = world.cellSize, k = W / span;
     const toX = (x) => ((x - world.minX) / cs - i0) * k, toZ = (z) => ((z - world.minZ) / cs - j0) * k;
+    // transit stops on top of the base map: line-coloured dots (grey until a line serves them)
+    const transitRec = this.ctx.modules.get('transit');
+    if (transitRec?.status === 'ok') {
+      const colorOf = new Map((transitRec.api.getLines() || []).map((l) => [l.id, l.color]));
+      for (const s of transitRec.api.getStops() || []) {
+        const x = toX(s.x), z = toZ(s.z);
+        if (x < -6 || x > W + 6 || z < -6 || z > H + 6) continue;
+        g.beginPath(); g.arc(x, z, 3.2, 0, Math.PI * 2);
+        g.fillStyle = (s.lineIds.length && colorOf.get(s.lineIds[0])) || '#C7C7C7'; g.fill();
+        g.strokeStyle = 'rgba(0,0,0,0.75)'; g.lineWidth = 1.5; g.stroke();
+      }
+    }
     const rawX = toX(cam.position.x), rawZ = toZ(cam.position.z);
     const m = 9, clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
     const inside = rawX >= 0 && rawX <= W && rawZ >= 0 && rawZ <= H;

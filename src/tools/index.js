@@ -46,6 +46,7 @@ const S = {
 
 function uiApi(ctx) { const m = ctx.modules.get('ui'); return m?.status === 'ok' ? m.api : null; }
 function zoningApi(ctx) { const m = ctx.modules.get('zoning'); return m?.status === 'ok' ? m.api : null; }
+function transitApi(ctx) { const m = ctx.modules.get('transit'); return m?.status === 'ok' ? m.api : null; }
 function notify(msg, kind = 'info') { uiApi(S.ctx)?.notify?.(msg, kind); }
 function safeCall(fn, fallback = null) { try { return fn(); } catch (_) { return fallback; } }
 
@@ -67,6 +68,7 @@ function toolKindOf(tool) {
   if (tool.startsWith('zone:')) { const z = tool.slice(5); return { group: 'zone', zone: z === 'none' ? null : z }; }
   if (tool === 'park' || tool === 'trees' || tool === 'plaza') return { group: 'area', areaKind: tool };
   if (tool.startsWith('utility:')) { const k = tool.slice(8); return UTILITY_DEF[k] ? { group: 'stamp', utilKind: k } : null; }
+  if (tool.startsWith('transit:')) return { group: 'transit', transitKind: tool.slice(8) };
   if (tool === 'bulldoze') return { group: 'bulldoze' };
   if (tool === 'select') return { group: 'select' };
   if (tool === 'hazard:fire' || tool === 'hazard:burglary') return { group: 'hazard' };
@@ -513,6 +515,25 @@ function updateHoverGhost(hit) {
     applyRect(rectBounds(ctx, hit.i, hit.j, hit.i + def.w - 1, hit.j + def.d - 1), valid ? 'lime' : 'transRed');
     return;
   }
+  if (info.group === 'transit') {
+    const t = transitApi(ctx);
+    if (!t) { hideGhosts(); return; }
+    if (info.transitKind === 'stop') {
+      const p = safeCall(() => t.previewStop(hit.x, hit.z));
+      if (p?.ok) applyPoint({ x: p.x, y: p.y, z: p.z }, 'lime');
+      else applyPoint({ x: hit.x, y: hit.y, z: hit.z }, 'transRed');
+      safeCall(() => t.setHoverStop(null));
+      return;
+    }
+    if (info.transitKind === 'line') {
+      const stop = safeCall(() => t.findStop(hit.x, hit.z, 5));
+      safeCall(() => t.setHoverStop(stop ? stop.id : null));
+      if (stop) applyPoint({ x: stop.x, y: stop.y + 0.2, z: stop.z }, 'lime'); else hideGhosts();
+      return;
+    }
+    hideGhosts();
+    return;
+  }
   const color = info.group === 'bulldoze' ? 'transRed' : info.group === 'zone' ? 'transRed' : 'lime';
   applyRect(rectBounds(ctx, hit.i, hit.j, hit.i, hit.j), color);
 }
@@ -675,6 +696,16 @@ function finishBulldoze(d) {
   // world.removeRoad on an edge whose nodes vanish is patched defensively by roads/index.js's guardRemoveRoad
   // (a hard dep of this module, so it is always installed before tools can run) — see docs/core-requests/roads.md.
   for (const id of roadIds) { try { if (world.removeRoad(id)) removed++; } catch (e) { ctx.error('[tools] removeRoad failed:', e); } }
+  // Bus stops inside the rect come off with the rest (and their lines are re-routed/removed by transit itself).
+  const transit = transitApi(ctx);
+  if (transit) {
+    const cs = world.cellSize;
+    const minX = world.minX + i0 * cs, maxX = world.minX + (i1 + 1) * cs;
+    const minZ = world.minZ + j0 * cs, maxZ = world.minZ + (j1 + 1) * cs;
+    for (const s of safeCall(() => transit.getStops(), []) || []) {
+      if (s.x >= minX && s.x <= maxX && s.z >= minZ && s.z <= maxZ) { if (safeCall(() => transit.removeStop(s.id), false)) removed++; }
+    }
+  }
   for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
     const c = world.cellAt(i, j);
     if (!c) continue;
@@ -743,6 +774,40 @@ function handleBurglaryClick(e) {
   if (audio?.status === 'ok') safeCall(() => audio.api?.play?.('error', hit));
 }
 
+// ---- transit: bus stops / bus lines -------------------------------------------------------------------------
+
+function handleTransitClick(e) {
+  const ctx = S.ctx;
+  const t = transitApi(ctx);
+  if (!t) { fail('Transit unavailable'); return; }
+  const hit = screenToHit(ctx, e.clientX, e.clientY);
+  if (!hit) return;
+  const info = toolKindOf(S.tool);
+  if (info?.transitKind === 'stop') {
+    const res = safeCall(() => t.placeStop(hit.x, hit.z)) || { ok: false, reason: 'Cannot place a stop here' };
+    if (!res.ok) { fail(res.reason || 'Cannot place a stop here', hit); return; }
+    const audio = ctx.modules.get('audio');
+    if (audio?.status === 'ok') safeCall(() => audio.api?.play?.('place', hit));
+    return;
+  }
+  if (info?.transitKind === 'line') {
+    const stop = safeCall(() => t.findStop(hit.x, hit.z, 5));
+    if (!stop) { fail('Click a bus stop to add it to the line', hit); return; }
+    const draft = safeCall(() => t.getDraft());
+    // Clicking the first stop again closes the loop and opens the line.
+    if (draft && draft.stopIds.length >= 2 && draft.stopIds[0] === stop.id) {
+      const res = safeCall(() => t.finishLine()) || { ok: false, reason: 'Cannot close this line' };
+      if (!res.ok) { fail(res.reason, hit); return; }
+      const audio = ctx.modules.get('audio');
+      if (audio?.status === 'ok') safeCall(() => audio.api?.play?.('levelup'));
+      return;
+    }
+    const res = safeCall(() => t.addLineStop(stop.id)) || { ok: false, reason: 'Cannot add that stop' };
+    if (!res.ok) fail(res.reason, hit);
+  }
+  // 'transit:lines' is a panel toggle — no canvas action.
+}
+
 // ---- pointer plumbing ------------------------------------------------------------------------------------
 
 function screenToHit(ctx, clientX, clientY) {
@@ -763,7 +828,7 @@ function onPointerDown(e) {
   if (e.button === 2) { if (S.drag) cancelDrag(); return; } // right click: cancel in-progress gesture only
   if (e.button !== 0) return;
   const info = toolKindOf(S.tool);
-  if (!info || info.group === 'select' || info.group === 'hazard') { S.clickStart = { x: e.clientX, y: e.clientY }; return; }
+  if (!info || info.group === 'select' || info.group === 'hazard' || info.group === 'transit') { S.clickStart = { x: e.clientX, y: e.clientY }; return; }
   const hit = screenToHit(ctx, e.clientX, e.clientY);
   if (!hit) return;
   if (ctx.controls) ctx.controls.enabled = false; // suspend MapControls' left-drag pan while paint-dragging
@@ -797,6 +862,7 @@ function onPointerUp(e) {
     if (Math.hypot(dx, dy) < 6) {
       if (S.tool === 'hazard:fire') handleFireClick(e);
       else if (S.tool === 'hazard:burglary') handleBurglaryClick(e);
+      else if (S.tool?.startsWith('transit:')) handleTransitClick(e);
       else handleClick(e);
     }
   }
@@ -808,13 +874,32 @@ function onToolSelected(p) {
   const next = p?.tool ?? null;
   if (S.tool === next) return;
   if (S.drag) cancelDrag();
+  const prev = S.tool;
   S.tool = next;
   hideGhosts();
   if (next !== 'select') { S.selectedBuildingId = null; hideCoverageRing(); }
+  const t = transitApi(S.ctx);
+  if (t) {
+    if (prev === 'transit:line' && next !== 'transit:line') safeCall(() => t.cancelLine());
+    if (!next || !next.startsWith('transit:')) safeCall(() => t.setHoverStop(null));
+  }
+  const ui = uiApi(S.ctx);
+  if (next === 'transit:stop') ui?.setStatus?.('Bus Stop — click a road to place ($400)');
+  else if (next === 'transit:line') ui?.setStatus?.('Bus Line — click stops in visiting order; Enter or click the first stop to close the loop');
+  else if (prev === 'transit:stop' || prev === 'transit:line') ui?.setStatus?.(null);
 }
 
 function onKeyDown(e) {
   if (e.code === 'Escape' && S.drag) cancelDrag(); // own listener: works even if `ui` failed to load
+  if (e.code === 'Enter' && S.tool === 'transit:line') {
+    const t = transitApi(S.ctx);
+    const draft = t ? safeCall(() => t.getDraft()) : null;
+    if (draft && draft.stopIds.length >= 2) {
+      e.preventDefault();
+      const res = safeCall(() => t.finishLine());
+      if (res && !res.ok) fail(res.reason || 'Cannot close this line');
+    }
+  }
 }
 
 // ---- ghost mesh construction (a handful of reused meshes; recolour via cached ctx.materials.glass(...)) ----

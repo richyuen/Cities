@@ -12,6 +12,13 @@ const DECEL_PLAN = 2.6;   // m/s^2, more conservative rate assumed by the safe-s
 const ACCEL = 2.3;        // m/s^2
 const STOP_SETBACK = 3.2; // m, extra clearance behind the lane's physical end when stopping for a red light
 const MAX_HOPS = 4;       // guard against pathological zero-length segments in one frame
+// Transit route buses (see index.js setTransitLines): a scripted car that follows a fixed key loop instead of
+// committing to random turns, and holds at each stop for a dwell. Kept here so it shares the exact same gap /
+// signal / placement code as every other vehicle.
+export const BUS_DWELL_S = 3.2;      // seconds held at each stop (enough to read as "boarding" in a screenshot)
+const BUS_STOP_LOOKAHEAD = 34;       // m, start planning the stop approach from this far out
+const BUS_STOP_STANDOFF = 0.35;      // m, the bus centre settles this far before the stop's own arc position
+const BUS_ARRIVE_EPS = 1.2;          // m, within this of the stop while slow counts as "arrived"
 
 export class Car {
   constructor(id) {
@@ -35,6 +42,7 @@ export class Car {
     this._aheadGap = Infinity;
     this._frontOfBucket = false;
     this._heroFrozen = false; // true only for the showcase's traffic:closeup subject — see index.js update()
+    this.route = null;        // transit route script: { keys, keyStart, total, stops, i, routeS, nextStop, dwell }
   }
 }
 
@@ -167,7 +175,43 @@ export function spawnCar(car, graph, rng, pool) {
   return spawnOn(car, graph, rng, key, pool);
 }
 
+/** Place a route bus at arc-length `s0` along its route's key loop. The route itself (concatenated path, stop
+ * arc positions, key start table) is built by index.js; this only positions the car on the right key and points
+ * it at the next one. No rng draws: route buses must not perturb the car pool's deterministic draw order. */
+export function spawnRouteBus(car, graph, route, s0) {
+  const keys = route.keys;
+  if (!keys || keys.length < 2) { car.active = false; return false; }
+  const total = route.total || 1;
+  const s = ((s0 % total) + total) % total;
+  let i = 0;
+  for (let k = 0; k < keys.length; k++) if (route.keyStart[k] <= s) i = k;
+  const pd = graph.getPath(keys[i]);
+  if (!pd) { car.active = false; return false; }
+  car._heroFrozen = false;
+  car.route = {
+    lineId: route.id, keys, keyStart: route.keyStart, total,
+    stops: route.stops || [], i, nextStop: 0, dwell: 0,
+  };
+  car.currentKey = keys[i];
+  car.phase = keys[i][0] === 'L' ? 'lane' : 'turn';
+  car.pathData = pd;
+  car.total = pd.total;
+  car.s = Math.max(0, Math.min(pd.total, s - route.keyStart[i]));
+  car.routeS = s;
+  car.speed = 0;
+  car.braking = false;
+  car.approachKey = null;
+  car.nextKey = keys[(i + 1) % keys.length];
+  const r = car.route;
+  r.nextStop = 0;
+  for (let k = 0; k < r.stops.length; k++) if (r.stops[k].s > car.routeS) { r.nextStop = k; break; }
+  car.active = true;
+  placeOnPath(car);
+  return true;
+}
+
 function advance(car, carry, graph, rng, pool) {
+  if (car.route) { advanceRoute(car, carry, graph); return; }
   let hops = 0;
   let prevKey = car.currentKey;
   let key = car.nextKey;
@@ -190,11 +234,47 @@ function advance(car, carry, graph, rng, pool) {
   }
 }
 
+/** Route-bus successor: step to the next key in the scripted loop instead of drawing a random turn. A missing
+ * cached path means the road network changed under the route — deactivate; transit re-syncs its lines on the next
+ * `traffic:transit-invalid` (see index.js). */
+function advanceRoute(car, carry, graph) {
+  const r = car.route;
+  let hops = 0;
+  while (hops++ < MAX_HOPS) {
+    const prevKey = car.currentKey;
+    r.i = (r.i + 1) % r.keys.length;
+    const key = r.keys[r.i];
+    const pd = graph.getPath(key);
+    if (!pd) { car.active = false; return; }
+    if (key[0] === 'T' && prevKey && prevKey[0] === 'L') car.approachKey = graph.approachKeyFor(prevKey);
+    car.currentKey = key;
+    car.phase = key[0] === 'L' ? 'lane' : 'turn';
+    car.pathData = pd;
+    car.total = pd.total;
+    car.s = Math.max(0, carry);
+    car.nextKey = r.keys[(r.i + 1) % r.keys.length];
+    car.routeS = r.keyStart[r.i] + car.s;
+    if (car.routeS >= r.total) car.routeS -= r.total;
+    if (car.s < car.total) return;
+    carry = car.s - car.total;
+  }
+}
+
+/** Signed distance from a route bus to its next stop along the route (cyclic; negative once just past it). */
+function stopAhead(car) {
+  const r = car.route;
+  if (!r || !r.stops.length) return Infinity;
+  const stop = r.stops[r.nextStop];
+  let d = stop.s - car.routeS;
+  if (d < -r.total * 0.5) d += r.total;
+  return d;
+}
+
 /** Build per-segment-key buckets of active cars sorted by arc-length position; writes car._aheadGap for each car.
  * Turn-phase cars bucket by their shared *approach* (the incoming lane they turned off of), not by the specific
  * connection they chose — otherwise two cars leaving the same stop line on different turns would never see each
  * other and could clip through one another right at the shared throat. */
-export function resolveGaps(pool, activeCount, graph) {
+export function resolveGaps(list, graph) {
   const buckets = new Map();
   const push = (key, car) => {
     if (!key) return;
@@ -202,8 +282,7 @@ export function resolveGaps(pool, activeCount, graph) {
     if (!arr) { arr = []; buckets.set(key, arr); }
     arr.push(car);
   };
-  for (let i = 0; i < activeCount; i++) {
-    const c = pool[i];
+  for (const c of list) {
     if (!c.active) continue;
     push(c.phase === 'turn' ? c.approachKey : c.currentKey, c);
   }
@@ -220,8 +299,7 @@ export function resolveGaps(pool, activeCount, graph) {
       }
     }
   }
-  for (let i = 0; i < activeCount; i++) {
-    const car = pool[i];
+  for (const car of list) {
     if (!car.active || !car._frontOfBucket) continue;
     car._frontOfBucket = false;
     const downKey = car.phase === 'lane' ? graph.approachKeyFor(car.currentKey) : car.nextKey;
@@ -248,6 +326,17 @@ export function stepCar(car, dt, graph, simTime, rng, pool) {
   if (gap <= MIN_GAP) targetSpeed = 0;
   else if (!Number.isFinite(gap)) targetSpeed = baseSpeed;
   else targetSpeed = Math.min(baseSpeed, Math.sqrt(Math.max(0, 2 * DECEL_PLAN * (gap - MIN_GAP))));
+  // Route buses: hold at a stop, or plan a stop approach that settles the bus centre at the stop itself (not the
+  // generic MIN_GAP standoff, which would leave it stopped metres short of the sign).
+  const route = car.route;
+  if (route && route.dwell > 0) route.dwell = Math.max(0, route.dwell - dt);
+  const dStop = route && route.dwell <= 0 ? stopAhead(car) : Infinity;
+  if (route) {
+    if (route.dwell > 0) targetSpeed = 0;
+    else if (dStop < BUS_STOP_LOOKAHEAD) {
+      targetSpeed = Math.min(targetSpeed, Math.sqrt(Math.max(0, 2 * DECEL_PLAN * Math.max(0, dStop - BUS_STOP_STANDOFF))));
+    }
+  }
   const diff = targetSpeed - car.speed;
   const rate = diff > 0 ? ACCEL : DECEL;
   const maxDelta = rate * dt;
@@ -262,6 +351,22 @@ export function stepCar(car, dt, graph, simTime, rng, pool) {
   if (Number.isFinite(gap)) dist = Math.min(dist, Math.max(0, gap - 0.05));
   car.s += dist;
   if (car.s >= car.total - 1e-4) advance(car, car.s - car.total, graph, rng, pool);
+  // Route buses track their arc position along the whole loop continuously (advanceRoute only re-bases it at a
+  // key boundary) — stop approach/arrival depends on this being current within a key.
+  if (route && car.active) {
+    car.routeS = route.keyStart[route.i] + car.s;
+    if (car.routeS >= route.total) car.routeS -= route.total;
+  }
+
+  if (route && route.dwell <= 0 && car.active) {
+    const d = stopAhead(car);
+    if (d <= BUS_ARRIVE_EPS && car.speed <= 1.0) {
+      route.dwell = BUS_DWELL_S;
+      route.nextStop = (route.nextStop + 1) % route.stops.length;
+      car.speed = 0;
+      car.braking = true;
+    }
+  }
 
   placeOnPath(car);
 }

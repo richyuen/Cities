@@ -19,8 +19,8 @@ function applyStats(stats) {
   if (stats.population !== undefined) S.hud.setPop(stats.population);
   if (stats.jobs !== undefined) S.hud.setJobs(stats.jobs);
   if (stats.happiness !== undefined) S.hud.setHappiness(stats.happiness);
-  if (stats.powerCoverage !== undefined || stats.waterCoverage !== undefined) {
-    S.hud.setUtilities(stats.powerCoverage || 0, stats.waterCoverage || 0);
+  if (stats.powerCoverage !== undefined || stats.waterCoverage !== undefined || stats.transitCoverage !== undefined) {
+    S.hud.setUtilities(stats.powerCoverage || 0, stats.waterCoverage || 0, stats.transitCoverage || 0);
   }
 }
 
@@ -78,6 +78,7 @@ function buildPopulationModal(ctx) {
       h('span', {}, 'Park access'), h('span', {}, pct(st.parkShare)),
       h('span', {}, 'Crime'), h('span', {}, pct(st.crime)),
       h('span', {}, 'Police coverage'), h('span', {}, pct(st.policeCoverage)),
+      h('span', {}, 'Transit coverage'), h('span', {}, pct(st.transitCoverage)),
       h('span', {}, 'Burglaries'), h('span', {}, num(st.burglaries)),
       h('span', {}, 'City level'), h('span', {}, st.cityLevelName)));
 }
@@ -263,6 +264,7 @@ export default {
       ctx.events.on('zone:changed', () => S.minimap?.markDirty()),
       ctx.events.on('building:spawned', () => S.minimap?.markDirty()),
       ctx.events.on('building:removed', () => S.minimap?.markDirty()),
+      ctx.events.on('transit:changed', () => S.minimap?.markDirty()),
     );
     S.onKey = onKey;
     window.addEventListener('keydown', S.onKey);

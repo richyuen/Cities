@@ -126,7 +126,7 @@ export class SimModel {
     this.newCandidates = [];                          // ids that became candidates this tick
     this.roadAdjCoverage = null;
     this.unserved = [];                                // building ids missing road, power, or water
-    this.budget = { income: { r: 0, c: 0, i: 0, total: 0 }, expenses: { roads: 0, buildings: 0, utilities: 0, total: 0 }, net: 0 };
+    this.budget = { income: { r: 0, c: 0, i: 0, total: 0 }, expenses: { roads: 0, buildings: 0, utilities: 0, transit: 0, total: 0 }, net: 0 };
     this.debt = 0;                                    // 0..1 service degradation from a negative treasury
     this.wealth = 0;                                  // 0..1 bonus from a healthy treasury
     this.bankruptTicks = 0;                            // consecutive ticks with debt saturated at 1.0
@@ -135,6 +135,8 @@ export class SimModel {
     this.firePressure = 0;                             // 0..1, saturates at FIRE_PRESSURE_SATURATION simultaneous fires
     this.burglaries = new Map();                       // id -> raw building record, currently being burgled
     this.crime = 0;                                    // 0..1, slow city-wide crime level (see step())
+    this.transitCoverage = 0;                          // 0..1, share of zoned capacity near a bus stop (transit pushes)
+    this.transitUpkeep = 0;                            // $/tick, bus line + bus upkeep (transit pushes)
   }
 
   _blankStats() {
@@ -143,6 +145,7 @@ export class SimModel {
       workforce: 0, capacity: { r: 0, c: 0, i: 0 }, occupancy: { r: 0, c: 0, i: 0 }, jobsC: 0, jobsI: 0,
       demand: { r: 0, c: 0, i: 0 }, parkShare: 0, income: 0, expenses: 0, buildings: 0, roads: 0, net: 0, debt: 0, wealth: 0, services: 1,
       bankrupt: false, bankruptTicks: 0, powerCoverage: 0, waterCoverage: 0, crime: 0, policeCoverage: 0, burglaries: 0,
+      transitCoverage: 0,
       day: 1, tick: 0, cityName: this.cityName, cityLevel: 0, cityLevelName: LEVEL_NAMES[0],
     };
   }
@@ -420,7 +423,10 @@ export class SimModel {
     this.bankruptTicks = debt >= 1 ? this.bankruptTicks + 1 : 0;
     this.bankrupt = this.bankruptTicks >= BANKRUPT_HOLD_TICKS;
     const roadCap = (roads * 110 + 100) * (1 - 0.35 * debt);   // trips a street edge absorbs before congestion
-    const trafficTarget = clamp01((pop * 0.35 + jobs * 0.5) / roadCap);
+    // Transit pulls riders off the road: a covered city runs a visibly lower traffic level (the stat the HUD
+    // shows and the traffic module sizes its car pool from).
+    const transit = clamp01(this.transitCoverage);
+    const trafficTarget = clamp01(((pop * 0.35 + jobs * 0.5) / roadCap) * (1 - 0.3 * transit));
     this.traffic += (trafficTarget - this.traffic) * 0.1;
     const parkShare = (pop > 1 ? parkW / pop : 0) * services;
     const tax = this.taxRate, pol = this.policy;
@@ -432,9 +438,10 @@ export class SimModel {
     const crimeTarget = clamp01(CRIME_BASE + (pop / CRIME_POP_SCALE) * 0.9 + 0.25 * (1 - employment)
       + 0.3 * taxPain + 0.3 * debt + (this.bankrupt ? 0.2 : 0)) * (1 - CRIME_POLICE_MAX_REDUCTION * policeShare);
     this.crime += (crimeTarget - this.crime) * CRIME_RAMP;
-    // a fully employed, park-rich, uncongested, low-tax, solvent city tops out around 0.95
+    // a fully employed, park-rich, uncongested, low-tax, solvent city tops out around 0.95; a bus network adds
+    // up to +0.10 (a city that is genuinely walkable by transit is a happier one)
     const hTarget = 0.42 * employment + 0.22 * Math.min(1, parkShare * 1.6) + 0.18 * (1 - this.traffic)
-      + 0.1 * (1 - taxPain) + 0.08 * wealth - 0.3 * debt - FIRE_HAPPINESS_WEIGHT * this.firePressure
+      + 0.1 * (1 - taxPain) + 0.08 * wealth + 0.1 * transit - 0.3 * debt - FIRE_HAPPINESS_WEIGHT * this.firePressure
       - CRIME_HAPPINESS_WEIGHT * this.crime;
     this.happiness += (clamp01(hTarget) - this.happiness) * 0.05;
 
@@ -464,12 +471,14 @@ export class SimModel {
       expUtil += (UPKEEP_UTILITY[u.kind] || 0) * pol.upkeepMul;
       if (!u.onFire && u.damage > 0) u.damage = Math.max(0, u.damage - FIRE_REPAIR_RATE);
     }
-    const income = incR + incC + incI, expenses = expRoads + expBld + expUtil;
+    const income = incR + incC + incI, expenses = expRoads + expBld + expUtil + this.transitUpkeep;
     this.money += income - expenses;
     if (this.bankrupt && this.money < BANKRUPT_FLOOR) this.money += (BANKRUPT_FLOOR - this.money) * BANKRUPT_SPRING;
     const bg = this.budget;
     bg.income.r = incR; bg.income.c = incC; bg.income.i = incI; bg.income.total = income;
-    bg.expenses.roads = expRoads; bg.expenses.buildings = expBld; bg.expenses.utilities = expUtil; bg.expenses.total = expenses;
+    bg.expenses.roads = expRoads; bg.expenses.buildings = expBld; bg.expenses.utilities = expUtil;
+    bg.expenses.transit = this.transitUpkeep;
+    bg.expenses.total = expenses;
     bg.net = income - expenses;
 
     // time
@@ -490,6 +499,7 @@ export class SimModel {
     st.bankrupt = this.bankrupt; st.bankruptTicks = this.bankruptTicks;
     st.powerCoverage = totalCap ? poweredCap / totalCap : 0; st.waterCoverage = totalCap ? wateredCap / totalCap : 0;
     st.crime = this.crime; st.policeCoverage = policeShare; st.burglaries = this.burglaries.size;
+    st.transitCoverage = transit;
     st.day = this.day; st.tick = this.tick; st.cityName = this.cityName; st.cityLevel = cityLevel; st.cityLevelName = LEVEL_NAMES[cityLevel];
 
     // history ring
@@ -518,7 +528,7 @@ export class SimModel {
         income: { r: bg.income.r * perDay, c: bg.income.c * perDay, i: bg.income.i * perDay, total: bg.income.total * perDay },
         expenses: {
           roads: bg.expenses.roads * perDay, buildings: bg.expenses.buildings * perDay,
-          utilities: bg.expenses.utilities * perDay, total: bg.expenses.total * perDay,
+          utilities: bg.expenses.utilities * perDay, transit: bg.expenses.transit * perDay, total: bg.expenses.total * perDay,
         },
         net: bg.net * perDay,
       },

@@ -1,5 +1,5 @@
 {
-  "updated": "2026-09-22T03:25:50.767Z",
+  "updated": "2026-09-24T18:00:00.000Z",
   "modules": {
     "terrain": {
       "score": 7.3,
@@ -180,6 +180,20 @@
       "review": "docs/reviews/traffic-r3.md",
       "wave": 0,
       "updated": "2026-09-18T04:39:54.989Z"
+    },
+    "transit": {
+      "score": 0,
+      "round": 0,
+      "pass": false,
+      "errors": 0,
+      "fps": 0,
+      "drawCalls": 0,
+      "issues": [
+        "new in this commit: bus stops, bus lines routed over the road lane API, route buses with stop dwell + transit signal priority, coverage/upkeep wired into simulation, save/load + demo city line",
+        "no independent critic round yet"
+      ],
+      "review": "docs/reviews/transit-r1.md",
+      "wave": 0
     },
     "tools": {
       "score": 8.7,

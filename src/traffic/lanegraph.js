@@ -84,7 +84,7 @@ export class LaneGraph {
         const nArms = arms.length;
         const cycle = nArms * (GREEN_S + ALLRED_S);
         const offset = this.rng.hash2(nodeIdx, 11) * cycle;
-        this.nodeSignal.set(n.nodeId, { offset, cycle, armOfEdge, nArms });
+        this.nodeSignal.set(n.nodeId, { offset, cycle, armOfEdge, nArms, priorityArm: -1, priorityUntil: -1 });
       }
       nodeIdx++;
       let conns = [];
@@ -188,7 +188,8 @@ export class LaneGraph {
 
   /** true if the intersection this lane feeds into is currently green for this lane's arm; true for non-lights.
    * Round-robin by arm: only one arm discharges at a time, so every entry is conflict-free (through, turns and
-   * unprotected lefts alike) with zero cross-traffic yielding logic. */
+   * unprotected lefts alike) with zero cross-traffic yielding logic. A route bus close to the line can request
+   * priority (transit signal priority): its arm holds green for a few seconds, cross arms hold red. */
   isGreen(key, simTime) {
     if (key[0] !== 'L') return true;
     const meta = this.laneMeta.get(key);
@@ -196,9 +197,21 @@ export class LaneGraph {
     const sig = this.nodeSignal.get(meta.terminalNodeId);
     if (!sig) return true;
     const slot = GREEN_S + ALLRED_S;
+    if (sig.priorityArm === meta.terminalArm && sig.priorityUntil > simTime) return true;
     const t = (simTime + sig.offset) % sig.cycle;
     const active = Math.floor(t / slot) % sig.nArms;
     if (active !== meta.terminalArm) return false;
     return (t - active * slot) < (GREEN_S - ENTRY_MARGIN_S);
+  }
+
+  /** Transit priority: hold this lane's terminal intersection green for ~6 s. Called every frame by an
+   * approaching route bus, so the hold renews until the bus has cleared the stop line. */
+  requestPriority(key, simTime) {
+    const meta = this.laneMeta.get(key);
+    if (!meta || !meta.isIntersection) return;
+    const sig = this.nodeSignal.get(meta.terminalNodeId);
+    if (!sig) return;
+    sig.priorityArm = meta.terminalArm;
+    sig.priorityUntil = simTime + 6;
   }
 }

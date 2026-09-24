@@ -38,6 +38,7 @@ export function serializeSave(ctx, { name }) {
     weather: { ...world.weather },
     roads, zones, parks, buildings, props,
     simulation: mod(ctx, 'simulation')?.getState?.() ?? null,
+    transit: mod(ctx, 'transit')?.getState?.() ?? null,
   };
 }
 
@@ -52,6 +53,10 @@ export function applySave(ctx, save) {
   for (const p of save.props || []) world.addProp(p);
   if (save.weather) world.setWeather(save.weather);
   mod(ctx, 'simulation')?.loadState?.(save.simulation);
+  // Traffic caches lane geometry lazily; force the rebuild before transit restores its lines so their key loops
+  // can be resolved against the just-replayed road network in the same frame.
+  mod(ctx, 'traffic')?.rebuildNetwork?.();
+  mod(ctx, 'transit')?.loadState?.(save.transit);
   if (save.clock) {
     ctx.clock.set(save.clock.hours);
     ctx.clock.timeScale = save.clock.timeScale ?? 1;

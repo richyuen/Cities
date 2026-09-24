@@ -41,6 +41,7 @@ function publish(st) {
     population: st.population, jobs: st.jobs, money: st.money, happiness: st.happiness, traffic: st.traffic,
     employment: st.employment, demand: { ...st.demand }, day: st.day, tick: st.tick,
     cityName: st.cityName, cityLevel: st.cityLevel, cityLevelName: st.cityLevelName,
+    powerCoverage: st.powerCoverage, waterCoverage: st.waterCoverage, transitCoverage: st.transitCoverage,
   });
 }
 
@@ -86,6 +87,12 @@ const api = {
   getPoliceRadii() { return { police: POLICE_RADIUS }; },
   /** { crime, policeCoverage, burglaries } — crime/policeCoverage are 0..1, burglaries is the active count. */
   getCrime() { return S.model.getCrime(); },
+  /** Transit coverage (0..1) pushed by the transit module; feeds happiness, traffic relief, and demand. */
+  setTransitCoverage(v) { S.model.transitCoverage = Math.max(0, Math.min(1, Number(v) || 0)); },
+  getTransitCoverage() { return S.model.transitCoverage; },
+  /** Bus network upkeep in $/tick, pushed by transit; shows up as its own budget expense line. */
+  setTransitUpkeep(v) { S.model.transitUpkeep = Math.max(0, Number(v) || 0); },
+  getTransitUpkeep() { return S.model.transitUpkeep; },
   /** Ignite a building by id (any kind). Returns false if not found or already on fire. */
   igniteBuilding(id) { return S.model.igniteBuilding(id); },
   /** ids of buildings currently on fire. */
@@ -118,7 +125,7 @@ const api = {
   },
   /** Full round-trippable state for save/load: policy, tax rates, and the raw stats snapshot. */
   getState() {
-    return { policy: { ...S.model.policy }, taxRate: { ...S.model.taxRate }, stats: snapshot(S.model.stats) };
+    return { policy: { ...S.model.policy }, taxRate: { ...S.model.taxRate }, transitUpkeep: S.model.transitUpkeep, stats: snapshot(S.model.stats) };
   },
   /** Restore exactly what getState() returned (used by menu's Load) — no synthetic tick warm-up: a loaded save
    * should look exactly as it did when saved, unlike a freshly generated city which has no history to restore. */
@@ -126,6 +133,7 @@ const api = {
     if (!patch) return;
     if (patch.policy) Object.assign(S.model.policy, patch.policy);
     if (patch.taxRate) S.model.taxRate = { ...patch.taxRate };
+    if (typeof patch.transitUpkeep === 'number') S.model.transitUpkeep = patch.transitUpkeep;
     if (patch.stats) {
       Object.assign(S.model.stats, patch.stats);
       // crime is a model field, not just a stat — restore it too, or the loaded city restarts at crime 0 and

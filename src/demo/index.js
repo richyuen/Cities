@@ -15,7 +15,7 @@ let S = null;
 
 export default {
   id: 'demo',
-  deps: ['terrain', 'environment', 'roads', 'zoning', 'buildings', 'props', 'traffic', 'simulation'],
+  deps: ['terrain', 'environment', 'roads', 'zoning', 'buildings', 'props', 'traffic', 'simulation', 'transit'],
   order: 5,
   showcaseVariants: ['default'],
   presets: {
@@ -40,6 +40,19 @@ export default {
     // fine at a lower fraction and it trims real triangle/shadow cost. See the builder report for the full budget.
     ctx.modules.get('traffic')?.api?.setDensity?.(0.55);
 
+    // Public transport: a starter bus loop around downtown, placed through the transit module's own api (so it
+    // costs money and behaves exactly like a player-built line). The six stops trace a clockwise block loop whose
+    // every turn is a right turn, so lane 0 serves the whole route.
+    const transitApi = ctx.modules.get('transit')?.api;
+    let busStops = 0, busLine = false;
+    if (transitApi) {
+      const stopPts = [[-2, 60], [-2, 160], [-60, 198], [-98, 160], [-98, 60], [-60, 2]];
+      const stopIds = [];
+      for (const [x, z] of stopPts) { const r = transitApi.placeStop(x, z); if (r?.ok) stopIds.push(r.id); }
+      busStops = stopIds.length;
+      if (stopIds.length >= 2) busLine = !!transitApi.createLine(stopIds)?.ok;
+    }
+
     // Polish (optional per the brief): a freshly-seeded city starts at 0 population/jobs — every building is
     // empty until simulation ticks enough times to grow occupancy. Warm the (pure, deterministic) economy model
     // forward a few hundred ticks now, the same way simulation's own showcase() does, so the HUD and building
@@ -54,7 +67,8 @@ export default {
       + `${stats.totalBuildings} buildings (downtown ${stats.downtown.buildings}, industrial ${stats.industrial.buildings}, `
       + `waterfront ${stats.waterfront.buildings}, suburb ${stats.suburb.buildings}), ${stats.totalParkCells} park cells, `
       + `${stats.utilities.power} power plants + ${stats.utilities.water} water towers + `
-      + `${stats.utilities.fire} fire depts + ${stats.utilities.police} police stations, warmed-up population ${pop}`);
+      + `${stats.utilities.fire} fire depts + ${stats.utilities.police} police stations, `
+      + `${busStops} bus stops + ${busLine ? 1 : 0} bus line, warmed-up population ${pop}`);
   },
 
   dispose() {

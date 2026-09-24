@@ -108,6 +108,7 @@ export function createPanel(dom, { perDayTicks = 1200 } = {}) {
     ['Upkeep / day', (s, b) => fmtMoney(b.expenses.total)],
     ['Tax r / c / i', (s, b, t) => `${pct(t.r)}·${pct(t.c)}·${pct(t.i)}`],
     ['Services', (s) => pct(s.services ?? 1), (s) => ((s.services ?? 1) < 0.9 ? 'neg' : '')],
+    ['Transit', (s) => pct(s.transitCoverage ?? 0)],
   ];
   grid.innerHTML = rows.map(([k]) => `<div class="sim-kv"><span>${k}</span><b></b></div>`).join('');
   const cells = [...grid.querySelectorAll('b')];

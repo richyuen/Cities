@@ -49,7 +49,7 @@ export default {
   id: 'roads',                 // == folder name
   deps: ['terrain'],           // module ids that must init first (may be empty)
   order: 30,                   // update order (lower first). terrain 10, environment 15, roads 30, zoning 35,
-                               // buildings 40, props 45, traffic 50, simulation 60, tools 70, ui 80, audio 85, effects 90, menu 95, demo 5
+                               // buildings 40, props 45, traffic 50, transit 55, simulation 60, tools 70, ui 80, audio 85, effects 90, menu 95, demo 5
   async init(ctx) {},          // build persistent state, subscribe to events, add objects to ctx.scene
   update(dt, ctx) {},          // per frame; dt seconds (clamped ≤ 0.1). Keep it cheap.
   dispose(ctx) {},             // remove objects, unsubscribe
@@ -128,6 +128,9 @@ Ownership: terrain owns `heightField/height`; roads own `roads`; zoning owns `zo
 | `sim:tick` | `{ tick, stats, demand: {r,c,i}, day }` | simulation (≈ 2 Hz) |
 | `sim:levelup` | `{ building }` | simulation |
 | `settings:changed` | `{ quality?: 'low'/'medium'/'high', studs?: boolean }` (only changed key) | ui |
+| `transit:changed` | `{}` (stops/lines/coverage changed) | transit |
+| `transit:draft` | `{ stops }` (line tool draft length; 0 = no draft) | transit |
+| `traffic:transit-invalid` | `{ ids }` (lines whose lane keys vanished after a road change) | traffic |
 | `tool:selected` | `{ tool }` | tools |
 | `camera:changed` | `{ pos, target }` | camera |
 | `module:failed` | `{ id, error }` | registry |
@@ -160,9 +163,10 @@ Controls: left-drag orbit, right-drag pan, wheel zoom, WASD pan. Camera never go
 - Lighting is owned by `environment`: sun `DirectionalLight` (3-cascade via `three/addons/csm/CSM.js`), sky hemisphere/ambient, HDRI/procedural environment map for reflections, fog. Other modules must not add lights except local point lights for night (props/buildings; pooled, ≤ 48 real point lights, rest emissive-only).
 - Post (`effects`): SMAA, GTAO, bloom (threshold ≥ 1.0, subtle), vignette. Tone mapping ACES filmic is set by core renderer; exposure is set by environment via `ctx.renderer.toneMappingExposure`.
 - Roads: dark grey plates, white/yellow lane markings, curbs, stud sidewalks; intersections with proper corner geometry, no z-fighting (use `polygonOffset` or small Y offsets). One-way edges additionally print lane arrows (white, ~12 m apart, on every usable lane) pointing along the permitted flow; two-way roads are unchanged.
+- Transit (`transit`): bus stops are click-placed on road sidewalks (cost $400), bus lines are ordered stop loops routed over roads' public lane API (`roads.api.getLanePath/getLaneConnections`; right turns and throughs preferred, U-turns heavily penalized) and handed to `traffic.setTransitLines()` as lane/turn key loops. Route buses reuse traffic's pool, kinematics, signals, gap queues and night lights, plus a stop dwell and transit signal priority (an approaching bus holds its arm green). Transit owns stops/lines/coverage/economy; simulation consumes `setTransitCoverage(0..1)` and `setTransitUpkeep($/tick)` and exposes `stats.transitCoverage`.
 - Night: windows emissive per-building with per-window random on/off seeded; streetlights on when `isNight`; car headlights/taillights.
 
-Per-module draw call budget (full city): terrain 20, environment 10 (+3 shadow cascades), roads 60, buildings 400, props 300, traffic 40, effects 25 (fixed post overhead), others ≤ 10 each.
+Per-module draw call budget (full city): terrain 20, environment 10 (+3 shadow cascades), roads 60, buildings 400, props 300, traffic 40, transit 12, effects 25 (fixed post overhead), others ≤ 10 each.
 
 - **Bloom thresholds on luminance**: red/blue emissives need `emissiveIntensity ≥ 4` to bloom at night; yellow/white read at 2.5–3.
 - **The post-processing (composer) path is canonical.** The shipped game always runs `effects`; `environment` tunes sky/exposure against the composer (OutputPass tone-maps everything incl. the Sky). Direct rendering is a fallback only.

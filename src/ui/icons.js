@@ -111,6 +111,25 @@ export const icons = {
   'utility:police': svg(`<path d="M12 2.4 20.6 5.9v6.3c0 5.1-3.7 8.4-8.6 10.4-4.9-2-8.6-5.3-8.6-10.4V5.9z" fill="${BLUE}" ${O}/>
     <path d="M12 6.2 13.5 9.5l3.6.4-2.7 2.4.8 3.5-3.2-1.8-3.2 1.8.8-3.5-2.7-2.4 3.6-.4z" fill="${WHITE}"/>`),
 
+  // ---- tools: transit ----
+  // bus-stop flag: pole + coloured sign with a bus glyph, on a stud-topped footing
+  'transit:stop': svg(`<rect x="9.2" y="9.5" width="2.4" height="11" fill="${GREY}" ${O}/>
+    <rect x="4" y="19" width="13" height="2.6" rx="1" fill="${GREY}" ${O}/>
+    <rect x="5" y="2.4" width="14" height="8.2" rx="1.4" fill="${BLUE}" ${O}/>
+    <rect x="7.4" y="5.4" width="9.2" height="3" rx="0.8" fill="${WHITE}"/>
+    <rect x="9.4" y="4.2" width="5.2" height="1.2" rx="0.6" fill="#8fb9e0"/>`),
+  // route line: dark road plate, dashed route, two stop dots
+  'transit:line': svg(`<rect x="2" y="2" width="20" height="20" rx="2" fill="${ROAD}" ${O}/>
+    <path d="M5.5 18.5c0-6 13-3 13-13" stroke="${YEL}" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-dasharray="3 2.4"/>
+    <circle cx="5.5" cy="18.5" r="2.4" fill="${WHITE}" ${O}/><circle cx="18.5" cy="5.5" r="2.4" fill="${WHITE}" ${O}/>
+    <circle cx="12" cy="14.2" r="1.7" fill="${RED}" ${O}/>`),
+  // fleet: a Blox bus, front 3/4-ish (body + windscreen + lights + wheels)
+  'transit:lines': svg(`<rect x="2.5" y="5" width="19" height="12" rx="2.4" fill="${YEL}" ${O}/>
+    <rect x="4.4" y="7" width="15.2" height="4.6" rx="1.2" fill="#a6d8ec" ${O}/>
+    <rect x="4.4" y="13.2" width="3.4" height="2" rx="0.7" fill="${WHITE}"/><rect x="16.2" y="13.2" width="3.4" height="2" rx="0.7" fill="${WHITE}"/>
+    <circle cx="7.4" cy="18.4" r="2.3" fill="${INK}"/><circle cx="16.6" cy="18.4" r="2.3" fill="${INK}"/>
+    <circle cx="7.4" cy="18.4" r="1" fill="${GREY}"/><circle cx="16.6" cy="18.4" r="1" fill="${GREY}"/>`),
+
   // ---- tools: hazards ----
   'hazard:fire': svg(`<path d="M12 2c-1 3-4.5 4.7-4.5 9A4.5 4.5 0 0 0 12 15.5 4.5 4.5 0 0 0 16.5 11c0-1.6-1-2.6-1.7-3.4.2 1.4-.5 2.2-1.2 2.2-1 0-1-1-.6-2 .5-1.6-.2-3.6-1-5.8z" fill="${ORANGE}" ${O}/>
     <path d="M12 9.5c-.4 1.3-2 2-2 3.8a2 2 0 0 0 4 0c0-.7-.3-1.1-.6-1.5.05.6-.2 1-.5 1-.5 0-.4-.5-.2-.9.3-.7 0-1.6-.7-2.4z" fill="${YEL}"/>`),
