@@ -117,15 +117,16 @@ export function continuousHeight(rng, P, halfW, x, z) {
 }
 
 /**
- * Terrace step for a vertex: plains step by single plates, gentle rises by 2 plates, hills by whole bricks
- * (3 plates), and hill crests / the plateau rim by tall 5-plate (2.0 m) risers with a clearly flat tread between
- * them — vertical steps big enough to cast a legible shadow at any sun angle instead of a hairline ledge.
+ * Terrace step for a vertex: gentle rises and plains step by 0.8 m (two plates) — a riser tall enough to read as a
+ * cast shadow at play distance — while hills keep whole bricks (1.2 m) and hill crests / the plateau rim keep the
+ * tall 5-plate (2.0 m) risers with a clearly flat tread between them. Shore plates stay fine (see generateHeightField)
+ * so beaches slope gently into the water. (Wave B1 round-5 experiment: the old 0.4 m plains step produced
+ * sub-ambient shadows that no critic could see at any distance; environment's bias/radius tuning did not change it.)
  */
 export function stepFor(h, slope) {
   if (h > 10.0 || slope > 0.10) return BRICK2;
   if (h > 7.0 || slope > 0.06) return BRICK;
-  if (h > 4.9 || slope > 0.03) return 0.8;
-  return PLATE;
+  return 0.8;
 }
 
 /**

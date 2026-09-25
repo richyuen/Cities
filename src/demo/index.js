@@ -38,7 +38,9 @@ export default {
     const stats = buildCity(ctx, rng);
     // Perf: the full network already saturates traffic's own MAX_POOL (300 cars); a real city this size reads
     // fine at a lower fraction and it trims real triangle/shadow cost. See the builder report for the full budget.
-    ctx.modules.get('traffic')?.api?.setDensity?.(0.55);
+    // Wave B2: 0.55 → 0.8 — the whole-game critic read traffic as sparse from wide framing for 4 rounds; 240 cars
+    // (still under the pool cap) reads populated from the air without jamming the street shots.
+    ctx.modules.get('traffic')?.api?.setDensity?.(0.8);
 
     // Public transport: a starter bus loop around downtown, placed through the transit module's own api (so it
     // costs money and behaves exactly like a player-built line). The six stops trace a clockwise block loop whose

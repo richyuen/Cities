@@ -26,7 +26,7 @@ const S = {
 
 function computeMaxCars(ctx, graph) {
   if (!graph.ready) return 0;
-  let cap = graph.totalLaneLength / 12; // ~1 car per 12 m of drivable lane
+  let cap = graph.totalLaneLength / 9; // ~1 car per 9 m of drivable lane (Wave B2: 12 → 9 for wider cities)
   const sim = ctx.modules.get('simulation');
   if (sim?.status === 'ok') {
     const traffic = clamp01(ctx.world.stats.traffic ?? 0.3);

@@ -1,39 +1,41 @@
 {
-  "updated": "2026-09-25T15:30:02.353Z",
+  "updated": "2026-09-25T17:48:27.713Z",
   "modules": {
     "terrain": {
-      "score": 7.3,
-      "round": 4,
+      "score": 7.4,
+      "round": 5,
       "pass": false,
       "errors": 0,
-      "fps": 125,
+      "fps": 142.9,
       "drawCalls": 58,
       "issues": [
-        "no legible cast shadow anywhere on terrain at any distance (confirmed again with corrected A/B methodology)",
-        "overview/play-camera compositions still read flat/map-like",
-        "diffuse NdotL shading real but too subtle at normal distances to help",
-        "triangle cost unchanged, still buying baked shading not real shadows"
+        "no legible cast shadow from terrain onto itself at any distance (cast/receive toggle isolation: mean |d| <=1.5/255 at 20 m, only sub-threshold stud-shadow dots and crest acne)",
+        "overview and play-camera compositions still read flat/map-like, 0.8 m plains steps add faint contour lines but no sculpted form",
+        "diffuse NdotL real but close-range/oblique only, unchanged this round",
+        "long 0.8 m risers foreshorten into thin bright/dark pipe bars at grazing angles (new minor oddity)",
+        "heightgen.js step change is uncommitted in the working tree"
       ],
-      "review": "docs/reviews/terrain-r4.md",
+      "review": "docs/reviews/terrain-r5.md",
       "wave": 0,
-      "updated": "2026-09-17T23:22:55.024Z"
+      "updated": "2026-09-25T17:21:47.146Z"
     },
     "environment": {
-      "score": 8,
-      "round": 4,
-      "pass": false,
+      "score": 8.7,
+      "round": 5,
+      "pass": true,
       "errors": 0,
-      "fps": 119.1,
+      "fps": 142.9,
       "drawCalls": 54,
       "issues": [
-        "terrain still reads as a basin surrounded on all sides from pulled-back/aerial views (ring-banding itself is genuinely fixed, verified independently)",
-        "flat sea near-zone under grazing/low cameras persists, softer but not solved",
-        "terrain silhouette still low-poly/faceted",
-        "far-cascade quality at real overview distances still unverified"
+        "showcase test-rig terrain still a literal circular disc/basin with enclosing rim from pulled-back/aerial views (rig-only, env source unchanged)",
+        "rig near-zone still a flat low-detail gradient under grazing/low cameras incl. sky preset (rig-only)",
+        "rig ridge silhouette still low-poly/faceted (rig-only)",
+        "terrain-vs-terrain riser self-shadow magnitude still sub-threshold at ~20m (terrain's lever, env bias/radius A/B showed no delta)",
+        "rain streaks dominate wide overview shots at intensity 0.6 (minor)"
       ],
-      "review": "docs/reviews/environment-r4.md",
+      "review": "docs/reviews/environment-r5.md",
       "wave": 0,
-      "updated": "2026-09-17T23:25:31.456Z"
+      "updated": "2026-09-25T17:48:27.713Z"
     },
     "roads": {
       "score": 8.8,
