@@ -9,6 +9,17 @@ export const ZONES = ['r', 'c', 'i'];
 export const CAPACITY = { r: [0, 16, 48, 140], c: [0, 6, 20, 60], i: [0, 10, 24, 50] };
 export const LEVEL_NAMES = ['Hamlet', 'Village', 'Town', 'City', 'Metropolis', 'Megalopolis'];
 export const LEVEL_POP = [0, 400, 2000, 8000, 30000, 100000];
+
+/** City milestones: one per level, each with a one-time cash reward and a cosmetic badge. Reward-only by owner
+ *  decision (gaps-roadmap §6.2) — nothing here gates a tool, so showcases/demo/new games all stay unlocked. */
+export const MILESTONES = [
+  { level: 0, pop: LEVEL_POP[0], name: LEVEL_NAMES[0], reward: { cash: 0, badge: 'Founding Plaque' } },
+  { level: 1, pop: LEVEL_POP[1], name: LEVEL_NAMES[1], reward: { cash: 2500, badge: 'Village Green' } },
+  { level: 2, pop: LEVEL_POP[2], name: LEVEL_NAMES[2], reward: { cash: 8000, badge: 'Town Clock' } },
+  { level: 3, pop: LEVEL_POP[3], name: LEVEL_NAMES[3], reward: { cash: 20000, badge: 'City Charter' } },
+  { level: 4, pop: LEVEL_POP[4], name: LEVEL_NAMES[4], reward: { cash: 60000, badge: 'Metropolis Arch' } },
+  { level: 5, pop: LEVEL_POP[5], name: LEVEL_NAMES[5], reward: { cash: 150000, badge: 'Golden Stud' } },
+];
 /** money per tick per unit (person / job) at 100% tax */
 export const TAX_YIELD = { r: 0.10, c: 0.20, i: 0.17 };
 export const UPKEEP = { road: 0.10, building: 0.05 };
@@ -127,6 +138,8 @@ export class SimModel {
     this.traffic = 0;
     this.money = money;
     this.stats = this._blankStats();
+    this.claimedMilestones = new Set([0]);   // level 0 (the founding) never fires a reward toast
+    this.newMilestones = [];                 // milestones claimed by the last step() (index.js emits + clears)
     this.history = new Array(HISTORY_LEN);
     this.histHead = 0; this.histCount = 0;
     this.list = [];                                   // [{ b, occ, rate, level, mature, nearPark, notified }]
@@ -321,6 +334,23 @@ export class SimModel {
       if (typeof r.mature === 'number') s.mature = Math.max(0, r.mature | 0);
       if (r.notified) s.notified = true;
     }
+  }
+
+  /** [{ level, name, pop, reward, claimed }] for the HUD milestone modal. */
+  getMilestones() {
+    return MILESTONES.map((m) => ({
+      level: m.level, name: m.name, pop: m.pop, reward: { ...m.reward }, claimed: this.claimedMilestones.has(m.level),
+    }));
+  }
+
+  getClaimedMilestones() { return [...this.claimedMilestones]; }
+
+  /** Restore claimed milestones after a load. `levels` null (old save) silently claims every level up to
+   *  `fallbackLevel`, so a loaded city never re-grants rewards it already earned. */
+  applyMilestones(levels, fallbackLevel = 0) {
+    if (Array.isArray(levels)) { this.claimedMilestones = new Set([0, ...levels.map((n) => n | 0)]); return; }
+    this.claimedMilestones = new Set();
+    for (const m of MILESTONES) if (m.level <= fallbackLevel) this.claimedMilestones.add(m.level);
   }
 
   /** Stamp a 1 within `radius` (Chebyshev cells) of (ci,cj) into `cov` (w×h grid, in-place). */
@@ -551,6 +581,16 @@ export class SimModel {
     this.day = 1 + Math.floor(this.gameSeconds / this.dayLengthSec);
 
     const cityLevel = cityLevelFor(pop);
+    // Milestones: claim every newly crossed level in order (a single huge tick can cross two thresholds). The
+    // cash lands before the stats snapshot below, so the HUD shows the reward the same tick; no rng involved.
+    this.newMilestones.length = 0;
+    for (const m of MILESTONES) {
+      if (m.level <= cityLevel && !this.claimedMilestones.has(m.level)) {
+        this.claimedMilestones.add(m.level);
+        this.money += m.reward.cash;
+        this.newMilestones.push({ level: m.level, name: m.name, pop: m.pop, reward: { ...m.reward } });
+      }
+    }
     const st = this.stats;
     st.population = Math.round(pop); st.jobs = Math.round(jobs); st.jobsC = Math.round(jobsC); st.jobsI = Math.round(jobsI);
     st.money = Math.round(this.money); st.happiness = this.happiness; st.traffic = this.traffic;

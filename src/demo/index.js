@@ -60,7 +60,7 @@ export default {
     // forward a few hundred ticks now, the same way simulation's own showcase() does, so the HUD and building
     // occupancy already read like a lived-in city on the very first frame instead of "day zero".
     const simApi = ctx.modules.get('simulation')?.api;
-    if (simApi?.tick) for (let k = 0; k < 600; k++) simApi.tick();
+    if (simApi?.tick) for (let k = 0; k < 600; k++) simApi.tick(true); // silent: milestone rewards apply without boot toasts
 
     S = { ctx, stats };
     const ms = (performance.now() - t0).toFixed(1);

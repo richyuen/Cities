@@ -130,6 +130,7 @@ Ownership: terrain owns `heightField/height`; roads own `roads`; zoning owns `zo
 | `weather:changed` | `{ weather }` | world |
 | `sim:tick` | `{ tick, stats, demand: {r,c,i}, day }` | simulation (≈ 2 Hz) |
 | `sim:levelup` | `{ building }` | simulation |
+| `sim:milestone` | `{ level, name, pop, reward: { cash, badge } }` (one-time city milestone claimed; reward-only, no tool gating) | simulation |
 | `settings:changed` | `{ quality?: 'low'/'medium'/'high', studs?: boolean }` (only changed key) | ui |
 | `transit:changed` | `{}` (stops/lines/coverage changed) | transit |
 | `transit:draft` | `{ stops }` (line tool draft length; 0 = no draft) | transit |

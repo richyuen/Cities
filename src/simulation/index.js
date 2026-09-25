@@ -46,7 +46,7 @@ function publish(st) {
   });
 }
 
-function runTick() {
+function runTick(silent = false) {
   const { ctx, model } = S;
   const st = model.step(ctx.world);
   publish(st);
@@ -54,6 +54,9 @@ function runTick() {
     const b = ctx.world.buildings.get(id);
     if (b) ctx.events.emit('sim:levelup', { building: b });
   }
+  // One-time milestone rewards (cash + cosmetic badge; no tool gating). `silent` is used by warm-up ticks
+  // (demo's boot warm-up) so already-earned levels do not toast before the player sees the city.
+  if (!silent) for (const m of model.newMilestones) ctx.events.emit('sim:milestone', m);
   const stats = snapshot(st);
   ctx.events.emit('sim:tick', { tick: st.tick, stats, demand: { ...model.demand }, day: st.day });
   if (S.visuals) S.visuals.onTick(st);
@@ -118,8 +121,11 @@ const api = {
   getGrowthCandidates() { return [...S.model.growth]; },
   setPolicy(patch) { Object.assign(S.model.policy, patch); return { ...S.model.policy }; },
   getPolicy() { return { ...S.model.policy }; },
-  /** force one tick now (tools/tests) */
-  tick() { runTick(); return api.getStats(); },
+  /** force one tick now (tools/tests); `silent` skips the milestone toast (used by warm-up loops) */
+  tick(silent = false) { runTick(!!silent); return api.getStats(); },
+  /** [{ level, name, pop, reward: { cash, badge }, claimed }] — the city milestone table. */
+  getMilestones() { return S.model.getMilestones(); },
+  getClaimedMilestones() { return S.model.getClaimedMilestones(); },
   reset() {
     S.model.reset();
     S.model.syncBuildings(S.ctx.world);
@@ -128,10 +134,11 @@ const api = {
     publish(S.model.stats);
     S.ctx.events.emit('sim:reset', {});
   },
-  /** Full round-trippable state for save/load: policy, tax rates, the raw stats snapshot and per-building
-   *  occupancy/maturity (the world replay rebuilds the buildings; the model needs its progression restored). */
+  /** Full round-trippable state for save/load: policy, tax rates, the raw stats snapshot, per-building
+   *  occupancy/maturity (the world replay rebuilds the buildings; the model needs its progression restored) and
+   *  the claimed milestone set. */
   getState() {
-    return { policy: { ...S.model.policy }, taxRate: { ...S.model.taxRate }, transitUpkeep: S.model.transitUpkeep, stats: snapshot(S.model.stats), occupancy: S.model.getOccupancyState() };
+    return { policy: { ...S.model.policy }, taxRate: { ...S.model.taxRate }, transitUpkeep: S.model.transitUpkeep, stats: snapshot(S.model.stats), occupancy: S.model.getOccupancyState(), milestones: S.model.getClaimedMilestones() };
   },
   /** Restore exactly what getState() returned (used by menu's Load) — no synthetic tick warm-up: a loaded save
    * should look exactly as it did when saved, unlike a freshly generated city which has no history to restore. */
@@ -146,6 +153,9 @@ const api = {
       // ramps back up over the next few game-minutes (firePressure is transient and deliberately not restored).
       if (typeof patch.stats.crime === 'number') S.model.crime = patch.stats.crime;
     }
+    // Claimed milestones must be restored before the next tick: an old save without the field claims everything
+    // up to its current level silently, so the load never re-grants cash the player already earned.
+    S.model.applyMilestones(patch.milestones, patch.stats?.cityLevel ?? S.model.stats.cityLevel ?? 0);
     S.model.syncBuildings(S.ctx.world);
     // Restore per-building progression after the world replay rebuilt the building list — otherwise every loaded
     // building restarts at the initial occupancy and the city's population collapses on the first tick.

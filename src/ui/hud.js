@@ -84,9 +84,11 @@ export class Hud {
     this.pop = stat('pop', 'Population', icons.pop, () => this.on.statClick?.('pop'));
     this.jobs = stat('jobs', 'Jobs', icons.jobs, () => this.on.statClick?.('jobs'));
     this.happy = stat('happy', 'Happiness', icons.happy(2));
+    // city level chip next to the name: the milestone entry point (click opens the milestone modal)
+    this.levelChip = h('button', { class: 'lc-city-level', title: 'City milestones', onclick: () => this.on.level?.() }, 'Hamlet');
     root.append(h('div', { class: 'lc-panel lc-top-left' },
       h('div', { class: 'lc-studs' }),
-      h('div', { class: 'lc-brand' }, h('div', { html: icons.logo }), h('div', { class: 'lc-city' }, h('div', { class: 'lc-city-name' }, cityName), h('div', { class: 'lc-city-sub' }, 'Blox Skylines'))),
+      h('div', { class: 'lc-brand' }, h('div', { html: icons.logo }), h('div', { class: 'lc-city' }, h('div', { class: 'lc-city-name' }, cityName, this.levelChip), h('div', { class: 'lc-city-sub' }, 'Blox Skylines'))),
       h('div', { class: 'lc-divider' }),
       this.money.el, this.pop.el, this.jobs.el, this.happy.el));
 
@@ -243,6 +245,7 @@ export class Hud {
   setMoney(v) { setText(this.money.value, fmtMoney(v)); setClass(this.money.value, 'neg', v < 0); }
   setPop(v) { setText(this.pop.value, fmtInt(v)); }
   setJobs(v) { setText(this.jobs.value, fmtInt(v)); }
+  setLevel(name) { if (this.levelChip && name) this.levelChip.textContent = name; }
   setHappiness(f) {
     const pct = Math.round(Math.max(0, Math.min(1, f)) * 100);
     setText(this.happy.value, `${pct}%`);

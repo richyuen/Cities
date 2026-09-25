@@ -19,6 +19,7 @@ function applyStats(stats) {
   if (stats.population !== undefined) S.hud.setPop(stats.population);
   if (stats.jobs !== undefined) S.hud.setJobs(stats.jobs);
   if (stats.happiness !== undefined) S.hud.setHappiness(stats.happiness);
+  if (stats.cityLevelName !== undefined) S.hud.setLevel(stats.cityLevelName);
   if (stats.powerCoverage !== undefined || stats.waterCoverage !== undefined || stats.transitCoverage !== undefined
     || stats.educationCoverage !== undefined || stats.healthCoverage !== undefined || stats.policeCoverage !== undefined) {
     S.hud.setUtilities(stats.powerCoverage || 0, stats.waterCoverage || 0, stats.transitCoverage || 0,
@@ -113,6 +114,31 @@ function openStatModal(key) {
   if (key === 'money') S.hud.openModal('Treasury', buildTreasuryModal(S.ctx));
   else if (key === 'pop') S.hud.openModal('Population', buildPopulationModal(S.ctx));
   else if (key === 'jobs') S.hud.openModal('Jobs', buildJobsModal(S.ctx));
+}
+
+/** Milestone modal: every level with its threshold, progress, one-time reward and claimed state. Reward-only —
+ *  there is nothing to unlock here, so the rows are informational. */
+function buildMilestoneModal(ctx) {
+  const sim = simApi(ctx);
+  if (!sim) return h('p', {}, 'Simulation unavailable.');
+  const st = sim.getStats();
+  const rows = sim.getMilestones?.() || [];
+  const body = h('div', { class: 'lc-ms' });
+  for (const m of rows) {
+    const p = m.pop ? Math.max(0, Math.min(1, (st.population || 0) / m.pop)) : 1;
+    const current = st.cityLevel === m.level;
+    body.append(h('div', { class: `lc-ms-row${m.claimed ? ' claimed' : ''}${current ? ' current' : ''}` },
+      h('div', { class: 'lc-ms-head' },
+        h('span', { class: 'lc-ms-name' }, m.name),
+        h('span', { class: 'lc-ms-state' }, m.claimed ? 'Claimed' : `${Math.round(p * 100)}%`)),
+      h('div', { class: 'lc-ms-bar' }, h('i', { style: `width:${Math.round(p * 100)}%` })),
+      h('div', { class: 'lc-ms-foot' },
+        h('span', {}, m.pop ? `${num(m.pop)} residents` : 'Founding'),
+        h('span', {}, m.reward.cash ? `$${num(m.reward.cash)}` : '—'),
+        h('span', {}, m.reward.badge))));
+  }
+  body.append(h('div', { class: 'lc-ms-note' }, 'Rewards are one-time and automatic — nothing is locked behind a milestone.'));
+  return body;
 }
 
 function setSpeed(mode) {
@@ -235,6 +261,7 @@ export default {
       oneway: (on) => setOneWay(on),
       toggleUi: () => setHudVisible(!S.hudVisible),
       statClick: (key) => openStatModal(key),
+      level: () => S.hud.openModal('Milestones', buildMilestoneModal(S.ctx)),
       view: (id) => viewsApi(ctx)?.toggle?.(id),
     });
     dom.appendChild(S.hud.el);
@@ -262,6 +289,11 @@ export default {
         const d = p?.demand || {};
         S.hud.setDemand(d.r || 0, d.c || 0, d.i || 0);
         pollBurglaries(ctx);
+      }),
+      ctx.events.on('sim:milestone', (m) => {
+        const cash = m?.reward?.cash ? ` — $${num(m.reward.cash)}` : '';
+        const badge = m?.reward?.badge ? ` · ${m.reward.badge}` : '';
+        S.hud?.notify(`${m?.name || 'Milestone'} reached${cash}${badge}`, 'success');
       }),
       ctx.events.on('tool:selected', (p) => { S.tool = p?.tool ?? null; S.hud.setTool(S.tool); }),
       ctx.events.on('weather:changed', (p) => S.hud.setWeather(p?.weather?.kind || ctx.world.weather.kind, ctx.clock.isNight)),
