@@ -53,17 +53,25 @@ function removeDemoBuildingMesh(extra, entry) {
 
 // ARCHITECTURE.md §7: red/blue emissives need emissiveIntensity >= 4 to actually bloom at night; yellow/white
 // read at 2.5-3 (measured r2: even 3 clips 'lime' — high R+G, low B, so its luminance-weighted contribution
-// saturates much earlier than red's — to a blown-out white bar at midday, so it gets its own lower night value
-// and a near-zero day value rather than sharing yellow/white's number). Exported so index.js's ghostMat() uses
-// the exact same table (r1 review: both ghost-material call sites had hardcoded 0.35, ~10x too low to bloom at
-// all).
+// saturates much earlier than red's — to a blown-out white bar at midday, so it gets its own lower values on
+// both sides of the day/night gate and is treated as luminance-equivalent to the bucket, not measured by it).
+// Exported so index.js's ghostMat() uses the exact same table (r1 review: both ghost-material call sites had
+// hardcoded 0.35, ~10x too low to bloom at all).
 // Day values are intentionally low/near-zero (r1 suggested gating on isNight): the r2 fix pushed daytime
 // intensity up along with night's and every colour with a strong G channel (lime, transYellow) clipped straight
 // to a blown-out white/yellow bar under midday sun + bloom, which is worse than the original "no glow" bug this
 // exists to fix. At night the base scene is dark, so the same emissive reads as a clean glow instead.
 export function ghostEmissiveIntensity(colorName, isNight) {
   if (!isNight) return colorName === 'lime' ? 0.15 : 0.3;
+  // transRed stays at 4.5: a red that clears the bloom threshold's luminance term (0.2126*R >= 1) is necessarily
+  // deep in ACES's shoulder, where the tone curve compresses R harder than G/B and the glow reads warm coral
+  // rather than pure red. Dropping to <=4 loses the bloom; the critic accepted the coral cast as a normal
+  // boosted-neon-under-filmic look (tools r2 nit 2), so it is documented here rather than chased.
   if (colorName === 'transRed' || colorName === 'transBlue') return 4.5;
+  // lime stays at 2.0 even though yellow/white read at 2.5-3: re-measured at 2.5 in the N16 pass, its stud cores
+  // clip to white under bloom+ACES at night while 2.0 does not (shots/tools/waveA-n16-vclose-21h5.png vs
+  // shots/tools/r2c/tools_vclose-21h5.png). Its weighted luminance at 2.0 is ~1.42, clear of the 1.0 bloom
+  // threshold, so it is luminance-equivalent to the bucket rather than outside it in effect.
   if (colorName === 'lime') return 2;
   return 3; // transYellow, white
 }

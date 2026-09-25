@@ -176,6 +176,15 @@ const SCORE_CLEAR_CAP = 20;   // m — fixed reward cap for the clearAhead/clear
                                // derived from the candidate's own length (see scoreCandidates(): a length-derived
                                // cap systematically out-scored small cars with a bus every time, since a bus's own
                                // "needed" clearance ceiling is simply bigger — nothing to do with actual isolation)
+// Purely proportional (no flat additive term) camera-distance ratios for computeHeroShot(), applied uniformly to
+// every car model so the subtended angle (how much of frame the car fills) is the same for a sedan and a bus.
+// The forward component is unchanged from the round-2/3 pick geometry (so hero selection, and its determinism,
+// are untouched); the side component is reduced from 1.7477 to put the eye ~38 deg off the nose instead of ~52,
+// and the eye is lowered (round 3 review: the old bearing + high eye read as a rear/side elevation rather than
+// the front-3/4 product shot this preset is meant to be).
+const HERO_SIDE_RATIO = 1.064;
+const HERO_FWD_RATIO = 1.3642;
+const HERO_HEIGHT_RATIO = 1.9;
 
 /** One pass of hero-car scoring; shared by the tiers below. Always computes the real clearAhead (distance to the
  * next same-lane car ahead, or the lane end) so the caller — even in a relaxed tier — can clamp the camera's
@@ -271,26 +280,19 @@ function warmUpAndPickHero() {
   return pickHeroCar(); // budget exhausted (rare): fall back through the relaxed tiers on whatever state we ended at
 }
 
-// Purely proportional (no flat additive term) camera-distance ratios for computeHeroShot(), derived once from the
-// sedan proportions round 2 verified as a genuinely clean 3/4 shot (sideOff=length*1.05+3.0, fwdOff cap=
-// length*0.62+3.2 at length=4.3 -> side/fwd ratios below) and then applied uniformly to every car model. The old
-// formula's flat "+3.0"/"+3.2" terms are a shrinking fraction of the total offset as length grows, so a bus (9.4m)
-// landed noticeably *closer*, relative to its own size, than a sedan — filling ~83% of the closeup FOV edge-to-edge
-// instead of ~64%, which read as an ugly too-tight crop rather than a hero shot. Pure proportional scaling keeps
-// the subtended angle (and therefore how much of frame the car fills) the same for every model.
-const HERO_SIDE_RATIO = 1.7477;
-const HERO_FWD_RATIO = 1.3642;
-const HERO_HEIGHT_RATIO = 2.8761;
-
 /** The `traffic:closeup` camera transform for a picked hero — front-3/4 corner view scaled to that car model's
- * own length/height, offset toward the space scoreCandidates() verified is clear. Pulled out of the preset
- * function so warmUpAndPickHero()'s caller can compute it once and cache it (see showcase()). */
+ * own length/height (see HERO_*_RATIO), offset toward the space scoreCandidates() verified is clear. Pulled out
+ * of the preset function so warmUpAndPickHero()'s caller can compute it once and cache it (see showcase()). */
 function computeHeroShot(hero) {
   const spec = hero.car.spec;
   const h = hero.car.heading;
   const fx = Math.cos(h), fz = Math.sin(h); // forward (the car's own direction of travel)
   const lx = -Math.sin(h), lz = Math.cos(h); // left
-  const fwdOff = Math.min(spec.length * HERO_FWD_RATIO, Math.max(2.5, hero.clearAhead - 1));
+  // The camera keeps its full nominal offset even for a relaxed-clearance (tier-2) hero. The old clamp-to-
+  // clearAhead rule existed to keep the eye off the neighbour parked ahead in the same lane, but the eye is
+  // ~10 m off the lane centreline at this bearing, so it clears that neighbour's body laterally by a wide
+  // margin; clamping instead collapsed the shot onto the hero (round 3 review: a bus framed from 6 m, cropped).
+  const fwdOff = spec.length * HERO_FWD_RATIO;
   const sideOff = spec.length * HERO_SIDE_RATIO;
   const heightOff = spec.height * HERO_HEIGHT_RATIO;
   const hp = hero.car.pos;

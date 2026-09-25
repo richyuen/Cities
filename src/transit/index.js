@@ -173,10 +173,13 @@ function removeLine(id, { silent = false } = {}) {
   return true;
 }
 
-/** Give every stop its serving-line colours (first line wins for the sign colour). */
+/** Give every stop its serving-line colours (first line wins for the sign colour). Also refreshes the stop
+ *  instances: the sign/ring colours are per-instance, so a line membership change (create/remove/reroute) must
+ *  repaint the stops that just gained/lost it — without this the demo's boot-time stops stayed grey. */
 function refreshLineMembership() {
   for (const s of S.stops.values()) s.lineIds = [];
   for (const line of S.lines.values()) for (const id of line.stopIds) { const s = S.stops.get(id); if (s && !s.lineIds.includes(line.id)) s.lineIds.push(line.id); }
+  refreshStops();
 }
 
 // ---- draft (the line tool's in-progress loop) ---------------------------------------------------------------
@@ -379,11 +382,14 @@ function refreshRibbons() {
   for (const line of S.lines.values()) {
     const pts = routePolyline(line.keys);
     if (!pts || pts.length < 2) continue;
-    const geo = buildRibbonGeometry(pts, 0.42, 0.05);
+    const geo = buildRibbonGeometry(pts, 0.56, 0.06);
     if (!geo) continue;
+    // Roughness up + clearcoat to near zero + a persistent low emissive tint: at grazing angles a glossy ribbon
+    // reflected the sky/washed to mauve instead of reading as the line's colour (transit r1 critic). The emissive
+    // keeps the hue stable without crossing the bloom threshold by day (intensity < 1).
     const mat = new THREE.MeshPhysicalMaterial({
-      color: new THREE.Color(line.color), roughness: 0.45, metalness: 0, clearcoat: 0.35, clearcoatRoughness: 0.2,
-      emissive: new THREE.Color(line.color), emissiveIntensity: 0, side: THREE.DoubleSide,
+      color: new THREE.Color(line.color), roughness: 0.9, metalness: 0, clearcoat: 0.05, clearcoatRoughness: 0.3,
+      emissive: new THREE.Color(line.color), emissiveIntensity: 0.35, side: THREE.DoubleSide,
     });
     mat.name = `transit-line-mat-${line.id}`;
     const mesh = new THREE.Mesh(geo, mat);
@@ -428,10 +434,13 @@ function updateNightLook(force = false) {
   if (!force && night === S._night) return;
   S._night = night;
   if (S.kits) {
+    // Sign/ring emissive is tinted by the per-instance line colour (see models.js); the white face carries the
+    // actual glow at night so a stop reads as a lit sign, not a white blob.
     S.kits.signMat.emissiveIntensity = night ? 0.9 : 0;
     S.kits.ringMat.emissiveIntensity = night ? 1.1 : 0;
+    if (S.kits.faceMat) S.kits.faceMat.emissiveIntensity = night ? 0.55 : 0;
   }
-  for (const line of S.lines.values()) if (line.ribbonMat) line.ribbonMat.emissiveIntensity = night ? 0.55 : 0;
+  for (const line of S.lines.values()) if (line.ribbonMat) line.ribbonMat.emissiveIntensity = night ? 0.85 : 0.35;
 }
 
 // ---- panel --------------------------------------------------------------------------------------------------
@@ -547,6 +556,10 @@ export default {
     'transit:default': () => ({ pos: [72, 66, 74], target: [-28, 0, -28], fov: 46 }),
     'transit:closeup': () => ({ pos: [3.5, 6.4, -17.5], target: [-5, 3.2, -30], fov: 38 }),
     'transit:aerial': () => ({ pos: [-28, 118, 4], target: [-28, 0, -28], fov: 46 }),
+    // 4.6 m macro on the showcase's first stop (anchor measured at (-5.05, sidewalk, -30), sign faces the road):
+    // frames the whole stop — pole base + ground ring + sign — at the range a player actually inspects one; the
+    // wide presets render stops as specks (transit r1 critic; framing widened in r2 so the base is not cropped).
+    'transit:stop': () => ({ pos: [-2.1, 7.4, -26.6], target: [-5.05, 6.5, -30], fov: 40 }),
   },
 
   async init(ctx) {

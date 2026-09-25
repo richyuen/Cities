@@ -259,15 +259,23 @@ export class World {
     return c;
   }
 
+  /**
+   * Paint/clear zoning on a cell. Returns true when the cell changed, false when refused.
+   * A cell claimed by a building (`buildingId`) is owned by that building: zoning must never flip its type
+   * back to 'zone' (the guard zoning's own API keeps, enforced here too so direct callers cannot clobber it).
+   * Built RCI cells keep their `zone` field — it is set when the building spawns, not by this method.
+   */
   setZone(i, j, zone, density = 1) {
     const c = this.cellAt(i, j);
-    if (!c) return;
-    if (c.type === 'road' || c.type === 'water') return;
+    if (!c) return false;
+    if (c.type === 'road' || c.type === 'water') return false;
+    if (c.buildingId) return false;
     c.zone = zone;
     c.density = zone ? density : 0;
-    c.type = zone ? 'zone' : (c.buildingId ? 'building' : 'none');
+    c.type = zone ? 'zone' : 'none';
     this.events.emit('zone:changed', { i, j, zone, density: c.density });
     this.events.emit('world:cell', { i, j, cell: c });
+    return true;
   }
 
   // ---- roads ----------------------------------------------------------------
@@ -403,9 +411,10 @@ export class World {
   _unmarkRoadCells(edge) {
     for (const c of this.cells) {
       if (c.roadId !== edge.id) continue;
-      const owner = this._cellOwner(c.i, c.j, edge.id);
+      // A cell claimed by a building is never handed to a remaining road — the building owns its type.
+      const owner = c.buildingId ? null : this._cellOwner(c.i, c.j, edge.id);
       if (owner) { c.type = 'road'; c.roadId = owner; }
-      else { c.type = this._isWaterCell(c.i, c.j) ? 'water' : 'none'; c.roadId = null; }
+      else { c.type = c.buildingId ? 'building' : this._isWaterCell(c.i, c.j) ? 'water' : 'none'; c.roadId = null; }
     }
   }
 
@@ -808,6 +817,9 @@ export class World {
       for (let o = -half; o <= half; o += this.cellSize * 0.5) {
         const { i, j } = this.worldToCell(cx + nx * o, cz + nz * o);
         const c = this.cellAt(i, j);
+        // A cell owned by a building is the building's: never overwrite its type/zone. Callers (tools'
+        // roadBuildingBlocked, planRoadEdit) refuse buildings before building, so this is a data-integrity backstop.
+        if (c && c.buildingId) continue;
         if (c && c.type !== 'road') { c.type = 'road'; c.zone = null; c.density = 0; c.roadId = edge.id; }
         else if (c && !c.roadId) c.roadId = edge.id; // adopt unowned road cells (e.g. showcase-only markings)
       }

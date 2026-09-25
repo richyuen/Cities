@@ -247,8 +247,8 @@ export const CSS = `
 .lc-rci-col.r .lc-rci-fill { background: linear-gradient(180deg, #8ad989, var(--lc-green)); }
 .lc-rci-col.c .lc-rci-fill { background: linear-gradient(180deg, #74b9f2, var(--lc-blue)); }
 .lc-rci-col.i .lc-rci-fill { background: linear-gradient(180deg, #ffb46a, var(--lc-orange)); }
-.lc-rci-lbl { font-family: var(--lc-display); font-size: 12px; font-weight: 900; text-shadow: 0 1px 0 rgba(0,0,0,0.6); }
-.lc-rci-col.r .lc-rci-lbl { color: #8ad989; } .lc-rci-col.c .lc-rci-lbl { color: #74b9f2; } .lc-rci-col.i .lc-rci-lbl { color: #ffb46a; }
+.lc-rci-lbl { font-family: var(--lc-display); font-size: 12px; font-weight: 900; padding: 0 5px; border-radius: 4px; background: rgba(0,0,0,0.45); box-shadow: inset 0 1px 0 rgba(255,255,255,0.09); text-shadow: 0 1px 0 rgba(0,0,0,0.6); }
+.lc-rci-col.r .lc-rci-lbl { color: #a9eca7; } .lc-rci-col.c .lc-rci-lbl { color: #9ed2ff; } .lc-rci-col.i .lc-rci-lbl { color: #ffcf9e; }
 
 /* ---------- utilities coverage (stacked above RCI, bottom-left) ---------- */
 .lc-utilities { left: 16px; bottom: 168px; width: 150px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }

@@ -35,7 +35,7 @@ export function createCamera(renderer, world, events) {
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
   controls.screenSpacePanning = false;
-  controls.minDistance = 4;
+  controls.minDistance = 2.5; // was 4 — the simulation review asked for sub-4m wall closeups (N5)
   controls.maxDistance = 3500;
   controls.maxPolarAngle = Math.PI * 0.495;
   controls.zoomToCursor = true;

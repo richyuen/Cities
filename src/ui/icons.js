@@ -77,13 +77,15 @@ export const icons = {
   'zone:i': svg(`<rect x="2" y="19.5" width="20" height="3" rx="1" fill="${ORANGE}" ${O}/><path d="M3 20V10.5l5 3.2v-3.2l5 3.2v-3.2l5 3.2V20z" fill="${GREY}" ${O}/>
     <rect x="15.5" y="3" width="3.2" height="9" fill="${ORANGE}" ${O}/><rect x="15.5" y="3" width="3.2" height="2" fill="#c9631a"/>
     <circle cx="19.8" cy="3.2" r="1.7" fill="#d9dde3"/><circle cx="21.5" cy="1.8" r="1.2" fill="#d9dde3"/><rect x="5" y="15.5" width="2.6" height="2.6" fill="#f2c94c"/><rect x="10" y="15.5" width="2.6" height="2.6" fill="#f2c94c"/>`),
-  // dezone: a grey 2x2 plate seen from above (same outline treatment as the other bricks) with a red "no" slash across it
-  'zone:none': svg(`<path d="M3 15v-5l9-5 9 5v5l-9 5z" fill="#b6bcb8" ${O}/>
-    <path d="M3 10l9 5v5l-9-5z" fill="#8a908c"/><path d="M12 15l9-5v5l-9 5z" fill="#727876"/>
-    <ellipse cx="7.5" cy="9.6" rx="2.1" ry="1.05" fill="#8f958f"/><ellipse cx="7.5" cy="8.8" rx="2.1" ry="1.05" fill="#d8ded9"/>
-    <ellipse cx="16.5" cy="9.6" rx="2.1" ry="1.05" fill="#8f958f"/><ellipse cx="16.5" cy="8.8" rx="2.1" ry="1.05" fill="#d8ded9"/>
-    <ellipse cx="12" cy="7.2" rx="2.1" ry="1.05" fill="#8f958f"/><ellipse cx="12" cy="6.4" rx="2.1" ry="1.05" fill="#d8ded9"/>
-    <ellipse cx="12" cy="12.1" rx="2.1" ry="1.05" fill="#8f958f"/><ellipse cx="12" cy="11.3" rx="2.1" ry="1.05" fill="#d8ded9"/>
+  // dezone: a grey 2x2 plate seen from above (same outline treatment as the other bricks) with a red "no" slash across it.
+  // r3 nit: the old mid-grey sat too close to the toolbar's idle-button background; warmer/lighter faces (and a white
+  // specular on the studs) so it reads as the fourth zone option at a glance, not an unlit disabled button.
+  'zone:none': svg(`<path d="M3 15v-5l9-5 9 5v5l-9 5z" fill="#dcd6c8" ${O}/>
+    <path d="M3 10l9 5v5l-9-5z" fill="#a89f8d"/><path d="M12 15l9-5v5l-9 5z" fill="#8d8474"/>
+    <ellipse cx="7.5" cy="9.6" rx="2.1" ry="1.05" fill="#a89f8d"/><ellipse cx="7.5" cy="8.8" rx="2.1" ry="1.05" fill="#f4efe3"/>
+    <ellipse cx="16.5" cy="9.6" rx="2.1" ry="1.05" fill="#a89f8d"/><ellipse cx="16.5" cy="8.8" rx="2.1" ry="1.05" fill="#f4efe3"/>
+    <ellipse cx="12" cy="7.2" rx="2.1" ry="1.05" fill="#a89f8d"/><ellipse cx="12" cy="6.4" rx="2.1" ry="1.05" fill="#f4efe3"/>
+    <ellipse cx="12" cy="12.1" rx="2.1" ry="1.05" fill="#a89f8d"/><ellipse cx="12" cy="11.3" rx="2.1" ry="1.05" fill="#f4efe3"/>
     <path d="M4.5 21 19.5 4.5" stroke="${INK}" stroke-width="5" stroke-linecap="round"/><path d="M4.5 21 19.5 4.5" stroke="${RED}" stroke-width="3" stroke-linecap="round"/>`),
 
   // ---- tools: parks ----

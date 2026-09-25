@@ -303,6 +303,26 @@ export class SimModel {
 
   markDirty() { this.dirtyStatic = true; }
 
+  /** Per-building progression for save/load: ids only — coverage/flags/capacity are recomputed from the world,
+   *  but occupancy and maturity are simulation state that the world replay cannot reconstruct (without this a
+   *  loaded city restarts every building at the initial occupancy and its population halves). */
+  getOccupancyState() {
+    return this.list.map((s) => ({ id: s.b.id, occ: s.occ, mature: s.mature, notified: s.notified }));
+  }
+
+  /** Restore progression saved by getOccupancyState() onto a freshly synced list. Levels are deliberately not
+   *  restored: they derive from the building records the save already replayed. */
+  applyOccupancyState(rows) {
+    if (!Array.isArray(rows)) return;
+    for (const r of rows) {
+      const s = this.byId.get(r.id);
+      if (!s) continue;
+      if (typeof r.occ === 'number') s.occ = clamp01(r.occ);
+      if (typeof r.mature === 'number') s.mature = Math.max(0, r.mature | 0);
+      if (r.notified) s.notified = true;
+    }
+  }
+
   /** Stamp a 1 within `radius` (Chebyshev cells) of (ci,cj) into `cov` (w×h grid, in-place). */
   static _stampRadius(cov, w, h, ci, cj, radius) {
     const i0 = Math.max(0, ci - radius), i1 = Math.min(w - 1, ci + radius);

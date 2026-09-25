@@ -128,9 +128,10 @@ const api = {
     publish(S.model.stats);
     S.ctx.events.emit('sim:reset', {});
   },
-  /** Full round-trippable state for save/load: policy, tax rates, and the raw stats snapshot. */
+  /** Full round-trippable state for save/load: policy, tax rates, the raw stats snapshot and per-building
+   *  occupancy/maturity (the world replay rebuilds the buildings; the model needs its progression restored). */
   getState() {
-    return { policy: { ...S.model.policy }, taxRate: { ...S.model.taxRate }, transitUpkeep: S.model.transitUpkeep, stats: snapshot(S.model.stats) };
+    return { policy: { ...S.model.policy }, taxRate: { ...S.model.taxRate }, transitUpkeep: S.model.transitUpkeep, stats: snapshot(S.model.stats), occupancy: S.model.getOccupancyState() };
   },
   /** Restore exactly what getState() returned (used by menu's Load) — no synthetic tick warm-up: a loaded save
    * should look exactly as it did when saved, unlike a freshly generated city which has no history to restore. */
@@ -146,6 +147,9 @@ const api = {
       if (typeof patch.stats.crime === 'number') S.model.crime = patch.stats.crime;
     }
     S.model.syncBuildings(S.ctx.world);
+    // Restore per-building progression after the world replay rebuilt the building list — otherwise every loaded
+    // building restarts at the initial occupancy and the city's population collapses on the first tick.
+    S.model.applyOccupancyState(patch.occupancy);
     S.grid.markDirty();
     S.acc = 0;
     publish(S.model.stats);

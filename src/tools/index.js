@@ -628,7 +628,7 @@ function finishZone(d) {
   if (!d.zone) { // dezone: no cost, no funds check
     let cells = 0;
     if (zoning?.clearZone) cells = safeCall(() => zoning.clearZone(i0, j0, i1, j1), 0) ?? 0;
-    else for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) { const c = ctx.world.cellAt(i, j); if (c?.zone) { ctx.world.setZone(i, j, null); cells++; } }
+    else for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) { const c = ctx.world.cellAt(i, j); if (c?.zone && !c.buildingId && ctx.world.setZone(i, j, null) !== false) cells++; }
     if (cells > 0) {
       notify(`Dezoned: ${cells} cell${cells === 1 ? '' : 's'}`, 'success');
       // world.setZone(...,null) emits zone:changed with a falsy zone, which audio's own listener ignores
@@ -653,9 +653,8 @@ function finishZone(d) {
   let count = 0;
   for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
     const c = ctx.world.cellAt(i, j);
-    if (!c || c.type === 'road' || c.type === 'water') continue;
-    ctx.world.setZone(i, j, d.zone, 1);
-    count++;
+    if (!c || c.type === 'road' || c.type === 'water' || c.buildingId) continue;
+    if (ctx.world.setZone(i, j, d.zone, 1) !== false) count++;
   }
   if (count > 0) notify(`${ZONE_LABEL[d.zone]}: ${count} cell${count === 1 ? '' : 's'}`, 'success');
   else fail('Nothing to zone here');
@@ -980,12 +979,10 @@ export default {
     'tools:bulldoze': (world) => ({ pos: [70, 16 + world.getHeight(70, -70), -22], target: [70, 4 + world.getHeight(70, -70), -70], fov: 44 }),
     // r2 verification preset: framed on the live road-drag ghost ribbon's near edge against bare grass, at the
     // range a player is actually watching mid-drag (r1 review flagged the old transGreen as reading
-    // near-colourless at this exact range). core's MapControls has a hard minDistance=4 (src/core/camera.js,
-    // not ours to change) that rescales any closer request up to ~4m along the same line of sight, so this
-    // lands a touch further out than the true 2-3m verification (done separately, bypassing controls, for the
-    // r2 report) but keeps the same steep, non-grazing angle so the ribbon-vs-grass edge is still legible rather
-    // than lost behind foreground studs. Not part of the standard 4; confirms the 'lime' swap reads as a crisp
-    // "buildable" signal up close, not the near-colourless wash r1 flagged.
+    // near-colourless at this exact range). core's MapControls minDistance is 2.5 (src/core/camera.js) and this
+    // request is just outside it, so it no longer gets rescaled — the ribbon-vs-grass edge reads at a real
+    // closeup range instead of being lost behind foreground studs. Not part of the standard 4; confirms the
+    // 'lime' swap reads as a crisp "buildable" signal up close, not the near-colourless wash r1 flagged.
     'tools:vclose': (world) => {
       const y = world.getHeight(15, 34); // ribbon's near (grass-side) edge — z=34, x=15 sit just inside it
       return { pos: [15, y + 2.84, 35.14], target: [15, y + 0.3, 34], fov: 42 };

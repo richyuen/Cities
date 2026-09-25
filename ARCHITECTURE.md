@@ -105,7 +105,9 @@ Mutators (all emit events, all deterministic): `setHeight(i,j,h)`, `getHeight(x,
 `addRoad(a:{x,z}, b:{x,z}, kind, {bridge?, snapNodes?, oneway?})` → edgeId, `removeRoad(edgeId)`,
 `planRoadEdit(a, b, kind)` → read-only `{ edges, length, coverage, blocked } | null` (the drag-over upgrade verdict),
 `upgradeRoad(a, b, kind, {oneway?})` → `{ edges, length, kindChanged, dirChanged } | null` (in-place kind/width/
-direction edit of the existing road the drag follows; emits `road:changed` per edge), `setZone(i,j,zone,density)`, `addBuilding(rec)` → id, `removeBuilding(id)`,
+direction edit of the existing road the drag follows; emits `road:changed` per edge), `setZone(i,j,zone,density)` (returns `true` when the cell
+changed; `false` no-op for road/water cells and for cells claimed by a building — a built cell's type is owned by its
+building, so zoning can never flip it back to `'zone'`), `addBuilding(rec)` → id, `removeBuilding(id)`,
 `addProp(rec)` → id, `removeProp(id)`, `setWeather(patch)`, `worldToCell(x,z)`, `cellToWorld(i,j)` (center), `cellAt(i,j)`, `raycastGround(ray, maxDist?, heightFn?)`
 (terrain heightfield only), `raycastBuildings(ray, maxDist?, heightFn?)` (nearest building footprint AABB), `raycastScene(ray, maxDist?, heightFn?)` →
 `{ point, buildingId }` (whichever of the two the ray reaches first — use this one for pointer picking so a building's facade/roof stops the ray

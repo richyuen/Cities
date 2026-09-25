@@ -24,24 +24,29 @@ export function buildStopKits(ctx) {
   };
 
   // Pole: a footing plate (with a stud), a slim shaft and a cap stud — a stack of Blox elements, not a bare stick.
+  // The cap sits ON TOP of the sign (not on the shaft) so it reads as a stud on the sign's head instead of a grey
+  // brick poking through the plate (transit r2 critic: dark notch in the glowing lightbox at night).
   const foot = bb(0.46, 0.1, 0.46, 0.03);
   const footStud = put(cyl, 0, 0.1, 0, 0.24, 0.17, 0.24);
   const shaft = put(cyl, 0, 0.1, 0, 0.055, 2.5, 0.055);
-  const cap = put(cyl, 0, 2.6, 0, 0.09, 0.12, 0.09);
+  const cap = put(cyl, 0, 2.76, 0.02, 0.09, 0.12, 0.09);
   const poleGeo = merge([foot, footStud, shaft, cap]);
 
   // Sign: a coloured plate with a proud white face plate, mounted near the top and angled to face the road (+Z).
+  // The face is centred on the plate (both y and x) — it read off-centre when pinned to the plate's lower edge.
   const signPlate = bb(0.78, 0.56, 0.07, 0.02);
   signPlate.translate(0, 2.2, 0.02);
   const signGeo = signPlate;
   const facePlate = bb(0.5, 0.28, 0.03, 0.015);
-  facePlate.translate(0, 2.2, 0.075);
+  facePlate.translate(0, 2.34, 0.075);
   const faceGeo = facePlate;
 
-  // Ground ring: a flat annulus in the line's colour, so a stop is findable from above and glows at night.
-  const ring = new THREE.RingGeometry(1.05, 1.5, 28);
+  // Ground ring: a flat annulus in the line's colour, so a stop is findable from above and glows at night. Radii
+  // are kept inside a street sidewalk (~2 m wide, centred on the anchor) so the arc never hangs over the lower
+  // carriageway; lifted to 0.20 m (above the 0.17 m pavement studs) so studs no longer bite notches out of it.
+  const ring = new THREE.RingGeometry(0.55, 0.95, 24);
   ring.rotateX(-Math.PI / 2);
-  ring.translate(0, 0.05, 0);
+  ring.translate(0, 0.2, 0);
   const ringGeo = ring;
 
   const m = ctx.materials;
@@ -51,10 +56,28 @@ export function buildStopKits(ctx) {
     faceGeo,
     ringGeo,
     poleMat: m.plastic('darkStoneGrey', { roughness: 0.42, clearcoat: 0.4 }),
-    signMat: m.plastic('white', { instanceColor: true, roughness: 0.38, clearcoat: 0.55, emissive: 'white', emissiveIntensity: 0 }),
-    faceMat: m.plastic('white', { roughness: 0.32, clearcoat: 0.6 }),
-    ringMat: m.plastic('white', { instanceColor: true, roughness: 0.45, clearcoat: 0.3, emissive: 'white', emissiveIntensity: 0, side: THREE.DoubleSide }),
+    signMat: tintEmissiveByInstanceColor(m.plastic('white', { instanceColor: true, roughness: 0.38, clearcoat: 0.55, emissive: 'white', emissiveIntensity: 0 })),
+    // The white face is the lit element at night (the coloured sign plate glows in its own line colour instead —
+    // see tintEmissiveByInstanceColor); emissiveIntensity is driven from updateNightLook().
+    faceMat: m.plastic('white', { roughness: 0.32, clearcoat: 0.6, emissive: 'white', emissiveIntensity: 0 }),
+    ringMat: tintEmissiveByInstanceColor(m.plastic('white', { instanceColor: true, roughness: 0.45, clearcoat: 0.3, emissive: 'white', emissiveIntensity: 0, side: THREE.DoubleSide })),
   };
+}
+
+/** three multiplies the *diffuse* term by the instance colour but not the emissive term, so an instanced white
+ *  material with emissive:'white' washes out to white at night instead of glowing in the per-instance line
+ *  colour. Same fragment splice zoning's plate materials use. */
+function tintEmissiveByInstanceColor(mat) {
+  mat.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <emissivemap_fragment>',
+      `#include <emissivemap_fragment>
+#if defined( USE_COLOR ) || defined( USE_INSTANCING_COLOR )
+	totalEmissiveRadiance *= vColor.rgb;
+#endif`
+    );
+  };
+  return mat;
 }
 
 /** A flat ribbon along `pts` ([{x,y,z}] centreline), lifted `lift` metres and `width` wide. Normals point up;
