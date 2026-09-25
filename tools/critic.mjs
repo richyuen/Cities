@@ -27,6 +27,11 @@ else {
 }
 console.log(`[critic] ${isGame ? 'game' : mod} r${round} gpu=${app.gpu}\n[critic] presets: ${presets.join(', ')}\n[critic] tods: ${tods.join(', ')}`);
 
+// Warm-up: the first capture of a batch can otherwise come back as a cold start (shader compile + the first
+// shadow-cascade render stall the main thread), which lands a false fps floor in summary.json. Settle the page
+// with a couple of seconds of real frames before the first shot (same fix noted in _integrator-todo.md).
+await app.page.evaluate(() => window.__city.frames(120));
+
 const results = [];
 for (const tod of tods) {
   for (const preset of presets) {

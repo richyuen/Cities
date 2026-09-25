@@ -251,10 +251,28 @@ export const CSS = `
 .lc-rci-col.r .lc-rci-lbl { color: #8ad989; } .lc-rci-col.c .lc-rci-lbl { color: #74b9f2; } .lc-rci-col.i .lc-rci-lbl { color: #ffb46a; }
 
 /* ---------- utilities coverage (stacked above RCI, bottom-left) ---------- */
-.lc-utilities { left: 16px; bottom: 168px; width: 124px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
-.lc-util-row { display: flex; align-items: center; justify-content: space-between; font-size: 12px; font-weight: 700; }
-.lc-util-lbl { color: var(--lc-muted); }
+.lc-utilities { left: 16px; bottom: 168px; width: 150px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.lc-util-row { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; }
+.lc-util-lbl { color: var(--lc-muted); flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lc-util-pct { font-family: var(--lc-display); font-weight: 900; }
+/* data-view affordance: rows toggle the views overlay; the eye only shows when that module is loaded */
+.lc-util-eye { display: none; width: 12px; height: 12px; flex: none; opacity: 0.5; }
+.lc-util-eye svg { display: block; width: 12px; height: 12px; }
+.lc-utilities.lc-views-on .lc-util-row { cursor: pointer; margin: -2px -6px; padding: 2px 6px; border-radius: 6px; transition: background 0.12s ease; }
+.lc-utilities.lc-views-on .lc-util-row:hover { background: rgba(255, 255, 255, 0.1); }
+.lc-utilities.lc-views-on .lc-util-eye { display: block; }
+.lc-util-row.on { background: linear-gradient(180deg, rgba(247, 201, 72, 0.3), rgba(247, 201, 72, 0.13)); box-shadow: inset 0 0 0 1px rgba(247, 201, 72, 0.6); }
+.lc-util-row.on .lc-util-lbl, .lc-util-row.on .lc-util-pct { color: #ffe27a; }
+.lc-util-row.on .lc-util-eye { opacity: 1; color: #ffe27a; }
+.lc-view-legend { margin-top: 2px; padding-top: 6px; border-top: 1px solid rgba(255, 255, 255, 0.14); display: flex; flex-direction: column; gap: 4px; }
+.lc-view-legend[hidden] { display: none; }
+.lc-view-name { font-weight: 800; font-size: 10.5px; letter-spacing: 0.4px; color: #ffe27a; line-height: 1.25; }
+.lc-view-chips { display: flex; flex-direction: column; gap: 3px; font-size: 10.5px; font-weight: 700; color: var(--lc-muted); }
+.lc-view-chips span { display: flex; align-items: center; gap: 5px; white-space: nowrap; overflow: hidden; }
+.lc-view-chips i { width: 9px; height: 9px; border-radius: 2px; border: 1px solid rgba(0, 0, 0, 0.55); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35); flex: none; }
+.lc-view-bar { height: 8px; border-radius: 4px; background: linear-gradient(90deg, #d12a1e, #f2b21a, #1f9e44); box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.5); }
+.lc-view-scale { display: flex; justify-content: space-between; font-size: 10px; font-weight: 700; color: var(--lc-muted); }
+.lc-view-foot { font-size: 10px; color: var(--lc-muted); opacity: 0.85; white-space: nowrap; }
 
 /* ---------- status line: bottom-centre, directly above the toolbar (never under it) ---------- */
 .lc-status { position: absolute; left: 50%; bottom: 126px; transform: translateX(-50%); pointer-events: auto; display: none; align-items: center; gap: 8px; height: 32px; padding: 0 14px 0 10px;

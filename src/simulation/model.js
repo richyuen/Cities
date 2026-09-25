@@ -619,6 +619,26 @@ export class SimModel {
   /** Ids of tracked (non-utility) buildings currently missing road, power, or water. */
   getUnservedBuildings() { return this.unserved.slice(); }
 
+  /** Recompute the static coverage grids now if world data changed since they were last built (idempotent and
+   * cheap when already clean). Callers that need fresh grids without waiting for the next sim tick (e.g. the
+   * `views` overlay while the game is paused) call this first. */
+  ensureStatic(world) { if (this.dirtyStatic && world) this._recomputeStatic(world); }
+
+  /** Read-only coverage grid (Uint8Array w*h, 1 = covered) for 'power'|'water'|'police'|'school'|'hospital'|
+   * 'park'|'road'. Null for an unknown layer or before the first recompute. Do not mutate. */
+  coverageGrid(layer) {
+    switch (layer) {
+      case 'power': return this.powerCoverage;
+      case 'water': return this.waterCoverage;
+      case 'police': return this.policeCoverage;
+      case 'school': return this.schoolCoverage;
+      case 'hospital': return this.hospitalCoverage;
+      case 'park': return this.parkCoverage;
+      case 'road': return this.roadAdjCoverage;
+      default: return null;
+    }
+  }
+
   /** Ignite a building by id (any kind, RCI or utility). No-op if not found or already on fire. Returns success. */
   igniteBuilding(id) {
     const b = this.byId.get(id)?.b ?? this.utilities.find((u) => u.id === id);

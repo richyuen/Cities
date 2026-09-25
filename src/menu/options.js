@@ -5,7 +5,7 @@ const TABS = ['Graphics', 'Audio', 'Gameplay', 'Camera', 'Controls'];
 const QUALITY = [['low', 'Low'], ['med', 'Medium'], ['high', 'High']];
 const WEATHER = [['clear', 'Clear'], ['cloudy', 'Cloudy'], ['rain', 'Rain'], ['fog', 'Fog']];
 const KEYS = [['Esc', 'Menu / close'], ['Space', 'Pause / resume'], ['1 2 3', 'Speed 1x 2x 4x'], ['B', 'Bulldoze'], ['I', 'Inspect'],
-  ['H', 'Hide / show HUD'], ['W A S D', 'Pan camera'], ['Drag / Wheel', 'Orbit / zoom']];
+  ['V', 'Data views'], ['H', 'Hide / show HUD'], ['W A S D', 'Pan camera'], ['Drag / Wheel', 'Orbit / zoom']];
 
 function mod(ctx, id) { const m = ctx.modules.get(id); return m?.status === 'ok' ? m.api : null; }
 const row = (label, control) => h('div', { class: 'lc-menu-row' }, h('span', {}, label), control);

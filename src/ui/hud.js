@@ -36,7 +36,17 @@ const MAX_TOASTS_VISIBLE = 3, MAX_TOASTS_KEPT = 8;
 const WEATHER_LABEL = { clear: 'Clear', cloudy: 'Cloudy', rain: 'Rain', fog: 'Fog' };
 const TOAST_ICON = { info: icons.info, success: icons.check, warn: icons.warn, error: icons.close };
 const KEYS = [['Esc', 'Deselect tool / close'], ['Space', 'Pause / resume'], ['1 2 3', 'Speed 1x 2x 4x'], ['B', 'Bulldoze'], ['I', 'Inspect'],
-  ['O', 'One-way roads'], ['H', 'Hide / show HUD'], ['W A S D', 'Pan camera'], ['Drag / Wheel', 'Orbit / zoom']];
+  ['V', 'Data views'], ['O', 'One-way roads'], ['H', 'Hide / show HUD'], ['W A S D', 'Pan camera'], ['Drag / Wheel', 'Orbit / zoom']];
+
+// Data views (see the `views` module): the Coverage panel rows double as view toggles, and the active view gets a
+// small legend inside the same panel. Purely presentational here — the view itself lives in `views`.
+const VIEW_NAMES = { power: 'Power coverage', water: 'Water coverage', police: 'Police coverage', school: 'School coverage', health: 'Health coverage', transit: 'Transit coverage', services: 'Services (road + power + water)', land: 'Land value' };
+const CHIP = (color, label) => `<span><i style="background:${color}"></i>${label}</span>`;
+const VIEW_LEGEND = {
+  coverage: () => `<div class="lc-view-chips">${CHIP('#2f8fe0', 'Covered')}${CHIP('#e23b2e', 'Uncovered')}${CHIP('#ffe27a', 'Service')}</div>`,
+  transit: () => `<div class="lc-view-chips">${CHIP('#2f8fe0', 'Walk-up')}${CHIP('#e23b2e', 'Too far')}</div>`,
+  land: () => `<div class="lc-view-bar"></div><div class="lc-view-scale"><span>Low</span><span>High</span></div>`,
+};
 
 export class Hud {
   constructor(ctx, on) {
@@ -162,19 +172,30 @@ export class Hud {
     }
     root.append(h('div', { class: 'lc-panel lc-rci' }, h('div', { class: 'lc-studs' }), h('div', { class: 'lc-rci-title' }, 'Demand'), bars));
 
-    // ---- Utilities coverage ----
-    const utilRow = (key, label) => {
+    // ---- Utilities coverage (rows double as data-view toggles — the `views` module draws the layer) ----
+    this.viewRows = new Map();
+    const utilRow = (viewId, label) => {
       const value = h('span', { class: 'lc-util-pct' }, '—');
-      return { el: h('div', { class: 'lc-util-row' }, h('span', { class: 'lc-util-lbl' }, label), value), value };
+      const el = h('div', { class: 'lc-util-row lc-util-view', 'data-view': viewId, title: `${label} coverage — show it on the map` },
+        h('span', { class: 'lc-util-eye', html: icons.eye }),
+        h('span', { class: 'lc-util-lbl' }, label), value);
+      el.addEventListener('click', () => this.on.view?.(viewId));
+      this.viewRows.set(viewId, el);
+      return { el, value };
     };
     this.powerCov = utilRow('power', 'Power');
     this.waterCov = utilRow('water', 'Water');
     this.transitCov = utilRow('transit', 'Transit');
     this.schoolCov = utilRow('school', 'School');
     this.healthCov = utilRow('health', 'Health');
-    root.append(h('div', { class: 'lc-panel lc-utilities' }, h('div', { class: 'lc-studs' }),
+    this.policeCov = utilRow('police', 'Police');
+    this.landCov = utilRow('land', 'Land value');
+    this.landCov.value.textContent = '';
+    this.viewLegend = h('div', { class: 'lc-view-legend', hidden: 'hidden' });
+    this.utilities = h('div', { class: 'lc-panel lc-utilities' }, h('div', { class: 'lc-studs' }),
       h('div', { class: 'lc-rci-title' }, 'Coverage'), this.powerCov.el, this.waterCov.el, this.transitCov.el,
-      this.schoolCov.el, this.healthCov.el));
+      this.schoolCov.el, this.healthCov.el, this.policeCov.el, this.landCov.el, this.viewLegend);
+    root.append(this.utilities);
 
     // ---- toolbar ----
     const bar = h('div', { class: 'lc-panel lc-toolbar' }, h('div', { class: 'lc-studs' }));
@@ -232,12 +253,27 @@ export class Hud {
     const set = (el, v) => { const p = `${Math.round(Math.max(0, Math.min(1, v || 0)) * 100)}%`; if (el._h !== p) { el._h = p; el.style.height = p; } };
     set(this.rci.r, r); set(this.rci.c, c); set(this.rci.i, i);
   }
-  setUtilities(power, water, transit, education, health) {
+  setUtilities(power, water, transit, education, health, police) {
     setText(this.powerCov.value, `${Math.round(Math.max(0, Math.min(1, power || 0)) * 100)}%`);
     setText(this.waterCov.value, `${Math.round(Math.max(0, Math.min(1, water || 0)) * 100)}%`);
     if (this.transitCov) setText(this.transitCov.value, `${Math.round(Math.max(0, Math.min(1, transit || 0)) * 100)}%`);
     if (this.schoolCov) setText(this.schoolCov.value, `${Math.round(Math.max(0, Math.min(1, education || 0)) * 100)}%`);
     if (this.healthCov) setText(this.healthCov.value, `${Math.round(Math.max(0, Math.min(1, health || 0)) * 100)}%`);
+    if (this.policeCov) setText(this.policeCov.value, `${Math.round(Math.max(0, Math.min(1, police || 0)) * 100)}%`);
+  }
+
+  // ---------- data views (the `views` module owns the layers; this only reflects state) ----------
+  /** Show/hide the eye affordance (false when the views module is not loaded, e.g. the ui showcase). */
+  setViewsAvailable(on) { this.utilities.classList.toggle('lc-views-on', !!on); }
+  /** Reflect the active data view (id or null): highlight its row and show the matching legend. */
+  setActiveView(view) {
+    view = view || null;
+    for (const [id, el] of this.viewRows) el.classList.toggle('on', id === view);
+    if (!view) { this.viewLegend.hidden = true; this.viewLegend.innerHTML = ''; return; }
+    const kind = view === 'land' ? 'land' : view === 'transit' ? 'transit' : 'coverage';
+    this.viewLegend.innerHTML = `<div class="lc-view-name">${VIEW_NAMES[view] || view}</div>`
+      + `${VIEW_LEGEND[kind]()}<div class="lc-view-foot">V next view &middot; Esc close</div>`;
+    this.viewLegend.hidden = false;
   }
 
   // ---------- clock / speed / weather ----------

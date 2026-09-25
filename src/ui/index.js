@@ -20,13 +20,14 @@ function applyStats(stats) {
   if (stats.jobs !== undefined) S.hud.setJobs(stats.jobs);
   if (stats.happiness !== undefined) S.hud.setHappiness(stats.happiness);
   if (stats.powerCoverage !== undefined || stats.waterCoverage !== undefined || stats.transitCoverage !== undefined
-    || stats.educationCoverage !== undefined || stats.healthCoverage !== undefined) {
+    || stats.educationCoverage !== undefined || stats.healthCoverage !== undefined || stats.policeCoverage !== undefined) {
     S.hud.setUtilities(stats.powerCoverage || 0, stats.waterCoverage || 0, stats.transitCoverage || 0,
-      stats.educationCoverage || 0, stats.healthCoverage || 0);
+      stats.educationCoverage || 0, stats.healthCoverage || 0, stats.policeCoverage || 0);
   }
 }
 
 function simApi(ctx) { const m = ctx.modules.get('simulation'); return m?.status === 'ok' ? m.api : null; }
+function viewsApi(ctx) { const m = ctx.modules.get('views'); return m?.status === 'ok' ? m.api : null; }
 const pct = (v) => `${Math.round(Math.max(0, Math.min(1, v || 0)) * 100)}%`;
 const num = (v) => Math.round(v || 0).toLocaleString('en-US');
 
@@ -160,6 +161,7 @@ function onKey(e) {
     case 'Escape':
       if (S.hud.isModalOpen()) { S.hud.closeModal(); break; } // stat window takes priority, same as the settings popover
       if (S.hud.isSettingsOpen()) { S.hud.toggleSettings(false); break; } // first Esc only closes the popover
+      if (viewsApi(S.ctx)?.getView?.()) { viewsApi(S.ctx).setView(null); break; } // then the map overlay
       selectTool(null); S.hud.setInfoPanel(null); break;
     case 'Space': clock.paused = !clock.paused; e.preventDefault(); break;
     case 'Digit1': setSpeed(1); break;
@@ -169,6 +171,7 @@ function onKey(e) {
     case 'KeyB': selectTool(S.tool === 'bulldoze' ? null : 'bulldoze'); break;
     case 'KeyI': selectTool(S.tool === 'select' ? null : 'select'); break;
     case 'KeyO': setOneWay(!S.settings.oneWay); break;
+    case 'KeyV': viewsApi(S.ctx)?.cycle?.(e.shiftKey ? -1 : 1); break;
     default: return;
   }
 }
@@ -232,10 +235,13 @@ export default {
       oneway: (on) => setOneWay(on),
       toggleUi: () => setHudVisible(!S.hudVisible),
       statClick: (key) => openStatModal(key),
+      view: (id) => viewsApi(ctx)?.toggle?.(id),
     });
     dom.appendChild(S.hud.el);
     S.hud.setQuality(S.settings.quality);
     S.hud.setStuds(S.settings.studs);
+    S.hud.setViewsAvailable(!!viewsApi(ctx));
+    S.hud.setActiveView(viewsApi(ctx)?.getView?.() ?? null);
     S.minimap = new Minimap(ctx, S.hud.minimapCanvas, moveCameraTo);
 
     // initial state
@@ -269,6 +275,7 @@ export default {
       ctx.events.on('building:spawned', () => S.minimap?.markDirty()),
       ctx.events.on('building:removed', () => S.minimap?.markDirty()),
       ctx.events.on('transit:changed', () => S.minimap?.markDirty()),
+      ctx.events.on('view:changed', (p) => S.hud.setActiveView(p?.view ?? null)),
     );
     S.onKey = onKey;
     window.addEventListener('keydown', S.onKey);

@@ -166,4 +166,6 @@ export const icons = {
     <circle cx="10" cy="7.5" r="5.2" fill="#a6d8ec" stroke="${INK}" stroke-width="2.4"/><circle cx="10" cy="7.5" r="3.2" fill="none" stroke="#fff" stroke-width="2" stroke-dasharray="6 20" stroke-linecap="round"/>`),
   keyboard: svg(`<rect x="2.5" y="6" width="19" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M6 10h1.5M9.5 10H11M13 10h1.5M16.5 10H18M6 13.5h1.5M9 13.5h6M16.5 13.5H18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>`),
   map: svg(`<path d="M3 6.5 9 4l6 2.5 6-2.5v13l-6 2.5-6-2.5-6 2.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M9 4v13M15 6.5v13" stroke="currentColor" stroke-width="2"/>`),
+  // monochrome eye: "show this layer on the map" affordance on the coverage rows
+  eye: svg(`<path d="M2.4 12s3.6-6.2 9.6-6.2S21.6 12 21.6 12s-3.6 6.2-9.6 6.2S2.4 12 2.4 12z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" fill="currentColor"/>`),
 };

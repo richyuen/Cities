@@ -499,6 +499,9 @@ const api = {
   /** The ordered lane/turn key loop of one line (debugging + tooling). */
   getLineKeys(id) { const l = S.lines.get(id); return l ? [...l.keys] : null; },
   getCoverage() { if (S.coverageDirty) computeCoverage(); return S.coverage; },
+  /** Read-only per-cell stop walk-up grid (Uint8Array, 1 = within a stop's coverage radius); recomputes stale
+   * data first. Do not mutate — the returned array is the transit module's own. */
+  getCoverageGrid() { if (S.coverageDirty) computeCoverage(); return S.covGrid; },
   getRidership() { return S.ridership; },
   getBusCount() { return S.busCount; },
   openPanel,

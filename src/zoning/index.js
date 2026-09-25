@@ -121,6 +121,7 @@ function buildInstancedForZone(zone, cells) {
   }
   mesh.instanceMatrix.needsUpdate = true;
   if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  mesh.visible = S.overlayVisible !== false;
   S.group.add(mesh);
   S.meshes[zone] = mesh;
 }
@@ -217,6 +218,14 @@ const api = {
     return { cells, cost: cells * perCell };
   },
 
+  /** Show/hide the zone plates without touching the hover preview (the `views` overlay hides them while a data
+   *  view is active so the two translucent layers don't blend into each other). */
+  setOverlayVisible(v) {
+    if (!S) return;
+    S.overlayVisible = v !== false;
+    for (const zone of ZONES) if (S.meshes[zone]) S.meshes[zone].visible = S.overlayVisible;
+  },
+
   /** { r: {cells, cellsBuilt}, c: {...}, i: {...} } - cells = total zoned cells (built or not) per zone type.
    *  Computed live from world.cells every call (cheap - one pass), so it is never stale even the instant after
    *  a setZoneRect/clearZone/setZoneBrush call, unlike the visual rebuild which is debounced. */
@@ -267,6 +276,7 @@ export default {
     S = {
       ctx, rng: ctx.rng.fork('zoning'), unsub: [], meshes: { r: null, c: null, i: null },
       dirty: false, dirtyTimer: 0, activeZoneTool: null, preview: null, demoGroup: null, demoMeshes: [],
+      overlayVisible: true,
       focus: { x: 0, z: 0, r: 110 }, hot: { x: 12, z: 14 },
     };
     S.group = new THREE.Group();

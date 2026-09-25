@@ -49,7 +49,8 @@ export default {
   id: 'roads',                 // == folder name
   deps: ['terrain'],           // module ids that must init first (may be empty)
   order: 30,                   // update order (lower first). terrain 10, environment 15, roads 30, zoning 35,
-                               // buildings 40, props 45, traffic 50, transit 55, simulation 60, tools 70, ui 80, audio 85, effects 90, menu 95, demo 5
+                               // buildings 40, props 45, traffic 50, transit 55, simulation 60, tools 70, views 72,
+                               // ui 80, audio 85, effects 90, menu 95, demo 5
   async init(ctx) {},          // build persistent state, subscribe to events, add objects to ctx.scene
   update(dt, ctx) {},          // per frame; dt seconds (clamped ≤ 0.1). Keep it cheap.
   dispose(ctx) {},             // remove objects, unsubscribe
@@ -130,6 +131,7 @@ Ownership: terrain owns `heightField/height`; roads own `roads`; zoning owns `zo
 | `settings:changed` | `{ quality?: 'low'/'medium'/'high', studs?: boolean }` (only changed key) | ui |
 | `transit:changed` | `{}` (stops/lines/coverage changed) | transit |
 | `transit:draft` | `{ stops }` (line tool draft length; 0 = no draft) | transit |
+| `view:changed` | `{ view: id\|null, label }` (active data view, see `views`) | views |
 | `traffic:transit-invalid` | `{ ids }` (lines whose lane keys vanished after a road change) | traffic |
 | `tool:selected` | `{ tool }` | tools |
 | `camera:changed` | `{ pos, target }` | camera |
@@ -165,6 +167,7 @@ Controls: left-drag orbit, right-drag pan, wheel zoom, WASD pan. Camera never go
 - Roads: dark grey plates, white/yellow lane markings, curbs, stud sidewalks; intersections with proper corner geometry, no z-fighting (use `polygonOffset` or small Y offsets). One-way edges additionally print lane arrows (white, ~12 m apart, on every usable lane) pointing along the permitted flow; two-way roads are unchanged.
 - Civic services (`simulation` + `buildings` building kinds, placed via `tools`): `power_plant`, `water_tower`, `fire_department`, `police_station`, `school`, `hospital`. Each stamps a Chebyshev coverage radius (`simulation.getUtilityRadii()`); power/water cap unserved occupancy, fire/police scale emergency response, a school accelerates level-ups and is required for a building to reach level 3, a hospital raises happiness and housing demand. `simulation` exposes `stats.educationCoverage` / `stats.healthCoverage`; the HUD shows Education/Health rows.
 - Transit (`transit`): bus stops are click-placed on road sidewalks (cost $400), bus lines are ordered stop loops routed over roads' public lane API (`roads.api.getLanePath/getLaneConnections`; right turns and throughs preferred, U-turns heavily penalized) and handed to `traffic.setTransitLines()` as lane/turn key loops. Route buses reuse traffic's pool, kinematics, signals, gap queues and night lights, plus a stop dwell and transit signal priority (an approaching bus holds its arm green). Transit owns stops/lines/coverage/economy; simulation consumes `setTransitCoverage(0..1)` and `setTransitUpkeep($/tick)` and exposes `stats.transitCoverage`.
+- Data views (`views`): per-cell overlays for Power/Water/Services/Police/School/Health/Transit/land value, drawn as two instanced meshes (ground plates + building tint boxes, 2 draw calls) whose colour is unlit-emissive so red never blends to brown over grass. Sources are the public grids: `simulation.getCoverageGrid(layer)` (recomputes stale data first, so it is correct while paused) and `transit.getCoverageGrid()`, plus `simulation.cellDesirability` for land value. The HUD's Coverage rows toggle views (eye icon), `V` cycles, `Esc` closes; `views` hides `zoning`'s plates while active (`zoning.api.setOverlayVisible`) and emits `view:changed`.
 - Night: windows emissive per-building with per-window random on/off seeded; streetlights on when `isNight`; car headlights/taillights.
 
 Per-module draw call budget (full city): terrain 20, environment 10 (+3 shadow cascades), roads 60, buildings 400, props 300, traffic 40, transit 12, effects 25 (fixed post overhead), others ≤ 10 each.

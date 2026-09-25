@@ -123,7 +123,9 @@ function onKey(e) {
   }
   const uiApi = modApi(ctx, 'ui');
   const toolsApi = modApi(ctx, 'tools');
-  if (uiApi?.isSettingsOpen?.() || uiApi?.isModalOpen?.() || uiApi?.isInfoPanelOpen?.() || uiApi?.getTool?.() || toolsApi?.getGhostState?.()?.dragging) return; // not ours — let it fall through
+  // A live data view is ui's to close, same as its modals/settings/tool: defer Escape so ui's own handler can
+  // clear the overlay instead of burying it under the pause menu.
+  if (uiApi?.isSettingsOpen?.() || uiApi?.isModalOpen?.() || uiApi?.isInfoPanelOpen?.() || uiApi?.getTool?.() || toolsApi?.getGhostState?.()?.dragging || modApi(ctx, 'views')?.getView?.()) return; // not ours — let it fall through
   openMenu('pause');
   e.preventDefault(); e.stopPropagation();
 }
