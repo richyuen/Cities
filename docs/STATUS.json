@@ -1,23 +1,23 @@
 {
-  "updated": "2026-09-25T17:48:27.713Z",
+  "updated": "2026-09-26T03:29:27.195Z",
   "modules": {
     "terrain": {
-      "score": 7.4,
-      "round": 5,
+      "score": 8.2,
+      "round": 6,
       "pass": false,
       "errors": 0,
-      "fps": 142.9,
+      "fps": 143.6,
       "drawCalls": 58,
       "issues": [
-        "no legible cast shadow from terrain onto itself at any distance (cast/receive toggle isolation: mean |d| <=1.5/255 at 20 m, only sub-threshold stud-shadow dots and crest acne)",
-        "overview and play-camera compositions still read flat/map-like, 0.8 m plains steps add faint contour lines but no sculpted form",
-        "diffuse NdotL real but close-range/oblique only, unchanged this round",
-        "long 0.8 m risers foreshorten into thin bright/dark pipe bars at grazing angles (new minor oddity)",
-        "heightgen.js step change is uncommitted in the working tree"
+        "root cause FIXED: three renders shadow depth with side=shadowSide[material.side] (FrontSide->BackSide), so the open heightfield's top faces were culled from every CSM cascade",
+        "groundMat.shadowSide=FrontSide puts real terrain depth into all cascades (live map coverage 1.9%->26%, cast toggle 14.3% of pixels), plus a per-cascade normalBias retune",
+        "play-distance closeup still reads flat (c1 caps at 12 m so terraces beyond it sample the 0.48 m mid cascade) and the closeup preset's grazing 4.2 m eye over a 0.8 m-stepped plain foreshortens the bands",
+        "noon plains are physically sub-pixel",
+        "pipe bars unchanged"
       ],
-      "review": "docs/reviews/terrain-r5.md",
+      "review": "docs/reviews/terrain-r6.md",
       "wave": 0,
-      "updated": "2026-09-25T17:21:47.146Z"
+      "updated": "2026-09-26T03:29:27.194Z"
     },
     "environment": {
       "score": 8.7,

@@ -234,13 +234,21 @@ function regenEnv() {
 
 function setCsmShadowParams() {
   if (!S.csm) return;
-  for (const l of S.csm.lights) {
+  S.csm.lights.forEach((l, i) => {
     const cam = l.shadow.camera;
     const texel = (cam.right - cam.left) / l.shadow.mapSize.x;
-    l.shadow.normalBias = Math.min(texel * 1.3 + 0.012, 0.45);
+    // Per-cascade receiver offset (B6/G11). The near cascade keeps the acne margin: at play distance its texel is
+    // a few cm and 0.8 m risers still cast a legible band. The mid/far cascades used to sit at the 0.45 m cap,
+    // which erased exactly those bands once the terrain started writing depth (the fix in terrain/index.js) -
+    // a terrain shadow band is only ~1-2 m long, and normalBias pushes the receiver sample along the surface
+    // normal by bias/tan(sunElevation) across the band. Tuned by A/B at the closeup + overview (no acne; the
+    // building shadows that rely on the far cascade stay attached).
+    const k = i === 0 ? 1.3 : (i === 1 ? 0.55 : 0.45);
+    const cap = i === 0 ? 0.12 : (i === 1 ? 0.22 : 0.42);
+    l.shadow.normalBias = Math.min(texel * k + 0.012, cap);
     l.shadow.bias = -0.00004;
     l.shadow.radius = S.shadowRadius;
-  }
+  });
 }
 
 /** Cascades follow the camera: tight near split for closeups, the far split reaches only as far as the view needs. */

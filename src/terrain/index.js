@@ -204,6 +204,11 @@ export default {
       get() { return this._envBase * GROUND_ENV_MUL; }, set(v) { this._envBase = v; }, configurable: true,
     });
     patchGroundMaterial(S.groundMat, S.groundUniforms);
+    // Shadow depth pass: three defaults every material to the OPPOSITE side (shadowSide[FrontSide] = BackSide),
+    // a back-face trick that is safe for closed solids only. The ground is an open heightfield, so the default
+    // culls its top faces from the sun and the chunks write no depth at all (B6/G11: live cascade-1 map coverage
+    // 1.9% -> 26% with this line; before it, no terrain self-shadow could exist at any bias/radius).
+    S.groundMat.shadowSide = THREE.FrontSide;
     ctx.materials.cache.set('terrain:ground', S.groundMat);
 
     // stud material: same satin plastic, per-instance colour, distance shrink
