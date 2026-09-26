@@ -2,8 +2,12 @@
 // Pure functions over ctx.world / ctx.modules; no THREE objects, no rendering. Everything here is a function of
 // ctx.rng (forked once by index.js) and the terrain the `terrain` module already generated in its own init(), so
 // the same seed always produces the same city.
+//
+// Layout philosophy (Wave B5/G8 pass): every district is a real grid, the four districts are stitched into one
+// network (highway ↔ avenue interchange included), and utilities are sited from *coverage lattices* instead of
+// one pair per block — see placeUtilities(). Density and per-block variety are deterministic rng forks.
 
-import { WATER_RADIUS } from '../simulation/model.js';
+import { WATER_RADIUS, POWER_RADIUS } from '../simulation/model.js';
 
 // ---------------------------------------------------------------------------------------------------------------
 // District layout (world meters, origin = map centre). The map is 256x256 cells @ 8 m = 2048x2048 m
@@ -23,10 +27,17 @@ export const WATERFRONT_Z = DOWNTOWN_Z;
 // WATERFRONT_X's last line is decided at runtime from the real coastline (see buildWaterfront).
 
 export const SUBURB_X = [-600, -400, -200, 0, 200, 400, 600];
-export const SUBURB_Z = [-560, -410, -220]; // row0 shared with the highway, row2 fixed for district connectors
+// Wave B5: the old -560/-410/-220 rows left 150-190 m deep blocks; an interior -300 row subdivides them so the
+// lot pitch is ~100 m (r1 fix 2). Rows 0 and 3 stay fixed because the highway and the district connectors land
+// on them; interior nodes still jitter for a looser suburban feel.
+export const SUBURB_Z = [-560, -410, -300, -220];
 
 export const HIGHWAY_Z = -560;
-export const HIGHWAY_X = [-820, ...SUBURB_X, 650];
+// -480 is the interchange node: the industrial avenue crosses the highway there (see buildInterchange).
+export const HIGHWAY_X = [-820, -600, -480, -400, -200, 0, 200, 400, 600, 650];
+
+/** Industrial avenue: highway ↔ suburb ↔ industrial pad, all on one continuous spine (r1 fix 4). */
+export const INDUSTRIAL_SPINE_X = -480;
 
 // ---------------------------------------------------------------------------------------------------------------
 // Generic helpers
@@ -93,6 +104,12 @@ function blockRect(xLines, zLines, a, b, margin) {
   return { x0: xLines[a] + margin, z0: zLines[b] + margin, x1: xLines[a + 1] - margin, z1: zLines[b + 1] - margin };
 }
 
+/** Index of the block (line pair) that contains `v` along one axis. */
+function blockIndex(lines, v) {
+  for (let k = 0; k < lines.length - 1; k++) if (v >= lines[k] && v <= lines[k + 1]) return k;
+  return v < lines[0] ? 0 : lines.length - 2;
+}
+
 /** A single thin 'path' alley spanning cells [i0..i1] at row j (see fillBlock). Always non-zero length, even for a
  * single-cell span, since it's built from the outer edges of the end cells rather than their centres. */
 function addAlleySegment(world, i0, i1, j) {
@@ -124,14 +141,15 @@ function paveAlleyRow(world, i0, i1, j) {
  * Zone a rectangle and tile it with buildings of the given zone/level, skipping any cell the road network already
  * claimed (setZoneRect silently skips non-zonable cells) and any footprint that lands on non-buildable terrain
  * (skipped via terrain.api.isBuildable) or that a previous building/park already covers. `gap` (cells) leaves
- * yard/plaza space between buildings; `fillChance` (0-1) thins the lot out for a less uniform, more organic block.
+ * yard/plaza space between buildings; `fillChance` (0-1) thins the lot out for a less uniform, more organic block;
+ * `stagger` (cells) shifts odd lot rows sideways so neighbouring blocks do not line up into long identical rows.
  *
  * Every row of lots also gets a thin interior 'path' alley immediately on its near side, before the rect is even
  * zoned — without it, only a block's outermost lots would ever end up within the game's road-adjacency rule
  * (SimModel._roadConnectedFor requires a footprint cell to orthogonally touch a 'road' cell); any lot one or more
  * rows deep would be permanently "unserved" for roads no matter its power/water status, regardless of block depth
  * or how the outer margin happens to round against the cell grid. Any cell in that row already claimed by a
- * utility building sited into this same block just before this call (see placeUtilityPair) is left untouched —
+ * utility building sited into this same block just before this call (see placeUtilities) is left untouched —
  * paveAlleyRow only paves cells still of type 'none'. Each row gets an alley on *both* its near and far side (not
  * just one) so a utility footprint tall enough to blank out one side's alley at that row's exact columns (it can
  * span 2-3 rows, versus a typical 1-row-deep lot) doesn't strand that lot with no road access at all — the other
@@ -147,6 +165,7 @@ function fillBlock(ctx, rng, rect, zone, level, opts = {}) {
   const fp = buildingsApi.getFootprint(zone, level);
   const gap = opts.gap ?? 1;
   const pitchI = fp.w + gap, pitchJ = fp.d + gap;
+  const stagger = opts.stagger ?? 0;
 
   for (let j = r.j0; j + fp.d - 1 <= r.j1; j += pitchJ) {
     const nearJ = j - 1, farJ = j + fp.d;
@@ -157,8 +176,10 @@ function fillBlock(ctx, rng, rect, zone, level, opts = {}) {
   const zres = zoningApi.setZoneRect(r.i0, r.j0, r.i1, r.j1, zone, level);
   const fillChance = opts.fillChance ?? 1;
   let count = 0;
-  for (let j = r.j0; j + fp.d - 1 <= r.j1; j += pitchJ) {
-    for (let i = r.i0; i + fp.w - 1 <= r.i1; i += pitchI) {
+  let row = 0;
+  for (let j = r.j0; j + fp.d - 1 <= r.j1; j += pitchJ, row++) {
+    const iStart = r.i0 + (stagger && (row & 1) ? stagger : 0);
+    for (let i = iStart; i + fp.w - 1 <= r.i1; i += pitchI) {
       if (fillChance < 1 && !rng.chance(fillChance)) continue;
       let ok = true;
       for (let jj = j; jj < j + fp.d && ok; jj++) {
@@ -174,6 +195,54 @@ function fillBlock(ctx, rng, rect, zone, level, opts = {}) {
     }
   }
   return { cells: zres.cells, buildings: count };
+}
+
+/**
+ * Zone a shallow fringe rect and drop sparse level-1 buildings along its long axis (r1 fix 6: low-density fringe
+ * along connector roads so districts stop reading as islands). No interior alleys: a fringe strip is 1-2 cells
+ * deep and always abuts a connector road, so every lot is road-adjacent by construction. `isCovered(i, j)` (when
+ * given) skips lots the placed utilities cannot power *and* water — a ribbon between two districts has no
+ * service of its own, and an unserved house would show a warning marker forever.
+ */
+function fillStrip(ctx, rng, rect, zone, level, opts = {}) {
+  const { world, modules } = ctx;
+  const zoningApi = modules.get('zoning').api;
+  const buildingsApi = modules.get('buildings').api;
+  const terrainApi = modules.get('terrain')?.api;
+  const r = cellRectFromWorld(world, rect.x0, rect.z0, rect.x1, rect.z1);
+  if (r.i1 < r.i0 || r.j1 < r.j0) return 0;
+  const fp = buildingsApi.getFootprint(zone, level);
+  const pitch = opts.pitch ?? fp.w + 4;
+  const fillChance = opts.fillChance ?? 0.8;
+  const vertical = opts.vertical ?? ((r.j1 - r.j0) > (r.i1 - r.i0));
+  const isCovered = opts.isCovered;
+  zoningApi.setZoneRect(r.i0, r.j0, r.i1, r.j1, zone, level);
+  let count = 0;
+  const tryLot = (i, j) => {
+    if (isCovered && !isCovered(i, j)) return;
+    if (!rng.chance(fillChance)) return;
+    let ok = true;
+    for (let jj = j; jj < j + fp.d && ok; jj++) {
+      for (let ii = i; ii < i + fp.w && ok; ii++) {
+        const c = world.cellAt(ii, jj);
+        if (!c || c.type !== 'zone' || c.zone !== zone) ok = false;
+        else if (terrainApi && !terrainApi.isBuildable(ii, jj)) ok = false;
+      }
+    }
+    if (!ok) return;
+    world.addBuilding({ i, j, w: fp.w, d: fp.d, zone, level, seed: rng.int(0, 1e9) });
+    count++;
+  };
+  if (vertical) {
+    for (let j = r.j0; j + fp.d - 1 <= r.j1; j += pitch) {
+      for (let i = r.i0; i + fp.w - 1 <= r.i1; i += fp.w + 1) tryLot(i, j);
+    }
+  } else {
+    for (let i = r.i0; i + fp.w - 1 <= r.i1; i += pitch) {
+      for (let j = r.j0; j + fp.d - 1 <= r.j1; j += fp.d + 1) tryLot(i, j);
+    }
+  }
+  return count;
 }
 
 /** Stamp a park over every 'none' cell in a rect (never overwrites roads/water/zoned/built cells). */
@@ -208,12 +277,7 @@ function findCoastX(world, z, xFrom, xTo, step) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Districts
-
-function buildHighway(ctx) {
-  const { pos, edges } = buildGrid(ctx.world, HIGHWAY_X, [HIGHWAY_Z], () => 'highway');
-  return { pos, edges };
-}
+// Utilities + services
 
 function siteBuildable(ctx, i0, j0, w, d) {
   const world = ctx.world, terrainApi = ctx.modules.get('terrain')?.api;
@@ -242,110 +306,77 @@ function findUtilitySite(ctx, ci, cj, w, d, maxRing = 8) {
 }
 
 /**
- * Site a power_plant (3x3) + water_tower (2x2) pair near a block's own centre, called *before* that block's own
- * fillBlock runs — while the block is still untouched 'none' land, so the ring search below succeeds at (or very
- * near) ring 0. Contrast with the old post-hoc pass, which ran after every block was already zoned solid, leaving
- * no open land near the intended anchor at all and dragging the pair off to whatever margin sliver was closest —
- * often far from where it was meant to serve. Returns how many of the pair actually got sited (a block is always
- * comfortably larger than the ~6x3 cells needed, so both should place; the defensive null-checks only matter if a
- * patch of unbuildable terrain happens to sit right at a block's centre). fillBlock's own alley pass (paveAlleyRow)
- * routes around whatever cells end up occupied here — no separate bookkeeping is needed on this end.
- *
- * Power and water are searched from independent, symmetric starting points either side of the block's true centre
- * (rather than chaining water off wherever power's own search actually landed) so their *combined* footprint stays
- * centred on the block — for the largest blocks (e.g. suburb, whose ~200 m pitch is already close to water's 224 m
- * coverage diameter), even a one-sided offset of a couple of cells was enough to push the block's far corner just
- * outside water's reach. Both left/right orderings are tried (findUtilitySite is a pure search, nothing is placed
- * until a winner is picked) and whichever leaves the combined footprint closer to true centre is kept — on its own,
- * a single fixed ordering can still drift lopsided when terrain forces one piece (typically water, the smaller
- * footprint) off its ideal spot while the other stays put, which for suburb's already-tight margin was occasionally
- * enough to leave the block's far edge just outside water's reach.
+ * Coverage-lattice anchors for one axis: ceil(span / (2*radius)) positions centred in equal tiles, so the union
+ * of the tiles' ±radius squares covers [lo, hi] exactly (step = span/n ≤ 2*radius by construction). These are the
+ * minimum number of sources that can blanket the district at this radius; siting them per *block* (the old
+ * one-pair-per-block scheme) is what made the city read as a utility cadence (r1 fix 3).
  */
-function placeUtilityPair(ctx, rect) {
-  const world = ctx.world;
-  const rc = cellRectFromWorld(world, rect.x0, rect.z0, rect.x1, rect.z1);
-  const cx = Math.floor((rc.i0 + rc.i1) / 2), cz = Math.floor((rc.j0 + rc.j1) / 2);
-
-  function tryOrder(powerLeft) {
-    const pSite = findUtilitySite(ctx, powerLeft ? cx - 3 : cx + 1, cz - 1, 3, 3, 6);
-    if (!pSite) return null;
-    const wSite = findUtilitySite(ctx, powerLeft ? cx + 1 : cx - 2, cz, 2, 2, 6);
-    const pc = pSite.i + 1.5, wc = wSite ? wSite.i + 1 : pc;
-    return { pSite, wSite, dev: Math.abs((pc + wc) / 2 - cx) };
-  }
-
-  const a = tryOrder(true), b = tryOrder(false);
-  const best = !a ? b : !b ? a : (a.dev <= b.dev ? a : b);
-  if (!best) return { power: 0, water: 0 };
-  world.addBuilding({ i: best.pSite.i, j: best.pSite.j, w: 3, d: 3, zone: null, kind: 'power_plant', level: 1 });
-  let water = 0;
-  if (best.wSite) {
-    world.addBuilding({ i: best.wSite.i, j: best.wSite.j, w: 2, d: 2, zone: null, kind: 'water_tower', level: 1 });
-    water = 1;
-  }
-  return { power: 1, water };
-}
-
-/** Largest gap between consecutive grid lines (conservative stand-in for "block pitch" when a district's blocks
- * aren't all the same size, e.g. suburb's jittered/uneven rows). */
-function maxGap(lines) {
-  let m = 0;
-  for (let a = 0; a < lines.length - 1; a++) m = Math.max(m, lines[a + 1] - lines[a]);
-  return m;
-}
-
-/** Utility anchors are spaced so consecutive utility blocks are never farther apart than the water tower's
- * coverage diameter (the tighter of the two constraints — power's larger radius is automatically satisfied
- * whenever water's is), so their overlapping coverage actually blankets a whole district regardless of its size. */
-function utilityStride(pitchMeters, cellSize) {
-  const diamM = 2 * WATER_RADIUS * cellSize;
-  return Math.max(1, Math.floor(diamM / pitchMeters));
-}
-
-/** Block indices (0..lines.length-2) along one axis that should host a utility anchor: every `stride`-th block,
- * always also including the last one so a stride that doesn't evenly divide the block count never leaves the far
- * edge more than one stride's worth of blocks from its nearest anchor. */
-function utilityIndices(lines, stride) {
-  const n = lines.length - 1;
-  const out = new Set();
-  for (let a = 0; a < n; a += stride) out.add(a);
-  out.add(n - 1);
+function coverageAnchors(lo, hi, radiusM) {
+  const span = Math.max(1, hi - lo);
+  const n = Math.max(1, Math.ceil(span / (2 * radiusM)));
+  const out = [];
+  for (let k = 0; k < n; k++) out.push(lo + (k + 0.5) * (span / n));
   return out;
 }
 
-/** Cross `utilA` x `utilB` into the set of (a,b) block keys that should host a utility pair, redirecting any
- * anchor that lands on a park/plaza block (isParkFn) to the nearest available in-bounds, non-park, not-yet-chosen
- * neighbour instead of just dropping that anchor's coverage on the floor. `preferB` picks which axis to try
- * shifting along first — always the *sparser*-stride axis (the caller compares its own strideA/strideB): shifting
- * the denser axis just relocates the anchor within a row/column that already has redundant coverage, while the
- * sparse axis has few independent anchors and losing one of its own slots (by shifting perpendicular to it instead
- * of along it) can leave that row/column properly uncovered between its remaining neighbours. */
-function resolveUtilityBlocks(nx, nz, utilA, utilB, isParkFn, preferB) {
-  const chosen = new Set();
-  const order = preferB
-    ? [[0, 0], [0, 1], [0, -1], [1, 0], [-1, 0]]
-    : [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]];
-  for (const a of utilA) {
-    for (const b of utilB) {
-      for (const [da, db] of order) {
-        const na = a + da, nb = b + db;
-        if (na < 0 || na >= nx || nb < 0 || nb >= nz) continue;
-        const key = `${na},${nb}`;
-        if (isParkFn(na, nb) || chosen.has(key)) continue;
-        chosen.add(key);
-        break;
+/**
+ * Site a district's power plants and water towers on their own coverage lattices (one lattice per service, since
+ * POWER_RADIUS > WATER_RADIUS), decoupled from the block grid: the water tower goes to the nearest free,
+ * buildable spot at its anchor; the (larger, industrial-looking) power plant tries the corners of whatever block
+ * the anchor lands in first, so plants sit on block frontages/edges instead of block centres (r1 fix 3). Returns
+ * counts for the builder log.
+ */
+function placeUtilities(ctx, spec) {
+  const world = ctx.world;
+  const cs = world.cellSize;
+  const counts = { power: 0, water: 0 };
+  const stated = (kind, w, d, x, z, cornerMax = 0) => {
+    const a = blockIndex(spec.xLines, x), b = blockIndex(spec.zLines, z);
+    const rect = blockRect(spec.xLines, spec.zLines, a, b, 10);
+    const br = cellRectFromWorld(world, rect.x0, rect.z0, rect.x1, rect.z1);
+    const centre = world.worldToCell(x, z);
+    const starts = [[centre.i - (w >> 1), centre.j - (d >> 1)]];
+    if (cornerMax > 0) {
+      // The (larger, industrial-looking) power plant prefers a block corner over the anchor's exact spot —
+      // r1 fix 3, "site power on frontages/edges" — but only when that corner is close enough to keep the
+      // coverage lattice honest (a far corner would leave the anchor's own quarter unserved).
+      const corners = [
+        [br.i0 + 1, br.j0 + 1],
+        [br.i1 - w - 1, br.j0 + 1],
+        [br.i0 + 1, br.j1 - d - 1],
+        [br.i1 - w - 1, br.j1 - d - 1],
+      ];
+      corners.sort((p, q) => (Math.hypot(p[0] - centre.i, p[1] - centre.j) - Math.hypot(q[0] - centre.i, q[1] - centre.j)) || (p[0] - q[0]) || (p[1] - q[1]));
+      for (const [ci, cj] of corners) {
+        if (Math.hypot(ci - centre.i, cj - centre.j) * cs <= cornerMax) starts.push([ci, cj]);
       }
     }
+    for (const [ci, cj] of starts) {
+      const site = findUtilitySite(ctx, ci, cj, w, d, 8);
+      if (!site) continue;
+      world.addBuilding({ i: site.i, j: site.j, w, d, zone: null, kind, level: 1 });
+      return true;
+    }
+    return false;
+  };
+  const margin = spec.margin ?? 8;
+  for (const z of coverageAnchors(spec.z0 + margin, spec.z1 - margin, POWER_RADIUS * cs)) {
+    for (const x of coverageAnchors(spec.x0 + margin, spec.x1 - margin, POWER_RADIUS * cs)) {
+      if (stated('power_plant', 3, 3, x, z, 48)) counts.power++;
+    }
   }
-  return chosen;
+  for (const z of coverageAnchors(spec.z0 + margin, spec.z1 - margin, WATER_RADIUS * cs)) {
+    for (const x of coverageAnchors(spec.x0 + margin, spec.x1 - margin, WATER_RADIUS * cs)) {
+      if (stated('water_tower', 2, 2, x, z, 0)) counts.water++;
+    }
+  }
+  return counts;
 }
 
 /** Per district, pick five non-park blocks to host the civic services: the blocks whose centres sit closest to
  * the district's block-grid centre (row-major scan, first minimum wins), each next pick excluding the previous
  * ones. Two of the five are schools (education coverage has to blanket a district before level-3 growth opens
- * up) and one is a hospital. This deliberately does NOT look for "free" land: the utility stride above already
- * claims nearly every block in the industrial/waterfront/suburb districts, so the services are sited into blocks
- * that have a power/water pair (see placeServiceBuilding, which is called *after* placeUtilityPair). */
+ * up) and one is a hospital. */
 function pickServiceBlocks(nx, nz, isParkFn) {
   const out = [];
   for (let pick = 0; pick < 5; pick++) {
@@ -367,12 +398,11 @@ function pickServiceBlocks(nx, nz, isParkFn) {
 }
 
 /**
- * Site one 2x2 civic service building (fire_department / police_station) into a block whose power/water pair has
- * already been placed. Searched from the block's NW corner, then its SE corner, then the centre — not from the
- * centre first — so a station lands on the block frontage instead of fighting the centred plant/tower for the
- * middle, which keeps the pair's own placement (and therefore the demo city's power/water coverage) byte-identical.
- * The bounded ring keeps a station from drifting into the neighbouring block; returns 1 if placed, 0 if the block
- * genuinely had no free buildable spot (visible in the builder log rather than silently missing).
+ * Site one 2x2 civic service building (fire_department / police_station) into a block. Searched from the block's
+ * NW corner, then its SE corner, then the centre, so a station lands on the block frontage instead of fighting
+ * the centred utilities for the middle. The bounded ring keeps a station from drifting into the neighbouring
+ * block; returns 1 if placed, 0 if the block genuinely had no free buildable spot (visible in the builder log
+ * rather than silently missing).
  */
 function placeServiceBuilding(ctx, rect, kind, w = 2, d = 2) {
   const world = ctx.world;
@@ -391,32 +421,57 @@ function placeServiceBuilding(ctx, rect, kind, w = 2, d = 2) {
   return 0;
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Districts
+
+function buildHighway(ctx) {
+  const { pos, edges } = buildGrid(ctx.world, HIGHWAY_X, [HIGHWAY_Z], () => 'highway');
+  return { pos, edges };
+}
+
+/**
+ * The highway is no longer an edge sticker (r1 fix 4): the industrial avenue (x=-480) runs from the highway
+ * south through the suburb to the industrial pad, and a one-way diamond ramp pair connects the two, so the
+ * highway visibly feeds the city and traffic can actually use it. Built before the districts so every later
+ * grid crossing stitches into real junctions.
+ */
+function buildInterchange(ctx) {
+  const world = ctx.world;
+  const avenueEdges = [];
+  const rows = [...SUBURB_Z, INDUSTRIAL_Z[0]]; // highway row -> suburb rows -> industrial pad edge
+  for (let k = 1; k < rows.length; k++) {
+    const id = world.addRoad({ x: INDUSTRIAL_SPINE_X, z: rows[k - 1] }, { x: INDUSTRIAL_SPINE_X, z: rows[k] }, 'avenue');
+    if (id) avenueEdges.push(id);
+  }
+  const offRamp = world.addRoad({ x: -600, z: HIGHWAY_Z }, { x: INDUSTRIAL_SPINE_X, z: SUBURB_Z[1] }, 'street', { oneway: 1 });
+  const onRamp = world.addRoad({ x: INDUSTRIAL_SPINE_X, z: SUBURB_Z[1] }, { x: -400, z: HIGHWAY_Z }, 'street', { oneway: 1 });
+  return { avenueEdges, ramps: [offRamp, onRamp].filter(Boolean).length };
+}
+
 function buildDowntown(ctx, rng) {
   const world = ctx.world;
   buildGrid(world, DOWNTOWN_X, DOWNTOWN_Z, spineKind);
   const MARGIN = 10;
   const nx = DOWNTOWN_X.length - 1, nz = DOWNTOWN_Z.length - 1;
   const isPark = (a, b) => a === 1 && b === 1;
-  const strideA = utilityStride(maxGap(DOWNTOWN_X), world.cellSize), strideB = utilityStride(maxGap(DOWNTOWN_Z), world.cellSize);
-  const utilA = utilityIndices(DOWNTOWN_X, strideA), utilB = utilityIndices(DOWNTOWN_Z, strideB);
-  const utilBlocks = resolveUtilityBlocks(nx, nz, utilA, utilB, isPark, strideB >= strideA);
-  // (2,1) is the one signature level-3 tower block below — keep it out of the service picks so a 2x2 station
-  // doesn't displace the skyline's single level-3 tower.
+  // (2,1) stays out of the service picks so a 2x2 station doesn't displace the skyline's single level-3 tower.
   const svc = pickServiceBlocks(nx, nz, (a, b) => isPark(a, b) || (a === 2 && b === 1));
-  let buildings = 0, parkCells = 0, power = 0, water = 0, fire = 0, police = 0, school = 0, hospital = 0;
+  let buildings = 0, parkCells = 0, fire = 0, police = 0, school = 0, hospital = 0;
+
+  // Central Park — right where the two avenues cross.
+  {
+    const rect = blockRect(DOWNTOWN_X, DOWNTOWN_Z, 1, 1, MARGIN);
+    const cx = (rect.x0 + rect.x1) / 2, cz = (rect.z0 + rect.z1) / 2, S2 = 36;
+    parkCells += setParkRect(world, cx - S2, cz - S2, cx + S2, cz + S2).cells;
+    addPlusPath(world, cx - S2, cz - S2, cx + S2, cz + S2);
+  }
+
+  const u = placeUtilities(ctx, { xLines: DOWNTOWN_X, zLines: DOWNTOWN_Z, x0: DOWNTOWN_X[0], x1: DOWNTOWN_X[DOWNTOWN_X.length - 1], z0: DOWNTOWN_Z[0], z1: DOWNTOWN_Z[DOWNTOWN_Z.length - 1] });
+
   for (let a = 0; a < nx; a++) {
     for (let b = 0; b < nz; b++) {
       const rect = blockRect(DOWNTOWN_X, DOWNTOWN_Z, a, b, MARGIN);
-      if (isPark(a, b)) { // Central Park — right where the two avenues cross
-        const cx = (rect.x0 + rect.x1) / 2, cz = (rect.z0 + rect.z1) / 2, S2 = 36;
-        parkCells += setParkRect(world, cx - S2, cz - S2, cx + S2, cz + S2).cells;
-        addPlusPath(world, cx - S2, cz - S2, cx + S2, cz + S2);
-        continue;
-      }
-      if (utilBlocks.has(`${a},${b}`)) {
-        const u = placeUtilityPair(ctx, rect);
-        power += u.power; water += u.water;
-      }
+      if (isPark(a, b)) continue;
       if (svc.fire.has(`${a},${b}`)) fire += placeServiceBuilding(ctx, rect, 'fire_department');
       if (svc.police.has(`${a},${b}`)) police += placeServiceBuilding(ctx, rect, 'police_station');
       if (svc.school.has(`${a},${b}`)) school += placeServiceBuilding(ctx, rect, 'school');
@@ -428,7 +483,7 @@ function buildDowntown(ctx, rng) {
       buildings += fillBlock(ctx, rng, rect, zone, level, { gap: 3 }).buildings;
     }
   }
-  return { buildings, parkCells, power, water, fire, police, school, hospital };
+  return { buildings, parkCells, ...u, fire, police, school, hospital };
 }
 
 function buildIndustrial(ctx, rng) {
@@ -437,37 +492,36 @@ function buildIndustrial(ctx, rng) {
   // area sits well off the downtown plateau, in the rolling-plains + hill-noise zone per heightgen.js).
   const r = cellRectFromWorld(world, INDUSTRIAL_X[0], INDUSTRIAL_Z[0], INDUSTRIAL_X[INDUSTRIAL_X.length - 1], INDUSTRIAL_Z[INDUSTRIAL_Z.length - 1]);
   terrainApi.flatten(r.i0, r.j0, r.i1, r.j1);
-  buildGrid(world, INDUSTRIAL_X, INDUSTRIAL_Z, spineKind);
+  // The x=-480 line is the industrial avenue (highway ↔ suburb ↔ pad) — keep it an avenue through the district.
+  buildGrid(world, INDUSTRIAL_X, INDUSTRIAL_Z, (v) => (v === INDUSTRIAL_SPINE_X || Math.abs(v) < 0.01 ? 'avenue' : 'street'));
   const MARGIN = 10;
   const nx = INDUSTRIAL_X.length - 1, nz = INDUSTRIAL_Z.length - 1;
-  const strideA = utilityStride(maxGap(INDUSTRIAL_X), world.cellSize), strideB = utilityStride(maxGap(INDUSTRIAL_Z), world.cellSize);
-  const utilA = utilityIndices(INDUSTRIAL_X, strideA), utilB = utilityIndices(INDUSTRIAL_Z, strideB);
-  const utilBlocks = resolveUtilityBlocks(nx, nz, utilA, utilB, () => false, strideB >= strideA);
   const svc = pickServiceBlocks(nx, nz, () => false);
-  let buildings = 0, power = 0, water = 0, fire = 0, police = 0, school = 0, hospital = 0;
+  let buildings = 0, fire = 0, police = 0, school = 0, hospital = 0;
+
+  const u = placeUtilities(ctx, { xLines: INDUSTRIAL_X, zLines: INDUSTRIAL_Z, x0: INDUSTRIAL_X[0], x1: INDUSTRIAL_X[INDUSTRIAL_X.length - 1], z0: INDUSTRIAL_Z[0], z1: INDUSTRIAL_Z[INDUSTRIAL_Z.length - 1] });
+
   for (let a = 0; a < nx; a++) {
     for (let b = 0; b < nz; b++) {
       const rect = blockRect(INDUSTRIAL_X, INDUSTRIAL_Z, a, b, MARGIN);
-      if (utilBlocks.has(`${a},${b}`)) {
-        const u = placeUtilityPair(ctx, rect);
-        power += u.power; water += u.water;
-      }
       if (svc.fire.has(`${a},${b}`)) fire += placeServiceBuilding(ctx, rect, 'fire_department');
       if (svc.police.has(`${a},${b}`)) police += placeServiceBuilding(ctx, rect, 'police_station');
       if (svc.school.has(`${a},${b}`)) school += placeServiceBuilding(ctx, rect, 'school');
       if (svc.hospital.has(`${a},${b}`)) hospital += placeServiceBuilding(ctx, rect, 'hospital');
       const level = (a + b) % 2 === 0 ? 1 : 2;
-      buildings += fillBlock(ctx, rng, rect, 'i', level, { gap: 4 }).buildings;
+      const gap = rng.chance(0.5) ? 4 : 5;
+      buildings += fillBlock(ctx, rng, rect, 'i', level, { gap, stagger: rng.chance(0.5) ? gap : 0 }).buildings;
     }
   }
-  return { buildings, power, water, fire, police, school, hospital };
+  return { buildings, ...u, fire, police, school, hospital };
 }
 
 function buildWaterfront(ctx, rng) {
   const world = ctx.world;
   const coastXs = WATERFRONT_Z.map((z) => findCoastX(world, z, 480, 980, 8) ?? 900);
   const minCoast = Math.min(...coastXs);
-  const wfLast = Math.max(560, Math.min(620, minCoast - 40));
+  // r1 fix 5: the built edge used to stop 68-148 m short of the water; land it ~30 m off the coast.
+  const wfLast = Math.max(560, Math.min(minCoast - 30, minCoast - 20));
   const WATERFRONT_X = [340, 480, wfLast];
 
   buildGrid(world, WATERFRONT_X, WATERFRONT_Z, spineKind);
@@ -476,25 +530,24 @@ function buildWaterfront(ctx, rng) {
 
   const MARGIN = 10;
   const nx = WATERFRONT_X.length - 1, nz = WATERFRONT_Z.length - 1;
-  const isPark = (a, b) => a === 0 && b === 0;
-  const strideA = utilityStride(maxGap(WATERFRONT_X), world.cellSize), strideB = utilityStride(maxGap(WATERFRONT_Z), world.cellSize);
-  const utilA = utilityIndices(WATERFRONT_X, strideA), utilB = utilityIndices(WATERFRONT_Z, strideB);
-  const utilBlocks = resolveUtilityBlocks(nx, nz, utilA, utilB, isPark, strideB >= strideA);
+  const isPark = (a, b) => a === 1 && b === 0;
   const svc = pickServiceBlocks(nx, nz, isPark);
-  let buildings = 0, parkCells = 0, power = 0, water = 0, fire = 0, police = 0, school = 0, hospital = 0;
+  let buildings = 0, parkCells = 0, fire = 0, police = 0, school = 0, hospital = 0;
+
+  // Waterfront Park — north end, by the coast.
+  {
+    const rect = blockRect(WATERFRONT_X, WATERFRONT_Z, 1, 0, MARGIN);
+    const cx = (rect.x0 + rect.x1) / 2, cz = (rect.z0 + rect.z1) / 2, S2 = 28;
+    parkCells += setParkRect(world, cx - S2, cz - S2, cx + S2, cz + S2).cells;
+    addPlusPath(world, cx - S2, cz - S2, cx + S2, cz + S2);
+  }
+
+  const u = placeUtilities(ctx, { xLines: WATERFRONT_X, zLines: WATERFRONT_Z, x0: WATERFRONT_X[0], x1: wfLast, z0: WATERFRONT_Z[0], z1: WATERFRONT_Z[WATERFRONT_Z.length - 1] });
+
   for (let a = 0; a < nx; a++) {
     for (let b = 0; b < nz; b++) {
       const rect = blockRect(WATERFRONT_X, WATERFRONT_Z, a, b, MARGIN);
-      if (isPark(a, b)) { // Waterfront Park — north end, by the coast
-        const cx = (rect.x0 + rect.x1) / 2, cz = (rect.z0 + rect.z1) / 2, S2 = 28;
-        parkCells += setParkRect(world, cx - S2, cz - S2, cx + S2, cz + S2).cells;
-        addPlusPath(world, cx - S2, cz - S2, cx + S2, cz + S2);
-        continue;
-      }
-      if (utilBlocks.has(`${a},${b}`)) {
-        const u = placeUtilityPair(ctx, rect);
-        power += u.power; water += u.water;
-      }
+      if (isPark(a, b)) continue;
       if (svc.fire.has(`${a},${b}`)) fire += placeServiceBuilding(ctx, rect, 'fire_department');
       if (svc.police.has(`${a},${b}`)) police += placeServiceBuilding(ctx, rect, 'police_station');
       if (svc.school.has(`${a},${b}`)) school += placeServiceBuilding(ctx, rect, 'school');
@@ -504,69 +557,128 @@ function buildWaterfront(ctx, rng) {
     }
   }
 
-  // Promenade path along the actual coastline, one point per row, clamped to stay on the built district.
+  // Esplanade: the land between the last building row and the water becomes a park strip (props populate it
+  // with trees/benches/a fountain), and the promenade path runs through it close to the coastline.
+  parkCells += setParkRect(world, wfLast + 2, -110, wfLast + 60, 110).cells;
   const pts = WATERFRONT_Z.map((z, idx) => ({
-    x: Math.max(wfLast - 10, Math.min(coastXs[idx] - 20, wfLast + 60)), z,
+    x: Math.max(wfLast - 10, Math.min(coastXs[idx] - 18, wfLast + 60)), z,
   }));
   for (let k = 0; k < pts.length - 1; k++) world.addRoad(pts[k], pts[k + 1], 'path');
 
-  return { buildings, parkCells, power, water, fire, police, school, hospital, coastXs, xLines: WATERFRONT_X, zLines: WATERFRONT_Z };
+  // Pier: two bridge-decked path rails out over the bay plus a cross rail at the far end (paths never take
+  // vehicles, so this is pure waterfront dressing). Anchored on the promenade node at the middle row.
+  const pierIdx = Math.max(0, WATERFRONT_Z.indexOf(0));
+  const pierBase = pts[pierIdx];
+  const pierCoast = coastXs[pierIdx];
+  const pierEnd = Math.max(pierCoast + 30, pierBase.x + 44);
+  for (const dz of [-4, 4]) {
+    world.addRoad({ x: pierBase.x, z: pierBase.z + dz }, { x: pierEnd, z: pierBase.z + dz }, 'path', { bridge: true });
+  }
+  world.addRoad({ x: pierEnd, z: pierBase.z - 4 }, { x: pierEnd, z: pierBase.z + 4 }, 'path', { bridge: true });
+
+  return { buildings, parkCells, ...u, fire, police, school, hospital, coastXs, xLines: WATERFRONT_X, zLines: WATERFRONT_Z };
 }
 
 function buildSuburb(ctx, rng) {
   const world = ctx.world;
   const gridRng = rng.fork('suburbJitter');
   buildGrid(world, SUBURB_X, SUBURB_Z, spineKind, {
-    jitter: 22, rng: gridRng, fixedRows: new Set([0, 2]), fixedCols: new Set(),
+    jitter: 22, rng: gridRng, fixedRows: new Set([0, SUBURB_Z.length - 1]), fixedCols: new Set(),
   });
 
-  // Two neighbourhood parks, spread across the district — a fixed small footprint (not a whole grid block, which
-  // at this block size would be several hectares of tree/hedge props) centred inside two chosen blocks; the rest
-  // of those blocks is left as open, unzoned green space rather than double-built.
+  // Neighbourhood parks (fixed small footprint centred in their block, rest of the block left open) plus one
+  // plaza block on the x=0 avenue (r1 fix 6: a landmark the district can be read from).
   const PARK_BLOCKS = new Set(['1,0', '4,1']);
-  const PARK_SIZE = 56;
+  const PLAZA_BLOCK = '2,1';
+  const PARK_SIZE = 56, PLAZA_SIZE = 66;
   const MARGIN = 10;
   const nx = SUBURB_X.length - 1, nz = SUBURB_Z.length - 1;
-  const isPark = (a, b) => PARK_BLOCKS.has(`${a},${b}`);
-  const strideA = utilityStride(maxGap(SUBURB_X), world.cellSize), strideB = utilityStride(maxGap(SUBURB_Z), world.cellSize);
-  const utilA = utilityIndices(SUBURB_X, strideA), utilB = utilityIndices(SUBURB_Z, strideB);
-  const utilBlocks = resolveUtilityBlocks(nx, nz, utilA, utilB, isPark, strideB >= strideA);
+  const isPark = (a, b) => PARK_BLOCKS.has(`${a},${b}`) || `${a},${b}` === PLAZA_BLOCK;
+  let buildings = 0, parkCells = 0, fire = 0, police = 0, school = 0, hospital = 0;
+
+  for (const key of [...PARK_BLOCKS, PLAZA_BLOCK]) {
+    const [a, b] = key.split(',').map(Number);
+    const rect = blockRect(SUBURB_X, SUBURB_Z, a, b, MARGIN);
+    const cx = (rect.x0 + rect.x1) / 2, cz = (rect.z0 + rect.z1) / 2;
+    const size = key === PLAZA_BLOCK ? PLAZA_SIZE : PARK_SIZE;
+    parkCells += setParkRect(world, cx - size / 2, cz - size / 2, cx + size / 2, cz + size / 2).cells;
+    addPlusPath(world, cx - size / 2, cz - size / 2, cx + size / 2, cz + size / 2);
+  }
+
+  const u = placeUtilities(ctx, { xLines: SUBURB_X, zLines: SUBURB_Z, x0: SUBURB_X[0], x1: SUBURB_X[SUBURB_X.length - 1], z0: SUBURB_Z[0], z1: SUBURB_Z[SUBURB_Z.length - 1] });
   const svc = pickServiceBlocks(nx, nz, isPark);
-  let buildings = 0, parkCells = 0, power = 0, water = 0, fire = 0, police = 0, school = 0, hospital = 0;
+
+  // Per-block deterministic variety (r1 fix 6): lot gap, fill chance, row stagger and level mix vary per block
+  // from one dedicated fork, so no two blocks tile identically while the whole city stays a function of the seed.
+  const variety = rng.fork('variety');
   for (let a = 0; a < nx; a++) {
     for (let b = 0; b < nz; b++) {
       const rect = blockRect(SUBURB_X, SUBURB_Z, a, b, MARGIN);
-      if (isPark(a, b)) {
-        const cx = (rect.x0 + rect.x1) / 2, cz = (rect.z0 + rect.z1) / 2;
-        const px0 = cx - PARK_SIZE / 2, pz0 = cz - PARK_SIZE / 2, px1 = cx + PARK_SIZE / 2, pz1 = cz + PARK_SIZE / 2;
-        parkCells += setParkRect(world, px0, pz0, px1, pz1).cells;
-        addPlusPath(world, px0, pz0, px1, pz1);
-        continue;
-      }
-      if (utilBlocks.has(`${a},${b}`)) {
-        const u = placeUtilityPair(ctx, rect);
-        power += u.power; water += u.water;
-      }
+      if (isPark(a, b)) continue;
       if (svc.fire.has(`${a},${b}`)) fire += placeServiceBuilding(ctx, rect, 'fire_department');
       if (svc.police.has(`${a},${b}`)) police += placeServiceBuilding(ctx, rect, 'police_station');
       if (svc.school.has(`${a},${b}`)) school += placeServiceBuilding(ctx, rect, 'school');
       if (svc.hospital.has(`${a},${b}`)) hospital += placeServiceBuilding(ctx, rect, 'hospital');
-      const level = rng.chance(0.15) ? 2 : 1;
-      buildings += fillBlock(ctx, rng, rect, 'r', level, { gap: 4, fillChance: 0.32 }).buildings;
+      const gap = variety.pick([2, 2, 3]);
+      const fillChance = 0.42 + variety.range(0, 0.2);
+      const stagger = variety.chance(0.5) ? gap : 0;
+      const level = rng.chance(0.12) ? 2 : 1;
+      buildings += fillBlock(ctx, rng, rect, 'r', level, { gap, fillChance, stagger }).buildings;
     }
   }
-  return { buildings, parkCells, power, water, fire, police, school, hospital };
+  return { buildings, parkCells, ...u, fire, police, school, hospital };
+}
+
+/** World-centre cell of every placed building of `kind` (coverage-aware fringe placement). */
+function kindCentres(world, kind) {
+  const out = [];
+  for (const b of world.buildings.values()) {
+    if (b.kind !== kind) continue;
+    out.push(world.cellToWorld(
+      Math.min(world.size.w - 1, b.i + ((b.w || 1) >> 1)),
+      Math.min(world.size.h - 1, b.j + ((b.d || 1) >> 1)),
+    ));
+  }
+  return out;
+}
+
+/**
+ * Low-density fringe ribbons along connector roads (r1 fix 6): the wide lawns between downtown/waterfront and
+ * industrial/suburb get sparse level-1 houses on both sides of the existing connectors instead of reading as
+ * vacant land. Strips start ~10 m off the centreline so they sit beside the carriageway, not on it, and only
+ * lots already inside the placed utilities' coverage are built (a ribbon has no service of its own).
+ */
+function buildFringeBelts(ctx, rng) {
+  const world = ctx.world;
+  const power = kindCentres(world, 'power_plant');
+  const water = kindCentres(world, 'water_tower');
+  const nearKind = (list, i, j, radius) => list.some((p) => {
+    const c = world.worldToCell(p.x, p.z);
+    return Math.max(Math.abs(c.i - i), Math.abs(c.j - j)) <= radius;
+  });
+  const isCovered = (i, j) => nearKind(power, i, j, POWER_RADIUS - 1) && nearKind(water, i, j, WATER_RADIUS - 1);
+  let buildings = 0;
+  for (const z of WATERFRONT_Z) {
+    buildings += fillStrip(ctx, rng, { x0: 214, z0: z - 21, x1: 328, z1: z - 12 }, 'r', 1, { pitch: 5, fillChance: 0.8, isCovered });
+    buildings += fillStrip(ctx, rng, { x0: 214, z0: z + 12, x1: 328, z1: z + 21 }, 'r', 1, { pitch: 5, fillChance: 0.8, isCovered });
+  }
+  buildings += fillStrip(ctx, rng, { x0: -502, z0: -214, x1: -493, z1: -166 }, 'r', 1, { pitch: 5, fillChance: 0.8, vertical: true, isCovered });
+  buildings += fillStrip(ctx, rng, { x0: -467, z0: -214, x1: -458, z1: -166 }, 'r', 1, { pitch: 5, fillChance: 0.8, vertical: true, isCovered });
+  // Greenway stubs between downtown and the waterfront: one small park square in each lawn band between the
+  // connector roads (trees/benches/fountain via props), so the belt reads as parkland rather than vacant lawn.
+  // Deliberately small: a long thin band would read as a hedge run and cost real props for little view.
+  for (let k = 0; k + 1 < WATERFRONT_Z.length; k++) {
+    const cz = (WATERFRONT_Z[k] + WATERFRONT_Z[k + 1]) / 2;
+    setParkRect(world, 262, cz - 16, 278, cz + 16);
+  }
+  return buildings;
 }
 
 function connectDistricts(ctx) {
   const world = ctx.world;
-  // Downtown <-> suburb: continue the x=0 avenue spine north.
+  // Downtown <-> suburb: continue the x=0 avenue spine north. (The x=-480 industrial avenue is built by
+  // buildInterchange() before the districts, so it is already continuous highway → suburb → industrial pad.)
   world.addRoad({ x: 0, z: -200 }, { x: 0, z: -220 }, 'avenue');
-  // Industrial <-> suburb.
-  world.addRoad({ x: -480, z: -160 }, { x: -480, z: -220 }, 'street');
-  // (Industrial <-> downtown and downtown <-> waterfront already share nodes on the z=0 spine / the waterfront
-  // connector loop above — see buildIndustrial/buildWaterfront/buildDowntown, all built on the same DOWNTOWN_X /
-  // INDUSTRIAL_X / WATERFRONT_X coordinate space.)
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -575,11 +687,13 @@ function connectDistricts(ctx) {
  * or wall-clock. Returns a stats summary for the builder report. */
 export function buildCity(ctx, rng) {
   const highway = buildHighway(ctx);
+  const interchange = buildInterchange(ctx);
   const downtown = buildDowntown(ctx, rng.fork('downtown'));
   const industrial = buildIndustrial(ctx, rng.fork('industrial'));
   const waterfront = buildWaterfront(ctx, rng.fork('waterfront'));
   const suburb = buildSuburb(ctx, rng.fork('suburb'));
   connectDistricts(ctx);
+  const fringe = buildFringeBelts(ctx, rng.fork('fringe'));
 
   const roadEdges = ctx.world.roads.edges.size;
   const totalBuildings = ctx.world.buildings.size;
@@ -595,12 +709,13 @@ export function buildCity(ctx, rng) {
 
   return {
     highwayEdges: highway.edges.length,
-    downtown, industrial, waterfront, suburb, utilities,
+    interchangeRamps: interchange.ramps,
+    downtown, industrial, waterfront, suburb, utilities, fringeBuildings: fringe,
     roadEdges, totalBuildings, totalParkCells,
   };
 }
 
-/** A small representative slice for `?showcase=demo` — downtown only (see index.js's showcase()). */
+/** A small representative slice for `?showcase=demo&variant=downtown` — the old downtown-only staging. */
 export function buildDowntownOnly(ctx, rng) {
   return buildDowntown(ctx, rng.fork('downtown'));
 }

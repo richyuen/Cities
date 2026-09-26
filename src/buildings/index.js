@@ -45,7 +45,7 @@ const S = {
   ctx: null, group: null, batcher: null, studField: null, indicators: null, fireIndicators: null, fireDrones: null,
   burglaryIndicators: null, patrolCars: null, dynMats: null, rng: null, unsub: [],
   pendingDirty: false, lastEvent: 0, growthAcc: 0, growthTick: 0, growthRng: null,
-  tweens: [], variant: null, closeupTarget: null,
+  tweens: [], variant: null, closeupTarget: null, settling: false,
   levelUpQueue: [], levelUpQueued: null, // null placeholder; set() in init() (needs a real Set instance)
 };
 
@@ -101,7 +101,9 @@ function levelUpBuilding(ctx, id) {
   if (!b || b.level >= 3) return;
   b.level += 1;
   regenerateBuilding(ctx, b);
-  spawnConstructionFlash(ctx, b);
+  // No construction flash while settling the boot/warm-up backlog: those level-ups happened "before the player
+  // was watching"; flashes start only for live growth after `ready`.
+  if (!S.settling) spawnConstructionFlash(ctx, b);
 }
 
 function cellAdjacentToRoad(world, i, j) {
@@ -194,6 +196,27 @@ const api = {
     regenerateBuilding(S.ctx, b);
     S.batcher.flush();
     return true;
+  },
+  /** Boot/warm-up only: apply simulation's current level-up candidates and flush the batcher synchronously, so
+   * the first drawn frame is the finished city instead of a multi-second post-`ready` fill-in. The demo city
+   * calls this at the end of its 600-tick warm-up, while the boot screen is still up (see docs/reviews/demo-r2.md).
+   * One candidate pass only: the model's `growth` list is refreshed per tick, and applying a level changes the
+   * occupancy that made the building a candidate, so a second pass over the same stale list would double-level.
+   * Normal live play keeps the time-sliced LEVEL_UP_BUDGET_MS / REBUILD_BUDGET_MS paths untouched. */
+  settle() {
+    const ctx = S.ctx;
+    if (!ctx) return 0;
+    const sim = ctx.modules.get('simulation');
+    const ids = (sim?.status === 'ok' && typeof sim.api?.getGrowthCandidates === 'function')
+      ? sim.api.getGrowthCandidates() : [];
+    S.settling = true;
+    try {
+      enqueueLevelUps(ctx, ids);
+      drainLevelUps(ctx, Infinity);
+      S.batcher.flush();
+      S.pendingDirty = false;
+    } finally { S.settling = false; }
+    return ids.length;
   },
   stats() {
     const world = S.ctx.world;
@@ -314,7 +337,7 @@ export default {
     S.patrolCars = new PatrolCars();
     S.group.add(S.patrolCars.group);
     S.pendingDirty = false; S.growthAcc = 0; S.growthTick = 0; S.tweens.length = 0; S.closeupTarget = null; S.stageBounds = null;
-    S.levelUpQueue.length = 0; S.levelUpQueued = new Set();
+    S.levelUpQueue.length = 0; S.levelUpQueued = new Set(); S.settling = false;
 
     S.unsub.push(ctx.events.on('building:spawned', ({ building }) => regenerateBuilding(ctx, building)));
     S.unsub.push(ctx.events.on('building:removed', ({ building }) => { S.batcher.remove(building.id); markDirty(); }));

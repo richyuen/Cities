@@ -9,21 +9,67 @@
 // already loaded and its event listeners are live, so a single ctx.world.addRoad/addBuilding/setCell call is
 // enough to trigger roads' mesh rebuild, props' lamp/park population, buildings' geometry generation, zoning's
 // overlay and simulation's bookkeeping — no direct calls into those modules' populate APIs are needed.
+//
+// Wave B5/G8: after the 600-tick warm-up this calls buildings.api.settle() so the city's level-up backlog is
+// applied and merged *before* the boot screen lifts — `ready` means the complete city is on screen, not a
+// half-built one that fills in over the next ~6 s (r1 review item 1).
 import { buildCity, buildDowntownOnly } from './citygen.js';
 
 let S = null;
+const WARM_TICKS = 600;
+
+/** Seed everything both the full game and the showcase need: city, traffic density, transit loop, warm-up and
+ * the synchronous settle that makes the first drawn frame complete. One function so `?showcase=demo` shows the
+ * exact shipped city (r1 review: the old downtown-only showcase never exercised suburb/industrial/waterfront). */
+function seed(ctx, rng) {
+  const stats = buildCity(ctx, rng);
+  // Perf: the full network already saturates traffic's own MAX_POOL (300 cars); a real city this size reads
+  // fine at a lower fraction and it trims real triangle/shadow cost. See the builder report for the full budget.
+  // Wave B2: 0.55 → 0.8 — the whole-game critic read traffic as sparse from wide framing for 4 rounds; 240 cars
+  // (still under the pool cap) reads populated from the air without jamming the street shots.
+  ctx.modules.get('traffic')?.api?.setDensity?.(0.8);
+
+  // Public transport: a starter bus loop around downtown, placed through the transit module's own api (so it
+  // costs money and behaves exactly like a player-built line). The six stops trace a clockwise block loop whose
+  // every turn is a right turn, so lane 0 serves the whole route.
+  const transitApi = ctx.modules.get('transit')?.api;
+  let busStops = 0, busLine = false;
+  if (transitApi) {
+    const stopPts = [[-2, 60], [-2, 160], [-60, 198], [-98, 160], [-98, 60], [-60, 2]];
+    const stopIds = [];
+    for (const [x, z] of stopPts) { const r = transitApi.placeStop(x, z); if (r?.ok) stopIds.push(r.id); }
+    busStops = stopIds.length;
+    if (stopIds.length >= 2) busLine = !!transitApi.createLine(stopIds)?.ok;
+  }
+
+  // Polish (optional per the brief): a freshly-seeded city starts at 0 population/jobs — every building is
+  // empty until simulation ticks enough times to grow occupancy. Warm the (pure, deterministic) economy model
+  // forward a few hundred ticks now, the same way simulation's own showcase() does, so the HUD and building
+  // occupancy already read like a lived-in city on the very first frame instead of "day zero".
+  let levelUps = 0;
+  const simApi = ctx.modules.get('simulation')?.api;
+  if (simApi?.tick) for (let k = 0; k < WARM_TICKS; k++) simApi.tick(true); // silent: milestone rewards apply without boot toasts
+  // The warm-up leaves simulation holding a level-up candidate list for the whole city; apply it and merge the
+  // geometry now (boot screen still up), otherwise buildings pop in for ~6.5 s after `ready` (r1 item 1).
+  levelUps = ctx.modules.get('buildings')?.api?.settle?.() ?? 0;
+  return { stats, busStops, busLine, levelUps };
+}
 
 export default {
   id: 'demo',
   deps: ['terrain', 'environment', 'roads', 'zoning', 'buildings', 'props', 'traffic', 'simulation', 'transit'],
   order: 5,
-  showcaseVariants: ['default'],
+  showcaseVariants: ['default', 'downtown'],
   presets: {
     // Generic 'overview'/'skyline'/'street'/'aerial' (registered by core) already frame downtown-at-origin well;
-    // these are small extras for tooling parity with other modules.
+    // these are the demo's own district framings for tooling parity with other modules.
     'demo:default': () => ({ pos: [560, 620, 780], target: [0, 20, 0], fov: 50 }),
-    'demo:closeup': () => ({ pos: [70, 45, 90], target: [0, 15, 0], fov: 42 }),
     'demo:overview': () => ({ pos: [900, 820, 900], target: [0, 0, -100], fov: 46 }),
+    'demo:closeup': () => ({ pos: [140, 44, 42], target: [40, 14, -60], fov: 42 }),
+    'demo:suburb': () => ({ pos: [250, 200, -120], target: [-60, 0, -430], fov: 46 }),
+    'demo:industrial': () => ({ pos: [-30, 170, 400], target: [-430, 0, 0], fov: 46 }),
+    'demo:waterfront': () => ({ pos: [150, 150, 430], target: [530, 0, 0], fov: 46 }),
+    'demo:highway': () => ({ pos: [-380, 130, -330], target: [-540, 0, -560], fov: 46 }),
   },
 
   async init(ctx) {
@@ -35,43 +81,19 @@ export default {
     }
     const rng = ctx.rng.fork('demo');
     const t0 = performance.now();
-    const stats = buildCity(ctx, rng);
-    // Perf: the full network already saturates traffic's own MAX_POOL (300 cars); a real city this size reads
-    // fine at a lower fraction and it trims real triangle/shadow cost. See the builder report for the full budget.
-    // Wave B2: 0.55 → 0.8 — the whole-game critic read traffic as sparse from wide framing for 4 rounds; 240 cars
-    // (still under the pool cap) reads populated from the air without jamming the street shots.
-    ctx.modules.get('traffic')?.api?.setDensity?.(0.8);
-
-    // Public transport: a starter bus loop around downtown, placed through the transit module's own api (so it
-    // costs money and behaves exactly like a player-built line). The six stops trace a clockwise block loop whose
-    // every turn is a right turn, so lane 0 serves the whole route.
-    const transitApi = ctx.modules.get('transit')?.api;
-    let busStops = 0, busLine = false;
-    if (transitApi) {
-      const stopPts = [[-2, 60], [-2, 160], [-60, 198], [-98, 160], [-98, 60], [-60, 2]];
-      const stopIds = [];
-      for (const [x, z] of stopPts) { const r = transitApi.placeStop(x, z); if (r?.ok) stopIds.push(r.id); }
-      busStops = stopIds.length;
-      if (stopIds.length >= 2) busLine = !!transitApi.createLine(stopIds)?.ok;
-    }
-
-    // Polish (optional per the brief): a freshly-seeded city starts at 0 population/jobs — every building is
-    // empty until simulation ticks enough times to grow occupancy. Warm the (pure, deterministic) economy model
-    // forward a few hundred ticks now, the same way simulation's own showcase() does, so the HUD and building
-    // occupancy already read like a lived-in city on the very first frame instead of "day zero".
-    const simApi = ctx.modules.get('simulation')?.api;
-    if (simApi?.tick) for (let k = 0; k < 600; k++) simApi.tick(true); // silent: milestone rewards apply without boot toasts
-
+    const { stats, busStops, busLine, levelUps } = seed(ctx, rng);
     S = { ctx, stats };
     const ms = (performance.now() - t0).toFixed(1);
-    const pop = simApi?.getStats?.()?.population ?? '?';
-    ctx.log(`[demo] city seeded in ${ms} ms: ${stats.roadEdges} road edges (incl. ${stats.highwayEdges} highway), `
+    const pop = ctx.modules.get('simulation')?.api?.getStats?.()?.population ?? '?';
+    ctx.log(`[demo] city seeded in ${ms} ms: ${stats.roadEdges} road edges (incl. ${stats.highwayEdges} highway, `
+      + `${stats.interchangeRamps} ramps), `
       + `${stats.totalBuildings} buildings (downtown ${stats.downtown.buildings}, industrial ${stats.industrial.buildings}, `
-      + `waterfront ${stats.waterfront.buildings}, suburb ${stats.suburb.buildings}), ${stats.totalParkCells} park cells, `
+      + `waterfront ${stats.waterfront.buildings}, suburb ${stats.suburb.buildings}, fringe ${stats.fringeBuildings}), `
+      + `${stats.totalParkCells} park cells, `
       + `${stats.utilities.power} power plants + ${stats.utilities.water} water towers + `
       + `${stats.utilities.fire} fire depts + ${stats.utilities.police} police stations + `
       + `${stats.utilities.school} schools + ${stats.utilities.hospital} hospitals, `
-      + `${busStops} bus stops + ${busLine ? 1 : 0} bus line, warmed-up population ${pop}`);
+      + `${busStops} bus stops + ${busLine ? 1 : 0} bus line, warmed-up population ${pop}, ${levelUps} settled level-ups`);
   },
 
   dispose() {
@@ -80,12 +102,19 @@ export default {
     S = null;
   },
 
-  /** Small representative slice for `?showcase=demo` tooling parity: downtown only (the runner already called
-   * world.clearContent() before this, and init() above already ran once, seeding + then wiping the full city). */
-  async showcase(ctx, _variant = 'default') {
-    const rng = ctx.rng.fork('demo:showcase');
-    const stats = buildDowntownOnly(ctx, rng);
-    ctx.log(`[demo] showcase: downtown slice, ${stats.buildings} buildings, ${stats.parkCells} park cells`);
+  /** `?showcase=demo` stages the exact shipped city (same seed, warm-up and settle) so the module batch exercises
+   * what the module actually owns; `variant=downtown` keeps the old small downtown slice for tooling closeups. */
+  async showcase(ctx, variant = 'default') {
+    const rng = ctx.rng.fork('demo');
+    if (variant === 'downtown') {
+      const stats = buildDowntownOnly(ctx, rng);
+      ctx.log(`[demo] showcase 'downtown': ${stats.buildings} buildings, ${stats.parkCells} park cells`);
+      return;
+    }
+    const { stats, busStops, busLine, levelUps } = seed(ctx, rng);
+    ctx.log(`[demo] showcase 'default': full city, ${stats.totalBuildings} buildings `
+      + `(suburb ${stats.suburb.buildings}, fringe ${stats.fringeBuildings}), ${busStops} bus stops + ${busLine ? 1 : 0} bus line, `
+      + `${levelUps} settled level-ups`);
   },
 
   api: {

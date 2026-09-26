@@ -60,6 +60,11 @@ export default {
   api: {},                     // public functions other modules may call via ctx.modules.get('roads').api
 };
 ```
+Optional boot hook: a module whose `init()` leaves deferred work (e.g. `buildings` merging a warm-up backlog in
+time-sliced chunks) may expose `api.settle()` — a synchronous drain the seeding module calls once before
+`ready` so the first drawn frame is complete (demo calls `buildings.api.settle()` after its warm-up). Callers
+must use optional chaining: the hook is module-specific, not part of core. It is a single-shot drain, not
+idempotent: a second immediate call can replay the same (stale) candidate list and double-apply.
 `ctx` fields:
 
 | field | type | notes |
