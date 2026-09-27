@@ -1,5 +1,5 @@
 {
-  "updated": "2026-09-27T16:53:49.809Z",
+  "updated": "2026-09-27T18:14:00.929Z",
   "modules": {
     "terrain": {
       "score": 8.5,
@@ -283,22 +283,24 @@
       "updated": "2026-09-27T02:03:29.130Z"
     },
     "disasters": {
-      "score": 7.5,
-      "round": 1,
-      "pass": false,
+      "score": 9,
+      "round": 2,
+      "pass": true,
       "errors": 0,
-      "fps": 142.9,
-      "drawCalls": 551,
+      "fps": 143.6,
+      "drawCalls": 527,
       "issues": [
-        "BILLING 2x: setDisasterCost(pendingCost/TICK_DT) pushes per-game-second into a per-tick slot - two full storms charged exactly 2.000x the 900/unit ledger (35288 charged vs 17644 accrued), Treasury Disaster costs/day row 2x - fix = push pendingCost plain",
-        "funnel not legible as a ground tornado - overview hides it behind the showcase tower, base/debris/dust invisible in all 3 presets, night nearly invisible, no damage tell on buildings (design-deferred per-building visuals = next lever)",
-        "spawn while the clock is paused is invisible (strength 0 -> visible=false until unpause)",
-        "showcase warning icons 1-2 despite servicing (builder claimed one max)",
-        "design says +3 draw calls, measured +5 active (747->752->747)",
-        "verified 1-at-a-time toolbar spawn, SPEED x dt exact (5.5 m/tick, 49.5 m in 4.5 game-s), 4x = 4.40x clock, pause bit-frozen, CORE_R 12/12, OUTER_R 0/411, cost exactly 0 after despawn, repair FIRE_REPAIR_RATE, save/load double-load-safe 51/51 scars, boot hash 4b2ad6f3 x2, batches storm 143.7/6.74/551 idle 142.9/6.77/503 game r25 62.0/15.54/847 all errors 0"
+        "no per-building damage tell (design-parked plan section 5, the city shows no scars - next lever)",
+        "funnel reads as chunky cubes and the dust collar is a flat disc at street level",
+        "loadState caps at MAX_ACTIVE but does not finite-check x/z/dirX/dirZ (crafted dirX:null freezes the funnel, no errors)",
+        "clear() discards <=1 tick of accrued ledger (documented, player-favourable)",
+        "showcase 1-2 warning icons remain (pre-existing stageCity quirk)",
+        "+5 draw calls vs design +3 (documented)",
+        "billing has a one-tick 0.5 game-s lag (totals exact)",
+        "VERIFIED r2 critic: charged 36274.4422 = 40.304936 x 900 (rel 6.2e-15), per-tick exact 3e-11, row 411998/day = perTick x 1200 and back to 0, check-disasters 22/22, hash 98e27b33 x2 + own 26903199 x2, paused spawn age 0.6/str 0.3 visible, crafted 2-tornado save loads 1, batches storm 143.6/6.61/499 idle 143.7/6.73/527 game r27 60.9/15.86/847 all errors 0"
       ],
-      "review": "docs/reviews/disasters-r1-critic.md",
-      "updated": "2026-09-27T16:53:49.808Z"
+      "review": "docs/reviews/disasters-r2-critic.md",
+      "updated": "2026-09-27T18:14:00.929Z"
     }
   },
   "game": {
