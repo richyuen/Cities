@@ -1,5 +1,5 @@
 {
-  "updated": "2026-09-26T17:16:12.277Z",
+  "updated": "2026-09-27T02:03:29.130Z",
   "modules": {
     "terrain": {
       "score": 8.2,
@@ -255,18 +255,17 @@
       "round": 2,
       "pass": true,
       "errors": 0,
-      "fps": 42.5,
-      "drawCalls": 708,
+      "fps": 60.9,
+      "drawCalls": 849,
       "issues": [
-        "perf numbers in this entry are GPU-load-contaminated (external game at 85-98%: B5-vs-baseline under identical load is +0.72ms/shot mean, +3.61ms worst, idle-equivalent ~12ms)",
         "showcase transit stops stale (no bus loop in module batch)",
         "fringe belts barely exist (5 buildings)",
         "suburb lot occupancy ~14%, uniform level-2",
-        "settle() +4s boot under load"
+        "settle() is a synchronous ~2s boot stall (covered by the boot screen, total idle boot 1.06s faster than pre-B5)"
       ],
       "review": "docs/reviews/demo-r2-critic.md",
       "wave": 0,
-      "updated": "2026-09-26T17:16:12.276Z"
+      "updated": "2026-09-27T02:03:29.130Z"
     }
   },
   "game": {

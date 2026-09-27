@@ -37,24 +37,27 @@ Independent critic round: **`docs/reviews/demo-r2-critic.md` — 8.6 / 10 PASS**
 
 ## Verification (real numbers)
 
-Showcase batch (`node tools/critic.mjs --module demo --round 2`, 7 presets × 4 tods, 28 shots):
+Showcase batch (`node tools/critic.mjs --module demo --round 2`, 7 presets × 4 tods, 28 shots — idle GPU re-run,
+`shots/demo/r2-idle`):
 
 ```
-minFps=42.5  maxGpuMs=16.02  maxDrawCalls=708  maxTris=21.3M  errors=0
+minFps=109.5  maxGpuMs=8.83  maxDrawCalls=708  maxTris=21.3M  errors=0
 ```
 
-Full game (`node tools/critic.mjs --game --round 10`, 20 shots, same load as the baseline batch below):
+Full game (`node tools/critic.mjs --game --round 10`, 20 shots — idle GPU re-run, `shots/game/r10-idle`):
 
 ```
-B5:             minFps=39.8  maxGpuMs=24.75  maxDrawCalls=849  errors=0
-pre-B5 baseline:minFps=40.2  maxGpuMs=23.85  maxDrawCalls=855  errors=0     (shots/game/r10-base-load)
-idle reference: minFps=54.5  maxGpuMs=10.77  maxDrawCalls=855  errors=0     (shots/game/r9, pre-B5)
+B5 idle:         minFps=60.9  maxGpuMs=15.50  maxDrawCalls=849  errors=0   (budget ✓ fps/gpu/calls)
+pre-B5 idle:     minFps=54.5  maxGpuMs=10.77  maxDrawCalls=855  errors=0   (shots/game/r9)
+boot (idle):     readyMs 11,062 vs 12,121 pre-B5 — the full-city `settle()` still boots faster overall
 ```
 
-**Load caveat (honest):** every capture above ran while the user had a GPU-heavy game at 85–98 % GPU; the same
-pre-B5 code measures 23.85 ms under that load vs 10.77 ms idle in r9. The valid comparison is B5 vs baseline
-under identical load: **mean +0.72 ms per shot, worst shot +3.61 ms (`closeup-18`), draw calls −9, minFps −0.4
-(noise)** — idle-equivalent worst ≈ 12 ms ≤ 20 ms. All 48 official shots are `errors: []`.
+The first B5 batches (`shots/demo/r2`, `shots/game/r10`) were captured while an external game held the GPU at
+85–98 %; every absolute number there is ≈2× an idle machine. The pre-B5 baseline under the same load
+(`shots/game/r10-base-load`: maxGpuMs 23.85) gives the no-regression comparison — **mean +0.72 ms/shot,
+worst +3.61 ms, −9 draws, minFps −0.4 (noise)**. The idle re-run above supersedes both: B5's extra 22 % of
+buildings and 60 % of population cost **+4.7 ms on the worst shot** on an idle GPU and still land inside the
+≥50 fps / ≤20 ms / ≤1500 calls budget with `errors: []` in all 48 official shots.
 
 Functional checks (scripted against the live server):
 
@@ -81,9 +84,11 @@ The independent critic's ranked remaining issues (`docs/reviews/demo-r2-critic.m
    everything) — the wide downtown↔waterfront belt still reads as lawn.
 3. Suburb lot occupancy is ~14 % of zoned area and all 151 buildings are level 2 after the warm-up+settle —
    uniform mid-rise height, still half-green from the air.
-4. Boot is +4 s under load from the synchronous `settle()` (covered by the boot screen; ~2× the design's risk
-   estimate).
+4. Boot cost: `settle()` is synchronous (~2 s of merge on an idle machine, covered by the boot screen); idle
+   `readyMs` is 11,062 vs the pre-B5 12,121, so total boot did not regress — but the merge is a hard stall
+   inside the boot screen if the city ever grows much further.
 5. Unlit zoning plates dominate the night city now that the zoned area is larger — cross-module, not demo-owned.
 
-Performance attribution for anyone re-testing: re-run both batches (`--game` and the stashed pre-B5 tree) back
-to back on an idle GPU; the pre-B5 idle reference is `shots/game/r9` and the B5 idle expectation is ≈12 ms max.
+Performance attribution for anyone re-testing: the idle B5 numbers are `shots/demo/r2-idle` and
+`shots/game/r10-idle`; the idle pre-B5 reference is `shots/game/r9` (maxGpuMs 10.77); the loaded pair is
+`shots/game/r10` vs `shots/game/r10-base-load` (same external GPU load, +0.72 ms/shot mean).
