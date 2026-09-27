@@ -119,6 +119,11 @@ export const CSS = `
 .lc-stat-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--lc-muted); }
 .lc-stat-value { font-size: 16px; }
 .lc-stat-value.neg { color: #ff8a80; }
+/* Statistics entry point (C3): same plate row as the stat chips, with a hover state so it reads as a button */
+.lc-stat-chart { border: 1px solid transparent; transition: background 0.12s; }
+.lc-stat-chart:hover { background: var(--lc-bg-hover); border-color: rgba(255, 255, 255, 0.12); }
+.lc-stat-chart[hidden] { display: none; }
+.lc-stat-ico.chart { background: linear-gradient(180deg, #5d6570, #2f343c); }
 
 /* ---------- top-right: weather, clock, speed, tod, settings ---------- */
 .lc-top-right { right: 16px; top: 18px; height: 62px; display: flex; align-items: center; gap: 6px; padding: 0 8px 0 14px; }
@@ -262,6 +267,20 @@ export const CSS = `
   background: linear-gradient(180deg, rgba(255,255,255,0.16), rgba(255,255,255,0.06)); border: 1px solid rgba(0,0,0,0.5);
   box-shadow: 0 2px 0 rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.25); }
 .lc-pol-open:hover { background: var(--lc-bg-hover); }
+
+/* ---------- statistics modal (C3/F6) ---------- */
+.lc-stats { display: flex; flex-direction: column; }
+.lc-stats-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.lc-stats-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: 8px; font-size: 12px; font-weight: 700; color: var(--lc-muted);
+  background: rgba(0,0,0,0.28); border: 1px solid rgba(0,0,0,0.5); box-shadow: inset 0 1px 0 rgba(255,255,255,0.06); transition: background 0.12s, color 0.12s; }
+.lc-stats-chip:hover { color: var(--lc-text); background: var(--lc-bg-hover); }
+.lc-stats-chip.on { color: var(--lc-text); background: linear-gradient(180deg, rgba(255,255,255,0.18), rgba(255,255,255,0.07)); box-shadow: inset 0 1px 0 rgba(255,255,255,0.2), 0 1px 0 rgba(0,0,0,0.4); }
+.lc-stats-chip i { width: 10px; height: 10px; border-radius: 3px; flex: none; box-shadow: inset 0 1px 0 rgba(255,255,255,0.45), 0 1px 0 rgba(0,0,0,0.4); opacity: 0.35; }
+.lc-stats-chip.on i { opacity: 1; }
+.lc-stats-chip b { font-variant-numeric: tabular-nums; font-weight: 800; color: #ffe27a; }
+.lc-stats-chip:not(.on) b { color: var(--lc-muted); opacity: 0.6; }
+.lc-stats-chart { display: block; border-radius: 8px; background: rgba(0,0,0,0.32); box-shadow: inset 0 1px 3px rgba(0,0,0,0.55), inset 0 -1px 0 rgba(255,255,255,0.06); }
+.lc-stats-foot { display: flex; justify-content: space-between; gap: 8px; margin-top: 8px; font-size: 11px; font-weight: 700; color: var(--lc-muted); }
 .lc-info-body .lc-bar.debt > i { background: linear-gradient(180deg, #ff8078, var(--lc-red) 55%, #a81812); }
 .lc-slider-row { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; }
 .lc-slider-row > .lc-slider-head { display: flex; justify-content: space-between; font-weight: 700; }

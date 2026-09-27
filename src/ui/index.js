@@ -3,6 +3,7 @@ import { CSS } from './styles.js';
 import { Hud, h, fmtMoney } from './hud.js';
 import { Minimap } from './minimap.js';
 import { stageBackdrop, sampleInfoCard } from './showcase.js';
+import { drawStatsChart, STATS_SERIES } from './statsChart.js';
 
 const initialState = () => ({
   ctx: null, hud: null, style: null, minimap: null, offs: [], rng: null,
@@ -31,6 +32,7 @@ function simApi(ctx) { const m = ctx.modules.get('simulation'); return m?.status
 function viewsApi(ctx) { const m = ctx.modules.get('views'); return m?.status === 'ok' ? m.api : null; }
 const pct = (v) => `${Math.round(Math.max(0, Math.min(1, v || 0)) * 100)}%`;
 const num = (v) => Math.round(v || 0).toLocaleString('en-US');
+const pad2 = (n) => (n < 10 ? '0' : '') + n;
 
 /** One toast per new burglary. The sim exposes only the current id list (no event), so diff it against the
  * previous tick's set — a burglary that merely persists doesn't re-toast. */
@@ -164,6 +166,59 @@ function openStatModal(key) {
   if (key === 'money') S.hud.openModal('Treasury', buildTreasuryModal(S.ctx));
   else if (key === 'pop') S.hud.openModal('Population', buildPopulationModal(S.ctx));
   else if (key === 'jobs') S.hud.openModal('Jobs', buildJobsModal(S.ctx));
+  else if (key === 'stats') {
+    const m = buildStatisticsModal(S.ctx);
+    S.hud.openModal('Statistics', m.body, { onClose: m.dispose });
+  }
+}
+
+/** Statistics modal (C3/F6): charts the model's own ≤300-tick history — no new simulation data. The chart is drawn
+ *  once on open (so a paused game still shows the whole window) and again on every `sim:tick` while the modal is
+ *  open; `Hud.openModal`'s onClose unsubscribes when it closes, Escape or is replaced. */
+function buildStatisticsModal(ctx) {
+  const sim = simApi(ctx);
+  if (!sim) return { body: h('p', {}, 'Simulation unavailable.') };
+  const perDayTicks = (ctx.clock?.dayLengthSec || 600) * (sim.ticksPerSecond || 2);
+  const selected = new Set(STATS_SERIES.map((s) => s.id));
+  const canvas = h('canvas', { class: 'lc-stats-chart' });
+  const chips = h('div', { class: 'lc-stats-chips' });
+  const windowLbl = h('span', {}, '');
+  const values = new Map();
+  const valueOf = (id, st, bud) => {
+    switch (id) {
+      case 'population': return num(st.population);
+      case 'jobs': return num(st.jobs);
+      case 'net': return `${fmtMoney(bud.perDay.net)} / day`;
+      case 'happiness': return pct(st.happiness);
+      case 'traffic': return pct(st.traffic);
+      default: return `${pct(st.demand.r)} · ${pct(st.demand.c)} · ${pct(st.demand.i)}`;
+    }
+  };
+  const redraw = () => {
+    const hist = sim.getHistory();
+    drawStatsChart(canvas, hist, { selected: [...selected], perDayTicks });
+    const st = sim.getStats(), bud = sim.getBudget();
+    for (const s of STATS_SERIES) values.get(s.id).textContent = valueOf(s.id, st, bud);
+    const secs = Math.round(hist.length / (sim.ticksPerSecond || 2));
+    windowLbl.textContent = `last ${hist.length} ticks · ~${Math.floor(secs / 60)}:${pad2(secs % 60)} of city time`;
+  };
+  for (const s of STATS_SERIES) {
+    const val = h('b', {}, '—');
+    const chip = h('button', { class: 'lc-stats-chip on', 'data-series': s.id, title: `Toggle ${s.label}` },
+      h('i', { style: `background:${s.color}` }), h('span', {}, s.label), val);
+    chip.addEventListener('click', () => {
+      if (selected.has(s.id)) selected.delete(s.id); else selected.add(s.id);
+      chip.classList.toggle('on', selected.has(s.id));
+      redraw();
+    });
+    values.set(s.id, val);
+    chips.append(chip);
+  }
+  const off = ctx.events.on('sim:tick', redraw);
+  const body = h('div', { class: 'lc-stats' }, chips, canvas,
+    h('div', { class: 'lc-stats-foot' }, windowLbl, h('span', {}, 'one point per simulation tick')));
+  redraw();
+  return { body, dispose: off };
 }
 
 /** Milestone modal: every level with its threshold, progress, one-time reward and claimed state. Reward-only —
@@ -318,6 +373,7 @@ export default {
     S.hud.setQuality(S.settings.quality);
     S.hud.setStuds(S.settings.studs);
     S.hud.setViewsAvailable(!!viewsApi(ctx));
+    S.hud.setStatsAvailable(!!simApi(ctx));
     S.hud.setActiveView(viewsApi(ctx)?.getView?.() ?? null);
     S.minimap = new Minimap(ctx, S.hud.minimapCanvas, moveCameraTo);
 

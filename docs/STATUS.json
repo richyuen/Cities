@@ -1,5 +1,5 @@
 {
-  "updated": "2026-09-27T03:13:23.066Z",
+  "updated": "2026-09-27T03:50:12.880Z",
   "modules": {
     "terrain": {
       "score": 8.2,
@@ -75,19 +75,20 @@
     },
     "ui": {
       "score": 8.9,
-      "round": 3,
+      "round": 4,
       "pass": true,
       "errors": 0,
-      "fps": 85.3,
+      "fps": 143.2,
       "drawCalls": 75,
       "issues": [
-        "Dezone grey reads faintly unlit among saturated zone icons at a glance",
-        "RCI R/C/I labels low-contrast on dark track",
-        "showcase paints road cells directly (documented core-request workaround, not a real-game defect)"
+        "series toggle chips lack aria-pressed (visual-only state)",
+        "bottom-left 0% and -2:30 labels nearly touch in the chart corner (panel-inherited)",
+        "R/C demand lines overdraw when values coincide",
+        "r3 nits (dezone grey, RCI contrast) unchanged"
       ],
-      "review": "docs/reviews/ui-r3.md",
+      "review": "docs/reviews/ui-r4-critic.md",
       "wave": 0,
-      "updated": "2026-09-17T05:30:23.847Z"
+      "updated": "2026-09-27T03:50:12.879Z"
     },
     "audio": {
       "score": 8.6,

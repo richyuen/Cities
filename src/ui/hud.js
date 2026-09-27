@@ -57,6 +57,7 @@ export class Hud {
     this.qualityBtns = {};
     this.sliderDragging = false;
     this.oneWay = false;
+    this._modalOnClose = null;
     this._tip = { mode: null, x: -1, y: -1, w: 0, hgt: 0 };
     this._mood = -1;
     this._weatherKey = '';
@@ -84,13 +85,17 @@ export class Hud {
     this.pop = stat('pop', 'Population', icons.pop, () => this.on.statClick?.('pop'));
     this.jobs = stat('jobs', 'Jobs', icons.jobs, () => this.on.statClick?.('jobs'));
     this.happy = stat('happy', 'Happiness', icons.happy(2));
+    // Statistics entry point (C3): a fifth row in the same plate; hidden until index.js confirms a live simulation.
+    this.statsBtn = h('button', { class: 'lc-stat lc-stat-chart', title: 'Statistics — charts the last 300 simulation ticks', hidden: 'hidden', onclick: () => this.on.statClick?.('stats') },
+      h('div', { class: 'lc-stat-ico chart', html: icons.chart }),
+      h('div', { class: 'lc-stat-txt' }, h('div', { class: 'lc-stat-label' }, 'Statistics')));
     // city level chip next to the name: the milestone entry point (click opens the milestone modal)
     this.levelChip = h('button', { class: 'lc-city-level', title: 'City milestones', onclick: () => this.on.level?.() }, 'Hamlet');
     root.append(h('div', { class: 'lc-panel lc-top-left' },
       h('div', { class: 'lc-studs' }),
       h('div', { class: 'lc-brand' }, h('div', { html: icons.logo }), h('div', { class: 'lc-city' }, h('div', { class: 'lc-city-name' }, cityName, this.levelChip), h('div', { class: 'lc-city-sub' }, 'Blox Skylines'))),
       h('div', { class: 'lc-divider' }),
-      this.money.el, this.pop.el, this.jobs.el, this.happy.el));
+      this.money.el, this.pop.el, this.jobs.el, this.happy.el, this.statsBtn));
 
     // ---- top-right: weather, clock, speed, tod slider, gear ----
     this.weatherIco = h('div', { html: icons.sun });
@@ -242,6 +247,8 @@ export class Hud {
   }
 
   // ---------- stats ----------
+  /** Show/hide the Statistics entry point (index.js hides it when the simulation module is unavailable). */
+  setStatsAvailable(on) { this.statsBtn.hidden = !on; }
   setMoney(v) { setText(this.money.value, fmtMoney(v)); setClass(this.money.value, 'neg', v < 0); }
   setPop(v) { setText(this.pop.value, fmtInt(v)); }
   setJobs(v) { setText(this.jobs.value, fmtInt(v)); }
@@ -369,6 +376,7 @@ export class Hud {
   dispose() {
     for (const id of this.toastTimers) clearTimeout(id);
     this.toastTimers.clear();
+    if (this._modalOnClose) { const cb = this._modalOnClose; this._modalOnClose = null; cb(); } // e.g. the stats modal's sim:tick subscription
     if (this._outside) window.removeEventListener('pointerdown', this._outside, true);
     window.removeEventListener('resize', this._onResize);
     this.el.remove();
@@ -380,12 +388,19 @@ export class Hud {
     this.info.classList.add('open');
   }
 
-  openModal(title, bodyNode) {
+  openModal(title, bodyNode, { onClose = null } = {}) {
+    if (this.modalOverlay.classList.contains('open')) this._modalOnClose?.(); // replacing an open modal must tear its body down first
+    this._modalOnClose = onClose;
     setText(this.modalTitle, title);
     this.modalBody.replaceChildren(bodyNode);
     this.modalOverlay.classList.add('open');
   }
-  closeModal() { this.modalOverlay.classList.remove('open'); }
+  closeModal() {
+    const cb = this._modalOnClose;
+    this._modalOnClose = null;
+    this.modalOverlay.classList.remove('open');
+    cb?.();
+  }
   isModalOpen() { return this.modalOverlay.classList.contains('open'); }
   isInfoPanelOpen() { return this.info.classList.contains('open'); }
 

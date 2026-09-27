@@ -167,6 +167,11 @@ export const icons = {
     <path d="M13.8 10.8 20 17" stroke="${INK}" stroke-width="5" stroke-linecap="round"/><path d="M13.8 10.8 20 17" stroke="#cfd6de" stroke-width="2.4" stroke-linecap="round"/>
     <circle cx="10" cy="7.5" r="5.2" fill="#a6d8ec" stroke="${INK}" stroke-width="2.4"/><circle cx="10" cy="7.5" r="3.2" fill="none" stroke="#fff" stroke-width="2" stroke-dasharray="6 20" stroke-linecap="round"/>`),
   keyboard: svg(`<rect x="2.5" y="6" width="19" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M6 10h1.5M9.5 10H11M13 10h1.5M16.5 10H18M6 13.5h1.5M9 13.5h6M16.5 13.5H18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>`),
+  // statistics: a dark plate with a rising yellow line — the HUD's Statistics entry point (C3)
+  chart: svg(`<rect x="2.5" y="3" width="19" height="18" rx="2.5" fill="${ASPHALT}" ${O}/>
+    <path d="M5.5 17.8h13" stroke="${GREY}" stroke-width="1.8" stroke-linecap="round"/>
+    <path d="M5.6 14.6 9.4 9.8l4 3.4 5.2-6" fill="none" stroke="${YEL}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="9.4" cy="9.8" r="1.5" fill="${WHITE}"/><circle cx="13.4" cy="13.2" r="1.5" fill="${WHITE}"/><circle cx="18.6" cy="7.2" r="1.5" fill="${WHITE}"/>`),
   map: svg(`<path d="M3 6.5 9 4l6 2.5 6-2.5v13l-6 2.5-6-2.5-6 2.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M9 4v13M15 6.5v13" stroke="currentColor" stroke-width="2"/>`),
   // monochrome eye: "show this layer on the map" affordance on the coverage rows
   eye: svg(`<path d="M2.4 12s3.6-6.2 9.6-6.2S21.6 12 21.6 12s-3.6 6.2-9.6 6.2S2.4 12 2.4 12z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" fill="currentColor"/>`),
