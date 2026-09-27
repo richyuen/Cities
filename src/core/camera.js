@@ -11,12 +11,33 @@ export class CameraPresets {
     // roads are hardcoded around the origin, isn't loaded — see terrain/index.js generate()).
     const dc = () => world.downtownCenter || { x: 0, z: 0 };
     // Core presets are functions so they track terrain height (and downtown center) at apply time.
-    this.register('overview', () => ({ pos: [dc().x + W * 0.28, W * 0.34, dc().z + D * 0.42], target: [dc().x, 0, dc().z] }));
-    this.register('aerial', () => ({ pos: [dc().x, W * 0.6, dc().z + D * 0.25], target: [dc().x, 0, dc().z] }));
-    this.register('skyline', () => ({ pos: [dc().x + W * 0.05, 45 + gh(dc().x + W * 0.05, dc().z + D * 0.46), dc().z + D * 0.46], target: [dc().x, 25, dc().z] }));
-    this.register('night', () => ({ pos: [dc().x + W * 0.05, 45 + gh(dc().x + W * 0.05, dc().z + D * 0.46), dc().z + D * 0.46], target: [dc().x, 25, dc().z] }));
+    // V5 beauty-shot pass (B4 levers): skyline is a closer 3/4 hero framing, closeup picks the tallest building near
+    // downtown and frames it 3/4 (falling back to the old fixed offset on empty worlds), overview/aerial tightened.
+    this.register('overview', () => ({ pos: [dc().x + W * 0.20, W * 0.27, dc().z + D * 0.30], target: [dc().x, 0, dc().z] }));
+    this.register('aerial', () => ({ pos: [dc().x, W * 0.44, dc().z + D * 0.18], target: [dc().x, 0, dc().z] }));
+    this.register('skyline', () => ({ pos: [dc().x + 230, 55 + gh(dc().x + 230, dc().z + 300), dc().z + 300], target: [dc().x, 22, dc().z] }));
+    this.register('night', () => ({ pos: [dc().x + 230, 55 + gh(dc().x + 230, dc().z + 300), dc().z + 300], target: [dc().x, 22, dc().z] }));
     this.register('street', () => ({ pos: [4, 1.7 + gh(4, 60), 60], target: [4, 4, -20] }));
-    this.register('closeup', () => ({ pos: [dc().x + 22, 12 + gh(dc().x + 22, dc().z + 26), dc().z + 26], target: [dc().x, 6, dc().z] }));
+    this.register('closeup', () => {
+      const c = dc();
+      let hero = null, best = 0;
+      for (const b of this.world.buildings.values()) {
+        const h = b.height || 10;
+        if (h <= best) continue;
+        const p = this.world.cellToWorld(b.i + ((b.w || 1) - 1) / 2, b.j + ((b.d || 1) - 1) / 2);
+        if (Math.hypot(p.x - c.x, p.z - c.z) > 420) continue;
+        best = h; hero = { b, x: p.x, z: p.z, h };
+      }
+      if (hero) {
+        const cs = this.world.cellSize || 8;
+        const diag = Math.hypot((hero.b.w || 1) * cs, (hero.b.d || 1) * cs);
+        const dist = Math.max(diag * 1.9 + 12, hero.h * 0.65, 20);
+        const gy = gh(hero.x, hero.z);
+        const y = Math.min(hero.h * 0.4, dist * 0.5) + 2;
+        return { pos: [hero.x + dist * 0.62, gy + y, hero.z + dist * 0.62], target: [hero.x, gy + hero.h * 0.3, hero.z], fov: 45 };
+      }
+      return { pos: [c.x + 22, 12 + gh(c.x + 22, c.z + 26), c.z + 26], target: [c.x, 6, c.z] };
+    });
   }
 
   register(name, p) { this.presets.set(name, p); }

@@ -343,7 +343,7 @@ export class Hud {
   isSettingsOpen() { return this.settings.classList.contains('open'); }
   setQuality(q) { for (const [k, b] of Object.entries(this.qualityBtns)) b.classList.toggle('on', k === q); }
   setStuds(on) { this.studSwitch.classList.toggle('on', !!on); }
-  setHudVisible(v) { this.el.classList.toggle('lc-hidden', !v); this.hudSwitch.classList.toggle('on', !!v); }
+  setHudVisible(v, capture = false) { this.el.classList.toggle('lc-hidden', !v); this.el.classList.toggle('lc-capture', !!capture && !v); this.hudSwitch.classList.toggle('on', !!v); }
 
   // ---------- notifications / info / tooltip / status ----------
   notify(text, kind = 'info', { sticky = false, ms = 4500 } = {}) {

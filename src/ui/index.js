@@ -259,9 +259,9 @@ function setSpeed(mode) {
 
 function selectTool(tool) { S.ctx.events.emit('tool:selected', { tool: tool ?? null }); }
 
-function setHudVisible(v) {
+function setHudVisible(v, capture = false) {
   S.hudVisible = !!v;
-  S.hud.setHudVisible(S.hudVisible);
+  S.hud.setHudVisible(S.hudVisible, capture);
 }
 
 /** One-way road build mode (HUD chip / O key). Persists across tool changes; tools applies it to each road drag. */
@@ -382,6 +382,9 @@ export default {
     S.hud.setActiveView(viewsApi(ctx)?.getView?.() ?? null);
     S.minimap = new Minimap(ctx, S.hud.minimapCanvas, moveCameraTo);
     S.minimap.setActiveView(viewsApi(ctx)?.getView?.() ?? null);
+    // beauty-shot mode: ?hud=0 starts with the HUD hidden (same state as pressing H) so tools can capture clean frames
+    const hudParam = ctx.params.get('hud');
+    if (hudParam === '0' || hudParam === 'false' || hudParam === 'off') setHudVisible(false, true);
 
     // initial state
     applyStats(ctx.world.stats);

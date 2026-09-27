@@ -24,7 +24,7 @@ export function parseArgs(argv) {
   return a;
 }
 
-export function buildUrl({ showcase, variant, seed = 1, tod, preset, weather, extra = {} }) {
+export function buildUrl({ showcase, variant, seed = 1, tod, preset, weather, hud, extra = {} }) {
   const u = new URL(BASE_URL + '/');
   if (showcase) u.searchParams.set('showcase', showcase);
   if (variant) u.searchParams.set('variant', variant);
@@ -32,6 +32,7 @@ export function buildUrl({ showcase, variant, seed = 1, tod, preset, weather, ex
   if (tod !== undefined) u.searchParams.set('tod', String(tod));
   if (preset) u.searchParams.set('preset', preset);
   if (weather) u.searchParams.set('weather', weather);
+  if (hud !== undefined) u.searchParams.set('hud', String(hud));
   u.searchParams.set('fixeddt', '1');
   for (const [k, v] of Object.entries(extra)) u.searchParams.set(k, String(v));
   return u.toString();

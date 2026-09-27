@@ -374,4 +374,5 @@ export const CSS = `
 /* ---------- show-ui pill (when HUD hidden) ---------- */
 .lc-show-ui { position: absolute; right: 16px; top: 16px; pointer-events: auto; display: none; padding: 7px 12px; border-radius: 9px; font-weight: 800; font-size: 12px; color: #3a2800; }
 .lc-hud.lc-hidden .lc-show-ui { display: block; }
+.lc-hud.lc-hidden.lc-capture .lc-show-ui { display: none !important; }
 `;
