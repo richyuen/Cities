@@ -7,27 +7,34 @@
 // are no longer connected is removed with a notification rather than left broken.
 import * as THREE from 'three';
 import { LaneRouter, buildRouteKeys } from './route.js';
-import { buildStopKits, buildRibbonGeometry } from './models.js';
+import { buildStopKits, buildRibbonGeometry, LETTER_TILE_COUNT } from './models.js';
 import { createPanel } from './panel.js';
 
 const STOP_COST = 400;
 const LINE_COST = 2000;
 const UPKEEP_PER_BUS = 0.35;      // $/tick
 const UPKEEP_PER_LINE = 0.25;     // $/tick
+// Fares (C5): ridership is riders/day, so the fare is $/rider/day. The design's placeholder (0.004) produced ~$21/day
+// next to a ~$2/tick network upkeep — invisible; tuned so fares cover roughly half the network at full coverage.
+const FARE_PER_RIDER = 0.35;      // $/rider/day
+const RIDERS_PER_BLOCK = 60;      // one queued rider block per this many riders/day at a stop
+const RIDER_MAX = 6;              // queued rider blocks per stop (pool size = MAX_STOPS * RIDER_MAX)
 const STOP_RADIUS_CELLS = 9;      // Chebyshev cells of walk-up coverage per stop
 const MAX_STOPS = 64;
 const MIN_STOP_SPACING_M = 14;    // two stops closer than this read as one (and make a pointless route leg)
 const ROUTE_RETRY_MS = 60;        // wait past traffic's own 30 ms graph rebuild before recomputing routes
 const LINE_COLORS = ['brightRed', 'brightBlue', 'brightYellow', 'brightGreen', 'brightOrange', 'brightPurple', 'mediumAzur', 'lime'];
 const LINE_LETTERS = 'ABCDEFGH';
+const RIDER_COLORS = ['brightRed', 'brightBlue', 'brightGreen', 'brightOrange', 'mediumAzur', 'lime', 'brightYellow'];
 
 const S = {
   ctx: null, rng: null, group: null, router: null,
   stops: new Map(), lines: new Map(), nextStopId: 1, nextLineId: 1,
   draft: null, hoverStopId: null,
-  coverage: 0, ridership: 0, upkeep: 0, busCount: 0,
+  coverage: 0, ridership: 0, upkeep: 0, fareRevenue: 0, busCount: 0,
   coverageDirty: true, routesDirty: false, lastRoadEvent: 0, lastCoverageAt: 0,
   stopMeshes: null, ribbons: null, draftMesh: null, kits: null,
+  riderMesh: null, faceTiles: null,
   panel: null, unsub: [],
 };
 
@@ -139,7 +146,7 @@ function createLine(stopIds, { silent = false } = {}) {
   if (stopIds.length < 2) return { ok: false, reason: 'A bus line needs at least 2 stops' };
   const idx = S.lines.size;
   const line = {
-    id: S.nextLineId++, name: lineNameFor(idx), color: lineColorFor(idx),
+    id: S.nextLineId++, name: lineNameFor(idx), color: lineColorFor(idx), letterIdx: idx,
     stopIds: stopIds.slice(), keys: [],
   };
   S.lines.set(line.id, line);
@@ -263,6 +270,13 @@ function pushSim() {
   if (!sim) return;
   if (typeof sim.setTransitCoverage === 'function') safe(() => sim.setTransitCoverage(S.coverage));
   if (typeof sim.setTransitUpkeep === 'function') safe(() => sim.setTransitUpkeep(S.upkeep));
+  if (typeof sim.setTransitFareRevenue === 'function') safe(() => sim.setTransitFareRevenue(S.fareRevenue));
+}
+
+/** Fare income for the current ridership (riders/day × $/rider/day → $/tick at 2 ticks/s, like panelData's upkeep). */
+function updateFare() {
+  const dayLength = S.ctx?.clock?.dayLengthSec || 600;
+  S.fareRevenue = S.ridership * FARE_PER_RIDER / (dayLength / 0.5);
 }
 
 /** Hand every line to traffic (which builds the loop paths + spawns buses) and refresh upkeep. */
@@ -324,6 +338,20 @@ function buildVisuals(ctx) {
     ring: mk(kits.ringGeo, kits.ringMat, 'transit-stop-ring'),
   };
   S.stopMeshes.ring.castShadow = false;
+  // Route-letter tiles (C5): the face geometry carries a per-instance `aUvOffset` (tile / 9); refreshStops()
+  // writes each stop's line letter. One material, one draw call — no texture array.
+  S.stopMeshes.face.geometry = kits.faceGeo.clone();
+  S.faceTiles = new THREE.InstancedBufferAttribute(new Float32Array(MAX_STOPS), 1);
+  S.faceTiles.setUsage(THREE.DynamicDrawUsage);
+  S.stopMeshes.face.geometry.setAttribute('aUvOffset', S.faceTiles);
+  // Queued riders (C5): one pooled instanced mesh, ≤ RIDER_MAX minifig blocks per stop, positions static.
+  S.riderMesh = new THREE.InstancedMesh(kits.riderGeo, kits.riderMat, MAX_STOPS * RIDER_MAX);
+  S.riderMesh.name = 'transit-riders';
+  S.riderMesh.count = 0;
+  S.riderMesh.frustumCulled = false;
+  S.riderMesh.castShadow = true;
+  S.riderMesh.receiveShadow = false;
+  group.add(S.riderMesh);
   S.ribbons = new THREE.Group();
   S.ribbons.name = 'transit-lines';
   group.add(S.ribbons);
@@ -355,6 +383,7 @@ function refreshStops() {
     pole.setMatrixAt(n, _mat4);
     sign.setMatrixAt(n, _mat4);
     face.setMatrixAt(n, _mat4);
+    if (S.faceTiles) S.faceTiles.setX(n, (line && line.letterIdx !== undefined ? Math.min(LINE_LETTERS.length - 1, line.letterIdx) : LETTER_TILE_COUNT - 1) / LETTER_TILE_COUNT);
     const hovered = S.hoverStopId === s.id;
     _scale.set(hovered ? 1.18 : 1, 1, hovered ? 1.18 : 1);
     _mat4.compose(_pos, _q, _scale);
@@ -369,6 +398,40 @@ function refreshStops() {
     m.instanceMatrix.needsUpdate = true;
     if (m.instanceColor) m.instanceColor.needsUpdate = true;
   }
+  if (S.faceTiles) S.faceTiles.needsUpdate = true;
+  refreshRiders();
+}
+
+/** Queue visuals (C5): deterministic minifig blocks on the sidewalk behind each stop, count scaling with the stop's
+ *  share of ridership (1 block ≈ RIDERS_PER_BLOCK riders/day, cap RIDER_MAX). No agent sim, no rng — colours pick
+ *  from the stop id, positions from the stop's rot. */
+function refreshRiders() {
+  const mesh = S.riderMesh;
+  if (!mesh || !S.stopMeshes) return;
+  const perLine = S.lines.size ? S.ridership / S.lines.size : 0;
+  let n = 0;
+  for (const s of S.stops.values()) {
+    let share = 0;
+    for (const id of s.lineIds) { const line = S.lines.get(id); if (line) share += perLine / Math.max(1, line.stopIds.length); }
+    const count = Math.max(0, Math.min(RIDER_MAX, Math.round(share / RIDERS_PER_BLOCK)));
+    for (let k = 0; k < count; k++) {
+      const a = s.rot || 0;
+      // line the queue along the stop's local X (parallel to the carriageway, on the pavement) instead of behind it
+      const lx = (0.3 + 0.24 * Math.floor(k / 2)) * (k % 2 ? 1 : -1), lz = -0.12;
+      const x = s.x + lx * Math.cos(a) + lz * Math.sin(a);
+      const z = s.z - lx * Math.sin(a) + lz * Math.cos(a);
+      _pos.set(x, s.y, z);
+      _q.setFromAxisAngle(_upAxis, a);
+      _mat4.compose(_pos, _q, _one);
+      mesh.setMatrixAt(n, _mat4);
+      _col.set(colorOf(RIDER_COLORS[(s.id * 7 + k) % RIDER_COLORS.length]));
+      mesh.setColorAt(n, _col);
+      n++;
+    }
+  }
+  mesh.count = n;
+  mesh.instanceMatrix.needsUpdate = true;
+  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
 }
 
 /** Per-line ribbon meshes (one draw call per line), built from the router's lane/turn geometry. */
@@ -466,6 +529,7 @@ function panelData() {
   return {
     lines: panelRows(), coverage: S.coverage, ridership: S.ridership, buses: S.busCount,
     upkeepDay: S.upkeep * (dayLength / 0.5),
+    fareDay: S.fareRevenue * (dayLength / 0.5),
   };
 }
 
@@ -586,6 +650,9 @@ export default {
       ctx.events.on('sim:tick', (p) => {
         const pop = p?.stats?.population || 0;
         S.ridership = Math.round(pop * S.coverage * 0.18);
+        updateFare();
+        pushSim();
+        refreshRiders();
         if (S.panel) S.panel.update(panelData());
       }),
       ctx.events.on('time:changed', () => updateNightLook()),
@@ -636,9 +703,10 @@ export default {
       S.ctx.scene.remove(S.group);
     }
     S.kits = null; S.stopMeshes = null; S.ribbons = null; S.draftMesh = null;
+    S.riderMesh = null; S.faceTiles = null;
     S.panel?.dispose(); S.panel = null;
     S.stops.clear(); S.lines.clear(); S.draft = null; S.hoverStopId = null;
-    S.nextStopId = 1; S.nextLineId = 1; S.coverage = 0; S.ridership = 0; S.upkeep = 0; S.busCount = 0;
+    S.nextStopId = 1; S.nextLineId = 1; S.coverage = 0; S.ridership = 0; S.upkeep = 0; S.fareRevenue = 0; S.busCount = 0;
     S.coverageDirty = true; S.routesDirty = false;
   },
 
@@ -668,10 +736,14 @@ export default {
     const ids = [sA, sB, sC, sD].filter(Boolean).map((s) => s.id);
     if (ids.length >= 2) {
       const idx = S.lines.size;
-      const line = { id: S.nextLineId++, name: lineNameFor(idx), color: lineColorFor(idx), stopIds: ids, keys: [] };
+      const line = { id: S.nextLineId++, name: lineNameFor(idx), color: lineColorFor(idx), letterIdx: idx, stopIds: ids, keys: [] };
       S.lines.set(line.id, line);
       recomputeLine(line);
     }
+    // Stage a plausible ridership so the queue visuals read in the module showcase (no simulation module here to
+    // fill `S.ridership` from sim:tick); the real game always drives it from population × coverage.
+    S.ridership = 1200;
+    updateFare();
     refreshLineMembership();
     refreshStops();
     refreshRibbons();

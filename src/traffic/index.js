@@ -366,9 +366,11 @@ const presets = {
 // pool vehicles: they queue in the same lane buckets as cars, stop at the same lights, and cast the same
 // shadows — only their turn choice and stop dwell are scripted.
 
-/** Nearest point on a polyline ({pts,cum}) to (x,z) → { s, x, y, z, dist } or null. */
-function nearestOnPath(pd, x, z) {
-  let best = null;
+/** Nearest point on a polyline ({pts,cum}) to (x,z) → { s, x, y, z, dist } or null. With `fromS`, prefer the
+ *  nearest hit at or after that arc position (the next pass of a loop) and fall back to the nearest hit before it
+ *  (wrap-around) — this is what lets a stop visited twice on a figure-eight board at its second pass (C5). */
+function nearestOnPath(pd, x, z, fromS = 0) {
+  let best = null, bestAny = null;
   const pts = pd.pts, cum = pd.cum;
   for (let i = 1; i < pts.length; i++) {
     const a = pts[i - 1], b = pts[i];
@@ -378,11 +380,11 @@ function nearestOnPath(pd, x, z) {
     u = Math.max(0, Math.min(1, u));
     const px = a.x + dx * u, pz = a.z + dz * u;
     const d = Math.hypot(px - x, pz - z);
-    if (!best || d < best.dist) {
-      best = { s: cum[i - 1] + (cum[i] - cum[i - 1]) * u, x: px, y: a.y + (b.y - a.y) * u, z: pz, dist: d };
-    }
+    const hit = { s: cum[i - 1] + (cum[i] - cum[i - 1]) * u, x: px, y: a.y + (b.y - a.y) * u, z: pz, dist: d };
+    if ((!bestAny || d < bestAny.dist)) bestAny = hit;
+    if (hit.s >= fromS - 1e-6 && (!best || d < best.dist)) best = hit;
   }
-  return best;
+  return best || bestAny;
 }
 
 /** Build one route from a raw def: concat every key's cached path into a single loop, then project the stops.
@@ -407,11 +409,12 @@ function buildRoute(def) {
   if (pts.length < 2) return null;
   const routePd = { pts, cum, total };
   const stops = [];
+  let fromS = 0; // monotonic projection: a repeated stop takes the NEXT pass of the loop, not the same nearest point
   for (const s of def.stops || []) {
-    const hit = nearestOnPath(routePd, s.x, s.z);
-    if (hit) stops.push({ s: hit.s, x: hit.x, y: hit.y, z: hit.z });
+    const hit = nearestOnPath(routePd, s.x, s.z, fromS);
+    if (hit) { stops.push({ s: hit.s, x: hit.x, y: hit.y, z: hit.z }); fromS = hit.s + 1e-3; }
   }
-  stops.sort((a, b) => a.s - b.s);
+  stops.sort((a, b) => a.s - b.s); // safety net only: the projections above are already monotonic
   return { id: def.id, color: def.color, colorObj: new THREE.Color(def.color || '#0D69AB'), keys: keys.slice(), keyStart, total, stops, busCount: 0 };
 }
 
@@ -573,6 +576,9 @@ export default {
   update(dt, ctx) {
     if (S.dirty && performance.now() - S.lastEvent > 30) rebuildGraph();
     if (S.paused || !S.graph.ready) return;
+    // C4 decision: the game clock owns pause. Freeze cars (and the congestion sampler) with it — a paused city
+    // must not keep driving; the views congestion layer then legitimately holds its last sample.
+    if (ctx.clock?.paused) return;
     S.simTime += dt;
     resolveGaps(S.activeList, S.graph);
     // Transit priority: a route bus within a stop-line's reach holds its arm green (see LaneGraph.requestPriority).

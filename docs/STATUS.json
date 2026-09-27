@@ -1,5 +1,5 @@
 {
-  "updated": "2026-09-27T05:59:22.819Z",
+  "updated": "2026-09-27T07:12:11.293Z",
   "modules": {
     "terrain": {
       "score": 8.2,
@@ -58,36 +58,35 @@
     },
     "simulation": {
       "score": 8.6,
-      "round": 4,
+      "round": 5,
       "pass": true,
       "errors": 0,
-      "fps": 143.4,
+      "fps": 143.2,
       "drawCalls": 103,
       "issues": [
-        "free_transit trafficMul multiplies the whole traffic target (design says the transit reduction): -25% traffic even at zero coverage",
-        "Tourism Campaign effect line wraps to two right-aligned lines in the 380px modal",
-        "no toggle-transition shot and policies are absent from the module showcase batch",
-        "stale CRIME_BASE-floor comment under Neighborhood Watch"
+        "fare line verified: budget == getTransitFareRevenue == ridership x 0.35/1200 after two ticks (0.057750 at 198 riders), perDay x1200, one-tick lag measured (budget_n == model_n-1), zero coverage gives exactly 0 with no NaN",
+        "diff is the fare line only (income.transit + income sum + perDay), player behaviour unchanged",
+        "carry-over from r4: free_transit trafficMul coverage gate, Tourism effect-text wrap, stale crime comment"
       ],
-      "review": "docs/reviews/simulation-r4-critic.md",
+      "review": "docs/reviews/transit-r3-critic.md",
       "wave": 0,
-      "updated": "2026-09-27T03:13:23.066Z"
+      "updated": "2026-09-27T07:12:02.089Z"
     },
     "ui": {
       "score": 8.9,
-      "round": 5,
+      "round": 6,
       "pass": true,
       "errors": 0,
       "fps": 143.6,
       "drawCalls": 75,
       "issues": [
-        "C4 fold-ins verified live: statistics chips set aria-pressed (true/off/false round-trip), -2:30 x-axis tick dropped (chart labels -2:00..now clear of the 0% strip label)",
-        "minimap footer names the active view but the minimap legend stays base-map while tinted (cosmetic follow-up)",
-        "ui showcase Traffic row reads 0% while other sim-fed stats read '—' (showcase-only)"
+        "Treasury rows verified live: Transit fares / day and Transit upkeep / day present in the modal text and readable in treasury-fares.png, consistent with budget perDay and net",
+        "no layout/contrast regression in the ui batch",
+        "carry-over from views r2: minimap legend stays base-map while tinted"
       ],
-      "review": "docs/reviews/views-r2-critic.md",
+      "review": "docs/reviews/transit-r3-critic.md",
       "wave": 0,
-      "updated": "2026-09-27T05:59:22.819Z"
+      "updated": "2026-09-27T07:12:11.292Z"
     },
     "audio": {
       "score": 8.6,
@@ -171,35 +170,40 @@
     },
     "traffic": {
       "score": 8.6,
-      "round": 5,
+      "round": 6,
       "pass": true,
       "errors": 0,
-      "fps": 140.8,
-      "drawCalls": 109,
+      "fps": 142.4,
+      "drawCalls": 108,
       "issues": [
-        "new read-only congestion grid API traffic.getCongestionGrid/getCongestionAt (2 Hz + lazy sampling, deterministic, adds no draw calls, grid stays in [0,1] with no NaN across weather/tod/road churn)",
-        "cells that stop being roads decay ~0.85/sample until sampled (invisible, non-road cells are never painted)",
-        "pre-existing: traffic keeps driving while the clock is paused (C4 cross-module seam in integrator todo)"
+        "C5 pause guard verified end to end: clock pause freezes cars and resume moves them (check-transit 244 frozen, check-views 25/25 with the flipped stable-while-paused assertion)",
+        "batch staging pauses the clock via setTime, so every batch PNG now captures frozen traffic - intended gameplay, but do not read vehicle positions as live from batch shots",
+        "paused road edits/setDensity leave stale vehicle meshes until resume (writeInstances skipped while paused: 0 API vehicles vs 1295 drawn)"
       ],
-      "review": "docs/reviews/views-r2-critic.md",
+      "review": "docs/reviews/transit-r3-critic.md",
       "wave": 0,
-      "updated": "2026-09-27T05:58:05.820Z"
+      "updated": "2026-09-27T07:11:53.239Z"
     },
     "transit": {
       "score": 8.5,
-      "round": 2,
+      "round": 3,
       "pass": true,
       "errors": 0,
-      "fps": 143.4,
-      "drawCalls": 122,
+      "fps": 143.6,
+      "drawCalls": 125,
       "issues": [
-        "ground ring radii fixed (no road overhang) but ring still sinks below 0.17m pavement studs which bite notches out of the band",
-        "pole cap interpenetrates the sign plate (grey brick day, black notch night) exposed by the new macro preset, which itself crops off the ring",
-        "C5 gaps not counted"
+        "figure-eight fix PARTIAL: A->B->A duplicate stop endless-dwells (buildRouteKeys doubles the closing loop to 1137m, then stopAhead half-loop wrap fails on the 681m seam gap so the bus dwell-cycles at the repeated stop) - API/save-only, the line tool refuses duplicate stops",
+        "queue blocks at 4+ riders stand inside the ring and are sliced by the lifted plane (showcase stop macro)",
+        "a new line after deleting an earlier one reuses letterIdx=lines.size, giving two live lines the same name/colour/letter (Line B reproduced)",
+        "paused edits diverge from the screen (setDensity(0) shows 0 API vehicles while 1295 instances are drawn until resume)",
+        "fares accrue from stop coverage with no line (inherited)",
+        "panel per-line ridership computed but not rendered",
+        "night plate letters read as dark glyphs on a glowing plate",
+        "r2 nits FIXED (ring above studs, cap on plate top, stop preset frames the ring)"
       ],
-      "review": "docs/reviews/transit-r2-critic.md",
+      "review": "docs/reviews/transit-r3-critic.md",
       "wave": 0,
-      "updated": "2026-09-25T15:30:02.352Z"
+      "updated": "2026-09-27T07:11:43.941Z"
     },
     "civics": {
       "score": 8.5,

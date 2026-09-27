@@ -105,13 +105,12 @@ try {
   check(on.mapDiff.diff / on.mapDiff.total > 0.05, `minimap tints for the traffic view (${Math.round((on.mapDiff.diff / on.mapDiff.total) * 100)}% of pixels changed)`);
   await page.screenshot({ path: path.join(OUT, 'traffic-view-day.png') });
 
-  // traffic keeps flowing while the clock is paused (pre-existing: traffic's own pause flag is api-driven),
-  // so the layer's grid must keep tracking it — that is the "correct while paused" contract here.
+  // transport is clock-aware since C5: with the clock paused the cars hold and the congestion grid is stable
   const pausedA = await page.evaluate(() => window.__c4.gridHash());
   await page.evaluate(() => window.__city.frames(90));
   const pausedB = await page.evaluate(() => window.__c4.gridHash());
   check(pausedA.mx > 0 && pausedB.mx > 0, `grid still reports queues while the clock is paused (max ${pausedB.mx})`);
-  check(pausedA.hash !== pausedB.hash, 'layer keeps tracking live traffic while the clock is paused (grid advances)');
+  check(pausedA.hash === pausedB.hash, 'grid and painted layer are stable while the clock is paused (traffic holds)');
 
   // land + power polish shots (numeric checks below)
   await page.evaluate(() => window.__c4.snapMap('traffic'));

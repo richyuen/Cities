@@ -49,19 +49,88 @@ export function buildStopKits(ctx) {
   ring.translate(0, 0.2, 0);
   const ringGeo = ring;
 
+  // Queued riders (C5): a stacked minifig block — legs + torso + head — ~0.47 m tall, instanced per stop. Static
+  // positions (no agent sim); per-instance colour is picked deterministically from the stop id, no rng.
+  const legs = bb(0.16, 0.15, 0.1, 0.01);
+  legs.translate(0, 0.075, 0);
+  const torso = bb(0.2, 0.2, 0.12, 0.01);
+  torso.translate(0, 0.25, 0);
+  const head = new THREE.SphereGeometry(0.075, 8, 6);
+  head.translate(0, 0.43, 0);
+  const riderGeo = merge([legs, torso, head]);
+
   const m = ctx.materials;
   return {
     poleGeo,
     signGeo,
     faceGeo,
     ringGeo,
+    riderGeo,
     poleMat: m.plastic('darkStoneGrey', { roughness: 0.42, clearcoat: 0.4 }),
     signMat: tintEmissiveByInstanceColor(m.plastic('white', { instanceColor: true, roughness: 0.38, clearcoat: 0.55, emissive: 'white', emissiveIntensity: 0 })),
     // The white face is the lit element at night (the coloured sign plate glows in its own line colour instead —
-    // see tintEmissiveByInstanceColor); emissiveIntensity is driven from updateNightLook().
-    faceMat: m.plastic('white', { roughness: 0.32, clearcoat: 0.6, emissive: 'white', emissiveIntensity: 0 }),
+    // see tintEmissiveByInstanceColor); emissiveIntensity is driven from updateNightLook(). C5: the face also
+    // carries the route-letter atlas (tile per line, see makeLetterAtlas + tileFaceMaterial).
+    faceMat: tileFaceMaterial(m.plastic('white', { roughness: 0.32, clearcoat: 0.6, emissive: 'white', emissiveIntensity: 0, map: makeLetterAtlas(ctx) })),
+    riderMat: m.plastic('white', { instanceColor: true, roughness: 0.5, clearcoat: 0.25 }),
     ringMat: tintEmissiveByInstanceColor(m.plastic('white', { instanceColor: true, roughness: 0.45, clearcoat: 0.3, emissive: 'white', emissiveIntensity: 0, side: THREE.DoubleSide })),
   };
+}
+
+/** Route-letter atlas (C5): 9 horizontal tiles, 32 px — A–H in the module's line colours on white, plus a grey
+ *  dash for an unassigned stop. 288×32, built once; `refreshStops()` writes each stop's tile index into the
+ *  `aUvOffset` instance attribute and `tileFaceMaterial` shifts `vMapUv.x` by it, so all stops still share one
+ *  material and one draw call. Returns null when a canvas is unavailable (the white plate is the fallback). */
+const LETTERS = 'ABCDEFGH';
+export const LETTER_TILE_COUNT = 9;
+export function makeLetterAtlas(ctx) {
+  const colors = ['brightRed', 'brightBlue', 'brightYellow', 'brightGreen', 'brightOrange', 'brightPurple', 'mediumAzur', 'lime'];
+  try {
+    const tile = 32, n = LETTER_TILE_COUNT;
+    const canvas = document.createElement('canvas');
+    canvas.width = tile * n; canvas.height = tile;
+    const g = canvas.getContext('2d');
+    if (!g) return null;
+    g.fillStyle = '#ffffff'; g.fillRect(0, 0, canvas.width, canvas.height);
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.font = '900 21px "Arial Rounded MT Bold","Segoe UI Black","Arial Black",sans-serif';
+    for (let i = 0; i < LETTERS.length; i++) {
+      g.fillStyle = ctx.materials.palette[colors[i % colors.length]] || '#2b3036';
+      g.fillText(LETTERS[i], i * tile + tile / 2, tile / 2 + 1);
+    }
+    g.fillStyle = '#9aa3ad'; g.fillRect((n - 1) * tile + 9, tile / 2 - 1.5, 14, 3); // neutral dash
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.magFilter = THREE.LinearFilter;
+    tex.minFilter = THREE.LinearFilter;
+    tex.needsUpdate = true;
+    return tex;
+  } catch (_) { return null; }
+}
+
+/** Patch a material to sample the letter atlas at the tile given by the per-instance `aUvOffset` (0..1 = tile / 9).
+ *  Also shifts the emissive sample, so at night the letters glow in their line colour instead of a flat white plate. */
+function tileFaceMaterial(mat) {
+  const atlas = mat.map;
+  if (!atlas) return mat;
+  const U = 1 / LETTER_TILE_COUNT;
+  mat.emissiveMap = atlas; // same atlas, shifted by the same instance offset below; keyed per-material by plastic()'s cache
+  mat.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute float aUvOffset;\nvarying float vTileOff;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvTileOff = aUvOffset;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying float vTileOff;')
+      .replace('#include <map_fragment>', `#ifdef USE_MAP
+	vec4 sampledDiffuseColor = texture2D( map, vec2( vMapUv.x * ${U.toFixed(6)} + vTileOff, vMapUv.y ) );
+	diffuseColor *= sampledDiffuseColor;
+#endif`)
+      .replace('#include <emissivemap_fragment>', `#ifdef USE_EMISSIVEMAP
+	vec4 emissiveColor = texture2D( emissiveMap, vec2( vEmissiveMapUv.x * ${U.toFixed(6)} + vTileOff, vEmissiveMapUv.y ) );
+	totalEmissiveRadiance *= emissiveColor.rgb;
+#endif`);
+  };
+  return mat;
 }
 
 /** three multiplies the *diffuse* term by the instance colour but not the emissive term, so an instanced white

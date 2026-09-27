@@ -52,9 +52,10 @@ export function createPanel(dom, { onDelete, onFocus } = {}) {
 
   return {
     root,
-    update({ lines = [], coverage = 0, ridership = 0, buses = 0, upkeepDay = 0 } = {}) {
+    update({ lines = [], coverage = 0, ridership = 0, buses = 0, upkeepDay = 0, fareDay = 0 } = {}) {
       sum.innerHTML = `<span>Coverage <b>${Math.round(coverage * 100)}%</b></span><span>Riders/day <b>${ridership.toLocaleString('en-US')}</b></span>`
-        + `<span>Buses <b>${buses}</b></span><span>Upkeep <b>$${Math.round(upkeepDay).toLocaleString('en-US')}/day</b></span>`;
+        + `<span>Buses <b>${buses}</b></span><span>Upkeep <b>$${Math.round(upkeepDay).toLocaleString('en-US')}/day</b></span>`
+        + `<span>Fares <b>$${Math.round(fareDay).toLocaleString('en-US')}/day</b></span>`;
       if (!lines.length) {
         list.innerHTML = '<div class="tr-empty">No bus lines yet.</div>';
         return;

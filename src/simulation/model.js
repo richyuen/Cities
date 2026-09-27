@@ -164,7 +164,7 @@ export class SimModel {
     this.newCandidates = [];                          // ids that became candidates this tick
     this.roadAdjCoverage = null;
     this.unserved = [];                                // building ids missing road, power, or water
-    this.budget = { income: { r: 0, c: 0, i: 0, total: 0 }, expenses: { roads: 0, buildings: 0, utilities: 0, transit: 0, policies: 0, total: 0 }, net: 0 };
+    this.budget = { income: { r: 0, c: 0, i: 0, transit: 0, total: 0 }, expenses: { roads: 0, buildings: 0, utilities: 0, transit: 0, policies: 0, total: 0 }, net: 0 };
     this.debt = 0;                                    // 0..1 service degradation from a negative treasury
     this.wealth = 0;                                  // 0..1 bonus from a healthy treasury
     this.bankruptTicks = 0;                            // consecutive ticks with debt saturated at 1.0
@@ -175,6 +175,7 @@ export class SimModel {
     this.crime = 0;                                    // 0..1, slow city-wide crime level (see step())
     this.transitCoverage = 0;                          // 0..1, share of zoned capacity near a bus stop (transit pushes)
     this.transitUpkeep = 0;                            // $/tick, bus line + bus upkeep (transit pushes)
+    this.transitFare = 0;                              // $/tick, rider fare income (transit pushes, C5)
   }
 
   _blankStats() {
@@ -575,11 +576,11 @@ export class SimModel {
       if (!u.onFire && u.damage > 0) u.damage = Math.max(0, u.damage - FIRE_REPAIR_RATE);
     }
     const expPol = fx.upkeep;   // flat $/tick per active policy (not scaled by the scenario upkeepMul)
-    const income = incR + incC + incI, expenses = expRoads + expBld + expUtil + this.transitUpkeep + expPol;
+    const income = incR + incC + incI + this.transitFare, expenses = expRoads + expBld + expUtil + this.transitUpkeep + expPol;
     this.money += income - expenses;
     if (this.bankrupt && this.money < BANKRUPT_FLOOR) this.money += (BANKRUPT_FLOOR - this.money) * BANKRUPT_SPRING;
     const bg = this.budget;
-    bg.income.r = incR; bg.income.c = incC; bg.income.i = incI; bg.income.total = income;
+    bg.income.r = incR; bg.income.c = incC; bg.income.i = incI; bg.income.transit = this.transitFare; bg.income.total = income;
     bg.expenses.roads = expRoads; bg.expenses.buildings = expBld; bg.expenses.utilities = expUtil;
     bg.expenses.transit = this.transitUpkeep;
     bg.expenses.policies = expPol;
@@ -642,7 +643,7 @@ export class SimModel {
     return {
       perTick: { income: { ...bg.income }, expenses: { ...bg.expenses }, net: bg.net },
       perDay: {
-        income: { r: bg.income.r * perDay, c: bg.income.c * perDay, i: bg.income.i * perDay, total: bg.income.total * perDay },
+        income: { r: bg.income.r * perDay, c: bg.income.c * perDay, i: bg.income.i * perDay, transit: bg.income.transit * perDay, total: bg.income.total * perDay },
         expenses: {
           roads: bg.expenses.roads * perDay, buildings: bg.expenses.buildings * perDay,
           utilities: bg.expenses.utilities * perDay, transit: bg.expenses.transit * perDay,

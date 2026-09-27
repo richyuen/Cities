@@ -102,6 +102,9 @@ const api = {
   /** Bus network upkeep in $/tick, pushed by transit; shows up as its own budget expense line. */
   setTransitUpkeep(v) { S.model.transitUpkeep = Math.max(0, Number(v) || 0); },
   getTransitUpkeep() { return S.model.transitUpkeep; },
+  /** Rider fare income in $/tick, pushed by transit; shows up as its own budget income line (C5). */
+  setTransitFareRevenue(v) { S.model.transitFare = Math.max(0, Number(v) || 0); },
+  getTransitFareRevenue() { return S.model.transitFare; },
   /** Ignite a building by id (any kind). Returns false if not found or already on fire. */
   igniteBuilding(id) { return S.model.igniteBuilding(id); },
   /** ids of buildings currently on fire. */
