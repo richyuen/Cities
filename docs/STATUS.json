@@ -1,5 +1,5 @@
 {
-  "updated": "2026-09-27T18:14:00.929Z",
+  "updated": "2026-09-27T21:00:05.168Z",
   "modules": {
     "terrain": {
       "score": 8.5,
@@ -305,22 +305,23 @@
   },
   "game": {
     "score": 8.8,
-    "round": 23,
+    "round": 30,
     "pass": true,
     "issues": [
-      "B4 r23 critic batch 61.8/15.76/847 errors 0 - pixel-identical to builder r22 (meanAbs<=0.16) so no regression vs the 8.8 record",
-      "3x fresh-load weather-first-command clean (overview rain 0.8/0.85, aerial fog 0.7)",
-      "blind set 2 is 0/5 unanimous (0-15, set1 identical) - critic's own picks matched A,A,A,B,A and the loss reasons are image-consistent",
-      "top lever: preset composition (skyline ~55-70% empty field, overview/aerial data-map, closeup clips facade) - recompose around hero subjects",
-      "cheapest win: HUD-hide/beauty mode (judges counted UI chrome)",
-      "remaining levers: close-range micro-detail density, traffic/prop density bias to arterials",
-      "minor: transit route ribbon reads debug-red at dusk/night, dawn presets face away from the sunrise"
+      "LOOP c0 baseline: game r30 72.0/13.34/844 errors 0",
+      "drift vs r29 meanAbs 0.073 (worst 0.333), hero shots vs v5 meanAbs 0.005",
+      "baseline is shots/game/r30 + shots/beauty/r30",
+      "blind sets 1-3 all 0/5 (set3 corrected by reason audit)",
+      "set4 pending cycles 1-3 with counterbalanced sides",
+      "next levers per docs/LOOP.md: L1 hero framing, L2 diorama detail, L3 cinematic depth, L4 density toward camera, L5 defects, L6 module >=9 pushes",
+      "r28/r29/r30 is the comparable game line",
+      "batches <= r27 are pixel-incomparable after the V5 preset change"
     ],
-    "judges": "set1: judge1 0-5; judge2 0-5; judge3 0-5; overall 0-15 | set2: identical 0-5/0-5/0-5 overall 0-15 (3/3 unanimous, 0/5); critic's own independent picks matched all five; pair bytes == sources, seed-11 shuffle reproduced, no leak evidence",
+    "judges": "set1 0-15 (3x0-5); set2 0-15 identical (theirs-on-A 4/5 flagged); set3 0-15 after pair-04 reason audit correction; loop protocol now balances sides and audits reasons per pair (docs/LOOP.md section 3); baseline r30 72.0/13.34/844 errors 0",
     "errors": 0,
-    "fps": 61.8,
-    "drawCalls": 847,
-    "review": "docs/reviews/game-r22-critic.md",
-    "updated": "2026-09-27T15:31:02.933Z"
+    "fps": 72,
+    "drawCalls": 844,
+    "review": "docs/reviews/loop-c0.md",
+    "updated": "2026-09-27T21:00:05.168Z"
   }
 }

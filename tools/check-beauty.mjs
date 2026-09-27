@@ -8,9 +8,10 @@
 //    blind set-3 reference, all `errors: []`.
 import fs from 'node:fs';
 import path from 'node:path';
-import { openApp } from './shot.mjs';
+import { openApp, parseArgs } from './shot.mjs';
 
-const OUT = 'shots/beauty/v5';
+const a = parseArgs(process.argv.slice(2));
+const OUT = a.out || 'shots/beauty/v5';
 fs.rmSync(OUT, { recursive: true, force: true });
 fs.mkdirSync(OUT, { recursive: true });
 const results = [];
