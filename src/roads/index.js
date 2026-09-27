@@ -376,10 +376,12 @@ async function makeMaterials(ctx) {
     normalMap = pbr?.normalMap || null;
   } catch (_) { normalMap = null; }
   const mats = {
-    // a step darker than darkStoneGrey, glossy ABS: reads as a road plate at noon too. Higher clearcoat + a
-    // stronger normal map break-up + a boosted envMapIntensity keep a visible sheen from the sky/PMREM env
-    // even when the sun is straight overhead and throws no specular streak into frame (round 2 nit).
-    surface: ctx.materials.plastic('#4A4E52', { roughness: 0.38, clearcoat: 0.55, clearcoatRoughness: 0.2, normalMap, normalScale: 0.35, envMapIntensity: 1.35 }),
+    // a step darker than darkStoneGrey, glossy ABS: reads as a road plate at noon too. B3 atmosphere: the r2 nit
+    // was that the sheen VARIED with the viewing angle across presets (clearcoat 0.55 + envMapIntensity 1.35 at
+    // grazing angles), not that it was too dim — so the clearcoat/env terms came down to 0.35/1.1 with a slightly
+    // rougher plate (0.38 → 0.44), which keeps the noon read flat and sun-independent while staying dark and wet
+    // at low sun. A/B against the roads r4 shots before changing any of these three numbers.
+    surface: ctx.materials.plastic('#4A4E52', { roughness: 0.44, clearcoat: 0.35, clearcoatRoughness: 0.22, normalMap, normalScale: 0.35, envMapIntensity: 1.1 }),
     path: ctx.materials.plastic('tan', { roughness: 0.5, clearcoat: 0.3 }),
     curb: ctx.materials.plastic('mediumStoneGrey'),
     sidewalk: ctx.materials.plastic('lightStoneGrey'),

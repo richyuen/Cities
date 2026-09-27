@@ -9,6 +9,13 @@ export const clamp01 = (x) => Math.max(0, Math.min(1, x));
 export const mix3 = (a, b, t, out = [0, 0, 0]) => { out[0] = lerp(a[0], b[0], t); out[1] = lerp(a[1], b[1], t); out[2] = lerp(a[2], b[2], t); return out; };
 export const luminance = (c) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
 
+/** Push a colour away from its own luminance (chroma boost). k > 1 raises saturation, k = 1 is a no-op. */
+export function saturate(c, k) {
+  const l = luminance(c);
+  for (let i = 0; i < 3; i++) c[i] = Math.max(0, l + (c[i] - l) * k);
+  return c;
+}
+
 /** Piecewise-linear colour ramp: keys = [[x, [r,g,b]], ...] sorted by x. */
 export function ramp(keys, x, out = [0, 0, 0]) {
   if (x <= keys[0][0]) { const c = keys[0][1]; out[0] = c[0]; out[1] = c[1]; out[2] = c[2]; return out; }
@@ -33,6 +40,8 @@ const CLOUD_AMB = [[-18, [0.010, 0.014, 0.030]], [-9, [0.028, 0.030, 0.060]], [-
 const CLOUD_LIT = [[-9, [0.000, 0.000, 0.000]], [-3, [0.450, 0.130, 0.040]], [0, [1.000, 0.420, 0.150]], [4, [1.050, 0.620, 0.320]], [10, [0.800, 0.660, 0.500]], [25, [0.600, 0.580, 0.540]], [90, [0.560, 0.550, 0.520]]];
 // overcast deck (uniform grey stratus, brightness tracks elevation)
 const DECK = [[-18, [0.006, 0.008, 0.014]], [-9, [0.020, 0.022, 0.034]], [-3, [0.120, 0.105, 0.115]], [2, [0.240, 0.230, 0.245]], [10, [0.400, 0.410, 0.440]], [25, [0.520, 0.540, 0.580]], [90, [0.560, 0.580, 0.620]]];
+/** Raw ramps, exported for the atmosphere check (tools/check-atmosphere.mjs) to measure the low-sun boost against. */
+export const SKY_RAMPS = { ZENITH, HORIZON_AWAY, HORIZON_SUN, GLOW, SUN_DISC, CLOUD_AMB, CLOUD_LIT, DECK };
 
 const _t = [0, 0, 0];
 
@@ -54,6 +63,16 @@ export function skyParams(e, wf, out = {}) {
   p.sunDisc = ramp(SUN_DISC, e, p.sunDisc || [0, 0, 0]);
   p.cloudAmb = ramp(CLOUD_AMB, e, p.cloudAmb || [0, 0, 0]);
   p.cloudLit = ramp(CLOUD_LIT, e, p.cloudLit || [0, 0, 0]);
+  // B3 atmosphere: low-sun chroma boost. The clear-sky ramps are already saturated in linear RGB, but ACES
+  // compresses them toward cream at dawn/dusk (r4/effects-r2 finding: the sky is identically pale with effects
+  // on/off, so it is environment's tone). Push the sun-side horizon, the away horizon and the glow away from their
+  // own luminance while the sun is low; noon and night are untouched (dawn factor 0 above 22°).
+  const dawn = 1 - smoothstep(6, 22, e);
+  if (dawn > 0) {
+    saturate(p.horizonSun, 1 + 0.5 * dawn);
+    saturate(p.horizonAway, 1 + 0.2 * dawn);
+    saturate(p.glow, 1 + 0.3 * dawn);
+  }
   const deck = ramp(DECK, e, _t);
   // overcast: the whole sky collapses toward a grey deck; the sun glow is a diffuse bright patch, no disc
   const deckL = luminance(deck);

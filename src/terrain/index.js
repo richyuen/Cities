@@ -129,13 +129,17 @@ function generate(variant) {
 function closeupSpot() {
   const data = S.data;
   const z = 2.4; // on a stud row (multiple of 0.8)
-  // stand east of downtown on the low side, looking west (along the stud rows) up the plateau terraces
+  // stand east of downtown on the low side, looking west (along the stud rows) up the plateau terraces.
+  // B3 atmosphere (terrain r6 lever): the old framing put the eye at +4.2 m 13 m out with a 30 m target — a grazing
+  // view that foreshortened the 0.8 m risers into hairlines. The eye now sits at +6.5 m with the target 60 m west
+  // and +2.2 m, which keeps the near stud rows prominent but shows several riser bands at play distance. A/B'd
+  // against 5 candidate framings (shots/atmosphere/b3/terrain-framing-*.png).
   let xe = 420;
   for (let x = 640; x > 120; x -= 8) {
     if (data.surfaceH(x - 8, z) > data.surfaceH(x, z) + 1e-3) { xe = x; break; }
   }
-  const px = xe + 13, tx = xe - 30;
-  return { pos: [px, data.surfaceH(px, z) + 4.2, z], target: [tx, data.surfaceH(tx, z) + 0.6, z], fov: 48 };
+  const px = xe + 8, tx = xe - 60;
+  return { pos: [px, data.surfaceH(px, z) + 6.5, z], target: [tx, data.surfaceH(tx, z) + 2.2, z], fov: 40 };
 }
 
 function waterSpot() {

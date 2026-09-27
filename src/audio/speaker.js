@@ -295,15 +295,19 @@ export function buildSpeakerScene(ctx, { variant = 'default', rng } = {}) {
   patchStuds(studMat, { uStudFade: { value: studFade } });
   studMesh.material = studMat;
 
-  // puddle tiles: a blue-tinted glass tile plus a fixed-intensity fresnel rim (see patchPuddle) so they read as
-  // glossy reflective water even from the steep aerial preset, where physical dielectric reflectance at normal
-  // incidence is naturally low and a plain clearcoat tile just looks like a flat pale rectangle.
+  // puddle tiles: a blue-tinted glass tile plus a fresnel rim (see patchPuddle) so they read as glossy reflective
+  // water from any angle, including the steep aerial preset where a dielectric's normal-incidence reflectance is
+  // naturally low. B3 atmosphere: the r3 review read "tinted tiles" — so the physical reflection does the work now
+  // (envMapIntensity 1.2 → 2.6, roughness 0.015 → 0.05) and the rim is only a soft edge cue (was a fixed 0.25 +
+  // 0.9·rim additive wash that flattened the tile into a painted rectangle). The PMREM sky reflection changes with
+  // tod, which is what sells "wet" at dawn/dusk as well as noon.
   const puddleMeshes = [];
   let puddleMat = null;
   if (puddles.length) {
-    const pm = M.glass('transBlue', { roughness: 0.015, opacity: 0.5, emissive: 'mediumAzur', emissiveIntensity: 0.3 }).clone();
+    const pm = M.glass('transBlue', { roughness: 0.05, opacity: 0.46, emissive: 'mediumAzur', emissiveIntensity: 0.12 }).clone();
     pm.name = 'audio:puddle';
-    patchPuddle(pm, { uRimColor: { value: new THREE.Vector3(0.10, 0.30, 0.42) } });
+    pm.envMapIntensity = 2.6;
+    patchPuddle(pm, { uRimColor: { value: new THREE.Vector3(0.09, 0.26, 0.36) } });
     puddleMat = pm;
     for (const [px, pz, w] of puddles) {
       const t = new THREE.Mesh(M.bevelBox(w - 0.06, 0.06, w - 0.06, 0.02), pm);
@@ -501,9 +505,9 @@ function patchStuds(mat, uniforms) {
   return mat;
 }
 
-/** Puddles: adds a fixed-intensity fresnel rim on top of the physical clearcoat so wet tiles read as reflective
- * water from any viewing angle, including the steep aerial preset where a dielectric's physical reflectance at
- * normal incidence is naturally low (~4%) and a plain clearcoat tile just looks like a flat pale rectangle. */
+/** Puddles: a soft fresnel rim on top of the physical clearcoat. B3 atmosphere: it used to be a fixed 0.25 + 0.9·rim
+ *  additive wash (a painted rectangle from most angles); now the boosted envMapIntensity/PMREM reflection carries the
+ *  wet read and the rim only brightens the grazing edges (0.10 + 0.55·rim). */
 function patchPuddle(mat, uniforms) {
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
@@ -513,11 +517,11 @@ function patchPuddle(mat, uniforms) {
 {
   vec3 vN = normalize(vViewPosition);
   float rim = pow(1.0 - clamp(abs(dot(vN, normal)), 0.0, 1.0), 2.2);
-  totalEmissiveRadiance += uRimColor * (0.25 + 0.9 * rim);
+  totalEmissiveRadiance += uRimColor * (0.10 + 0.55 * rim);
 }`],
     ]);
   };
-  mat.customProgramCacheKey = () => 'audio-puddle-v1';
+  mat.customProgramCacheKey = () => 'audio-puddle-v2';
   return mat;
 }
 
