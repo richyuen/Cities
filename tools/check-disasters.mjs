@@ -33,6 +33,13 @@ try {
   await page.evaluate(() => window.__city.frames(90));
   await page.evaluate(() => { window.__city.pause(); window.__city.setCamera('aerial'); });
   await page.evaluate(() => window.__city.frames(10));
+  // ledger hooks: sum what the model actually billed vs what the damage events say was applied
+  await page.evaluate(() => {
+    const ctx = window.__city.ctx;
+    window.__ledger = { charged: 0, applied: 0 };
+    ctx.events.on('sim:tick', (p) => { window.__ledger.charged += p.stats.disasterCost || 0; });
+    ctx.events.on('disaster:damage', (e) => { window.__ledger.applied += e.amount || 0; });
+  });
   captureErrors.push(...(await app.capture(path.join(OUT, 'before.png'), { settle: 10, sampleMs: 400 })).errors);
 
   // 1. spawn through the real toolbar button + a canvas click over the city
@@ -44,6 +51,8 @@ try {
   const a0 = await disActive();
   check(a0.length === 1, `toolbar click spawns exactly one tornado (got ${a0.length})`);
   check(!!a0[0] && Number.isFinite(a0[0].x) && Number.isFinite(a0[0].z), 'tornado has a world position');
+  const pausedVisible = await page.evaluate(() => !!window.__city.ctx.scene.getObjectByName('disasters')?.visible);
+  check(pausedVisible, 'a tornado spawned while paused is visible immediately (strength floor at spawn)');
 
   // second click while one is active must be refused
   await page.mouse.click(1000, 560);
@@ -109,6 +118,10 @@ try {
   await page.evaluate(() => { const sim = window.__city.ctx.modules.get('simulation').api; for (let i = 0; i < 400; i++) sim.tick(true); });
   const dmgAfter = await disDamage();
   check(dmgBefore > 0 && dmgAfter < dmgBefore, `damaged buildings repair over sim ticks (${dmgBefore.toFixed(3)} → ${dmgAfter.toFixed(3)} over 400 ticks)`);
+  const ledger = await page.evaluate(() => window.__ledger);
+  const expected = ledger.applied * 900;
+  check(ledger.applied > 0 && Math.abs(ledger.charged - expected) < Math.max(2, 0.01 * expected),
+    `billing is exact: charged $${ledger.charged.toFixed(1)} vs damage applied ${ledger.applied.toFixed(4)} × $900 = $${expected.toFixed(1)}`);
   await page.evaluate(() => window.__city.frames(10));
   captureErrors.push(...(await app.capture(path.join(OUT, 'after-storm.png'), { settle: 10, sampleMs: 300 })).errors);
 

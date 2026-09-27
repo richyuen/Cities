@@ -18,9 +18,10 @@ repairs on its own, and round-trips through save/load. Placed from a new Hazards
 - **Economy (`simulation` + `ui`).** `setDisasterCost($/tick)` pushed on `sim:tick` from the accrued ledger →
   `budget.expenses.disasters` (`perTick` + `perDay`), `stats.disasterCost`, and a Treasury **Disaster costs / day**
   row. A full 42-building storm pays ≈ $25–35k (each fully wrecked building ≈ $900), returning to $0 with the storm.
-- **Visuals (`src/disasters/visuals.js`).** 3 draw calls while active, nothing when idle: a 231-instance Blox funnel
-  (ring-based, dense at the ground, widening with height), a 54-instance ground debris ring and a translucent dust
-  disc. Layout is seeded (module rng fork); animation is time-based. Deterministic cross-boot (see below).
+- **Visuals (`src/disasters/visuals.js`).** 3 visible draw calls (+2 shadow-pass draws = +5 total) while active,
+  nothing when idle: a 231-instance Blox funnel (ring-based, dense at the ground, widening with height), a
+  54-instance ground debris ring and a translucent dust disc. Layout is seeded (module rng fork); animation is
+  time-based. Deterministic cross-boot (see below).
 - **Tool (`tools` + `ui`).** Hazards group gains **Tornado** (`hazard:tornado`, danger styling, new funnel-cloud
   icon); clicking the map spawns at that spot with the toast "🌪 Tornado on the ground!" (an audio `error` cue), and
   a second click while one is live is refused. No cost (hazard tool, like fire).
@@ -54,6 +55,32 @@ Batches (idle GPU, one browser at a time): disasters r1-storm **143.6 / 6.77 / 5
 Screenshots read: `shots/disasters/d2/storm-chase-day.png` / `storm-chase-dusk.png` (funnel descending between
 towers), `shots/disasters/r1-storm/disasters_closeup-12.png` (storm over the serviced district),
 `disasters_overview-12.png`, `before.png` / `after-storm.png`.
+
+## Post-review fixes (r1 critic items, disasters r2)
+
+The independent round 1 critic scored **7.5 FAIL** (`docs/reviews/disasters-r1-critic.md`) on two blockers; both
+plus the cheap minors are fixed and re-verified in revision 2:
+
+1. **Billing was exactly 2× (`index.js`).** `setDisasterCost(pendingCost / TICK_DT)` pushed `$/game-second` into
+   the model's `$/tick` slot, so every dollar was billed twice. Now `setDisasterCost(pendingCost)` — the ledger
+   accrues between ticks and each tick bills exactly what was accrued. `tools/check-disasters.mjs` now *proves*
+   the ledger (sum of `stats.disasterCost` over `sim:tick` vs Σ `disaster:damage.amount × $900`): **charged
+   $38,530.4 = 42.8115 × $900** (was 2.000× in the critic's two storms).
+2. **The funnel did not read as a ground tornado.** Rebuilt: stockier column (62 m tall, top radius 14 m, denser
+   low rings, bigger base boxes), a faint `earthBlue` emissive so it reads at night, dust opacity raised, and the
+   showcase spawn moved to a street intersection. The three presets are now **tornado-aware** (they frame the live
+   funnel: street-canyon closeup, street-level ground view, overview plume), which is also what critic batches get.
+3. **Paused spawn invisible** (`age 0` → strength 0): `spawn()` now floors the age at 30 % of the ramp-in, so a
+   tornado dropped while the clock is paused is visible immediately (asserted in the check).
+4. **Minors:** `loadState` caps at `MAX_ACTIVE` (a crafted save cannot spawn a crowd); the draw-call claim is
+   +5 (3 meshes + 2 shadow draws), not +3.
+
+Re-verified after the fixes: `tools/check-disasters.mjs` **22/22**, disasters r2-storm **143.9 / 6.72 / 499–551**,
+disasters r2-idle **143.7 / 6.75 / 527**, game r26 **62.0 / 15.68 / 847** — all `errors: []`; cross-boot
+storm-layout hash `98e27b33` (rebuilt funnel) identical on two boots. Screenshots read:
+`shots/disasters/r2-storm/disasters_closeup-12.png` (funnel in the street canyon), `disasters_ground-12.png`
+(street-level column), `disasters_overview-12.png` + `-21h5.png` (plume readable day and night), plus the check's
+`storm-chase-day/-dusk.png`.
 
 ## Known gaps / honest caveats
 

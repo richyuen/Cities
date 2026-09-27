@@ -6,7 +6,6 @@
 // No THREE here outside visuals.js; all state is deterministic (module rng fork, no runtime rng).
 import { createTornadoVisuals } from './visuals.js';
 import { stageCity } from '../simulation/citygen.js';
-import { TICK_DT } from '../simulation/model.js';
 
 // One commented block of numbers — tune in-browser like every other module's constants.
 const MAX_ACTIVE = 1;
@@ -41,7 +40,9 @@ function spawn({ x = 0, z = 0, dirX, dirZ, age = 0, life = LIFE_SEC } = {}) {
   let dir = (dirX !== undefined || dirZ !== undefined)
     ? normalize(dirX || 0, dirZ || 0)
     : (Math.hypot(wind[0], wind[1]) >= WIND_MIN ? normalize(wind[0], wind[1]) : normalize(...fallbackDir()));
-  const t = { id: S.nextId++, x, z, dirX: dir.x, dirZ: dir.z, age, life, strength: strengthFor(age, life) };
+  // never start at strength 0: a tornado spawned while the clock is paused must be visible immediately
+  const a0 = Math.max(age, RAMP_IN_SEC * 0.3);
+  const t = { id: S.nextId++, x, z, dirX: dir.x, dirZ: dir.z, age: a0, life, strength: strengthFor(a0, life) };
   S.active.push(t);
   S.ctx.events.emit('disaster:tornado', { id: t.id, x: t.x, z: t.z, dirX: t.dirX, dirZ: t.dirZ });
   return t;
@@ -98,7 +99,7 @@ const api = {
   getState() { return { tornadoes: S.active.map((t) => ({ id: t.id, x: t.x, z: t.z, dirX: t.dirX, dirZ: t.dirZ, age: t.age, life: t.life })) }; },
   loadState(patch) {
     clear();
-    for (const t of patch?.tornadoes || []) {
+    for (const t of (patch?.tornadoes || []).slice(0, MAX_ACTIVE)) {
       S.nextId = Math.max(S.nextId, (t.id | 0) + 1);
       S.active.push({ id: t.id | 0 || S.nextId++, x: t.x, z: t.z, dirX: t.dirX, dirZ: t.dirZ, age: t.age, life: t.life, strength: strengthFor(t.age, t.life) });
     }
@@ -112,6 +113,13 @@ function syncVisuals(time = 0) {
   S.visuals.update(t, time, S.ctx.world.getHeight(t.x, t.z));
 }
 
+/** Where the presets should look: the live tornado, else the district centre (world origin). */
+function focusPoint() {
+  const t = S.active[0];
+  const x = t ? t.x : 0, z = t ? t.z : 0;
+  return { x, z, gy: S.ctx?.world ? S.ctx.world.getHeight(x, z) : 0 };
+}
+
 export default {
   id: 'disasters',
   // a tornado needs a city to hit: the damage model only needs simulation, but the module's showcase stages a real
@@ -119,10 +127,21 @@ export default {
   deps: ['simulation', 'terrain', 'roads', 'buildings'],
   order: 65,
   showcaseVariants: ['default', 'storm'],
+  // presets frame the live tornado when there is one (critic batches pause the clock, so the funnel stays where
+  // the storm variant spawned it); without one they frame the district centre.
   presets: {
-    'disasters:overview': () => ({ pos: [180, 150, 260], target: [0, 0, 0] }),
-    'disasters:closeup': () => ({ pos: [-70, 36, 112], target: [0, 26, 0], fov: 45 }),
-    'disasters:ground': () => ({ pos: [-90, 8, 70], target: [40, 20, -20] }),
+    'disasters:overview': () => {
+      const f = focusPoint();
+      return { pos: [f.x + 130, f.gy + 118, f.z + 210], target: [f.x, f.gy + 8, f.z] };
+    },
+    'disasters:closeup': () => {
+      const f = focusPoint();
+      return { pos: [f.x - 96, f.gy + 13, f.z + 2], target: [f.x, f.gy + 30, f.z], fov: 46 };
+    },
+    'disasters:ground': () => {
+      const f = focusPoint();
+      return { pos: [f.x - 56, f.gy + 5, f.z + 5], target: [f.x, f.gy + 34, f.z], fov: 52 };
+    },
   },
   api,
 
@@ -135,7 +154,9 @@ export default {
     S.subs.push(ctx.events.on('sim:tick', () => {
       const sim = ctx.modules.get('simulation');
       if (sim?.status !== 'ok') return;
-      sim.api.setDisasterCost(S.pendingCost / TICK_DT);
+      // pendingCost is everything accrued since the previous tick, i.e. exactly the amount this tick should bill
+      // (the model adds `disasterCost` once per step). Dividing by TICK_DT would bill every dollar twice.
+      sim.api.setDisasterCost(S.pendingCost);
       S.pendingCost = 0;
     }));
   },
@@ -173,9 +194,10 @@ export default {
       ['water_tower', i0 + city.span + 1, j0 + mid - 1, 2, 2],
     ]) ctx.world.addBuilding({ i, j, w, d, zone: null, kind, level: 1 });
     if (variant === 'storm') {
-      // deterministic mid-district storm. Critic batches pause the clock (setTime), so this is where every still
-      // frame catches the funnel — over the district's centre, heading east along a fixed path.
-      const c = ctx.world.cellToWorld(i0 + Math.floor(city.span / 2) - 3, j0 + Math.floor(city.span / 2));
+      // deterministic mid-district storm ON A STREET INTERSECTION (street grid: i0+4a / j0+4a) so the funnel is not
+      // hidden behind the showcase's own tower and the streets give it clean sightlines. Critic batches pause the
+      // clock (setTime), so this is where every still frame catches it — heading east along a fixed path.
+      const c = ctx.world.cellToWorld(i0 + 12, j0 + 8);
       spawn({ x: c.x, z: c.z, dirX: 1, dirZ: 0, age: 20 });
       syncVisuals(0);
     }

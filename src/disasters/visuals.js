@@ -7,10 +7,10 @@ import * as THREE from 'three';
 // The funnel is built as stacked rings (6 boxes at the ground growing to 15 at the top) so the silhouette reads as
 // one twisted column: dense where it is narrow, spread where it is wide.
 
-const FUNNEL_RINGS = 22;
+const FUNNEL_RINGS = 20;
 const DEBRIS_N = 54;
-const HEIGHT = 78;           // funnel top above the ground
-const TOP_R = 17;            // top ring radius
+const HEIGHT = 62;           // funnel top above the ground
+const TOP_R = 14;            // top ring radius
 const FUNNEL_COLORS = ['darkStoneGrey', 'mediumStoneGrey', 'earthBlue'];
 
 function inst(geo, mat, n) {
@@ -44,7 +44,8 @@ export function createTornadoVisuals(ctx, rng) {
   }
 
   // ---- meshes ----
-  const mats = FUNNEL_COLORS.map((c) => ctx.materials.plastic(c, { roughness: 0.75, clearcoat: 0.05 }));
+  // a faint self-lit tint keeps the column readable at night (there is no per-tornado light source)
+  const mats = FUNNEL_COLORS.map((c) => ctx.materials.plastic(c, { roughness: 0.75, clearcoat: 0.05, emissive: 'earthBlue', emissiveIntensity: 0.22 }));
   const funnelGeo = new THREE.BoxGeometry(1.6, 1.6, 1.6);
   const funnel = inst(funnelGeo, mats[0], funnelTab.length);
   funnel.name = 'tornado:funnel';
@@ -82,12 +83,12 @@ export function createTornadoVisuals(ctx, rng) {
     for (let i = 0; i < funnelTab.length; i++) {
       const f = funnelTab[i];
       const tt = f.t;
-      const r = (2.0 + tt * tt * TOP_R) * (0.65 + 0.35 * st);
+      const r = (1.8 + tt * tt * TOP_R) * (0.65 + 0.35 * st);
       const a = f.frac * Math.PI * 2 + spin * f.speed - tt * 9 + f.phase;
-      _p.set(Math.cos(a) * r, 1.2 + tt * HEIGHT * st, Math.sin(a) * r);
+      _p.set(Math.cos(a) * r, 1.0 + tt * HEIGHT * st, Math.sin(a) * r);
       _e.set(0, a, tt * 0.6 + f.phase);
       _q.setFromEuler(_e);
-      _s.setScalar(f.scale * (0.55 + 0.45 * st));
+      _s.setScalar(f.scale * (0.6 + 0.4 * st));
       funnel.setMatrixAt(i, _m.compose(_p, _q, _s));
     }
     funnel.instanceMatrix.needsUpdate = true;
@@ -102,7 +103,7 @@ export function createTornadoVisuals(ctx, rng) {
     }
     debris.instanceMatrix.needsUpdate = true;
     dust.scale.setScalar(0.6 + 0.4 * st);
-    dust.material.opacity = 0.10 + 0.14 * st;
+    dust.material.opacity = 0.14 + 0.20 * st;
   }
 
   function dispose() {
