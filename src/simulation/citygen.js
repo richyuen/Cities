@@ -8,6 +8,13 @@ export const HEIGHTS = { r: [0, 3.5, 8, 16], c: [0, 4.5, 11, 26], i: [0, 4, 7, 1
 export const KINDS = { r: 'house', c: 'shop', i: 'factory' };
 /** Use world.addRoad for the streets (core's World.removeRoad re-stage bug is fixed; cells-only fallback kept). */
 export const USE_WORLD_ROADS = true;
+/**
+ * C6: stage one school and one hospital in every showcase variant so the panel's Education/Health rows read
+ * non-zero (the civics r1 critic found the simulation showcase had 0/0) and the coverage grids have something to
+ * show. Two fixed blocks near the district centre; they take precedence over that block's park/RCI lots and do not
+ * consume rng, so the rest of the layout is unchanged.
+ */
+export const SERVICE_BLOCKS = { '1,2': 'school', '3,2': 'hospital' };
 
 /**
  * Stage the district into `world`. Returns { i0, j0, span, parks: [{i,j}], parkBlocks, emptyLots: [{i,j,zone}], intersections: [{i,j}],
@@ -42,6 +49,7 @@ export function stageCity(world, rng, { blocksPerAxis = BLOCKS, variant = 'defau
   const parkBlocks = [];
   const emptyLots = [];
   const buildingIds = [];
+  const services = [];
   const half = blocksPerAxis / 2;
   // park quota counts BLOCKS (not cells): ~10% of blocks, at least 2, and two are fixed so every variant has a
   // residential-side park and a central one.
@@ -54,6 +62,14 @@ export function stageCity(world, rng, { blocksPerAxis = BLOCKS, variant = 'defau
       const t = (bx + 0.5) / blocksPerAxis + rng.range(-0.12, 0.12);
       let zone = t < 0.42 ? 'r' : t < 0.7 ? 'c' : 'i';
       if (rng.chance(0.12)) zone = rng.pick(['r', 'r', 'c']);
+      // C6 civic services take precedence over whatever this block would otherwise be (park or RCI lots)
+      const serviceKind = SERVICE_BLOCKS[`${bx},${bz}`];
+      if (serviceKind) {
+        const id = world.addBuilding({ i: bi + 1, j: bj + 1, w: 2, d: 2, zone: null, kind: serviceKind, level: 1 });
+        buildingIds.push(id);
+        services.push({ kind: serviceKind, id });
+        continue;
+      }
       const isPark = fixedParks.has(`${bx},${bz}`) || rng.chance(0.09);
       if (isPark && parkBlocks.length < parkQuota) {
         parkBlocks.push({ bx, bz, i: bi, j: bj });
@@ -111,5 +127,5 @@ export function stageCity(world, rng, { blocksPerAxis = BLOCKS, variant = 'defau
   const intersections = [];
   for (let a = 0; a <= blocksPerAxis; a++) for (let b = 0; b <= blocksPerAxis; b++) intersections.push({ i: i0 + a * PERIOD, j: j0 + b * PERIOD });
   void variant;
-  return { i0, j0, span, parks, parkBlocks, emptyLots, intersections, buildingIds, roadIds, roadCells };
+  return { i0, j0, span, parks, parkBlocks, emptyLots, intersections, buildingIds, roadIds, roadCells, services };
 }

@@ -246,6 +246,9 @@ function makeDynMats(ctx) {
     beacon: m.plastic('black', { emissive: 'brightRed', emissiveIntensity: 0, roughness: 0.3 }),
     beaconBlue: m.plastic('black', { emissive: 'brightBlue', emissiveIntensity: 0, roughness: 0.3 }),
     signGlow: m.plastic('white', { emissive: 'brightYellow', emissiveIntensity: 0, roughness: 0.4, clearcoat: 0.4 }),
+    // Red base + red bloom (ARCHITECTURE §7: red emissives need ≥ 4 to bloom at night). Used by the hospital's
+    // entrance cross so it stays red instead of silhouetting black against the lit sign board (civics r1 item 4).
+    crossGlow: m.plastic('brightRed', { emissive: 'brightRed', emissiveIntensity: 0, roughness: 0.45, clearcoat: 0.25 }),
   };
 }
 
@@ -253,12 +256,13 @@ function updateNight(ctx, isNight, daylight) {
   const t = THREE.MathUtils.clamp(1 - daylight / 0.35, 0, 1);
   const d = S.dynMats;
   d.winWarm.emissiveIntensity = t * 2.8;
-  d.winCool.emissiveIntensity = t * 2.6;
+  d.winCool.emissiveIntensity = t * 2.4;   // was 2.6: hospital ward panes clipped to featureless white at close range
   d.porchWarm.emissiveIntensity = t * 2.0;
   d.chimneyGlow.emissiveIntensity = t * 3.8;
   d.beacon.emissiveIntensity = t * 5.5;
   d.beaconBlue.emissiveIntensity = t * 5.5;
-  d.signGlow.emissiveIntensity = t * 3.0;
+  d.signGlow.emissiveIntensity = t * 2.2;  // was 3.0: stops the board blooming over the hospital cross
+  d.crossGlow.emissiveIntensity = t * 4.2; // ARCHITECTURE §7 red bucket (≥ 4)
 }
 
 function closeupPreset() {

@@ -723,9 +723,29 @@ function generatePoliceStation(ctx, b, rng, halfW, halfD, cx, cz, groundY) {
   };
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Civic services (school / hospital). Fixed compositions (ignore b.level — civic buildings never grow) on small
+// 2x2-cell footprints. Coverage radius / effects live in simulation/model.js.
+
+/** A mullioned grid of inset lit panes (the emissive window overlays). One big overlay reads as a single
+ *  emissive slab at close range (civics r1 item 2); a rows×cols grid leaves the dark glazing visible as mullion
+ *  gaps between panes. `w`/`h` are the overlay's overall size, `axis` its outward normal ('z' or 'x'). */
+function litPaneGrid(parts, mat, w, h, rows, cols, x, y, z, axis = 'z') {
+  const gap = 0.16;
+  const pw = (w - gap * (cols - 1)) / cols;
+  const ph = (h - gap * (rows - 1)) / rows;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const ox = -w / 2 + pw / 2 + c * (pw + gap);
+      const oy = y - h / 2 + ph / 2 + r * (ph + gap);
+      if (axis === 'z') plainBox(parts, mat, pw, ph, 0.02, x + ox, oy, z);
+      else plainBox(parts, mat, 0.02, ph, pw, x, oy, z + ox);
+    }
+  }
+}
+
 // Civic school: a low ochre classroom hall with white course bands, glazed bays, a red-canopied entrance and a
-// bell tower (brick stack, warm bell, red pyramid cap, flag). Fixed composition (ignores b.level — civic
-// buildings never grow), small 2x2-cell footprint. Coverage radius / effects live in simulation/model.js.
+// bell tower (brick stack, warm bell, red pyramid cap, flag).
 function generateSchool(ctx, b, rng, halfW, halfD, cx, cz, groundY) {
   const parts = [];
   const studs = [];
@@ -735,19 +755,30 @@ function generateSchool(ctx, b, rng, halfW, halfD, cx, cz, groundY) {
   plinth(ctx, parts, 'darkStoneGrey', cx, cz, halfW, halfD, groundY, 0.35, 0.08);
   courseBands(parts, 'white', cx, cz, halfW, halfD, groundY + 0.35, groundY + storyH, { pitch: 1.3 });
   const roofTop = flatRoof(ctx, parts, studs, 'darkStoneGrey', cx, cz, halfW, halfD, groundY + storyH, { capH: 0.3, parapetH: 0.35 });
-  // classroom windows on the long (+z / -z) faces: white frame, trans-blue glazing; about half get a lit overlay
-  // (winWarm/winCool emissive, dead by day — see buildings/index.js updateNight) so the school glows after dark
+  // classroom windows on the long (+z / -z) faces: white frame, trans-blue glazing; about half get a mullioned
+  // 2x2 grid of lit panes (winWarm/winCool emissive, dead by day — see buildings/index.js updateNight)
   for (const sz of [1, -1]) {
     for (const ox of [-1, 1]) {
       const wx = cx + ox * halfW * 0.48, wz = cz + sz * halfD;
       plainBox(parts, 'white', 3.6, 2.5, 0.12, wx, groundY + 3.2, wz + sz * 0.06);
       plainBox(parts, 'transBlue', 3.1, 2.05, 0.08, wx, groundY + 3.2, wz + sz * 0.13);
-      if (rng.chance(0.55)) plainBox(parts, rng.chance(0.5) ? 'winWarm' : 'winCool', 2.7, 1.75, 0.02, wx, groundY + 3.2, wz + sz * 0.18);
+      if (rng.chance(0.55)) litPaneGrid(parts, rng.chance(0.5) ? 'winWarm' : 'winCool', 2.7, 1.75, 2, 2, wx, groundY + 3.2, wz + sz * 0.18);
     }
   }
-  // entrance on the +z face: white portal, glazed double door, red canopy
+  // matching bay on each short (±x) face — r1 critic item 1: the school's side walls were entirely windowless
+  for (const sx of [1, -1]) {
+    const wx = cx + sx * halfW, wz = cz;
+    plainBox(parts, 'white', 0.12, 2.5, 3.6, wx + sx * 0.06, groundY + 3.2, wz);
+    plainBox(parts, 'transBlue', 0.08, 2.05, 3.1, wx + sx * 0.13, groundY + 3.2, wz);
+    if (rng.chance(0.55)) litPaneGrid(parts, rng.chance(0.5) ? 'winWarm' : 'winCool', 2.7, 1.75, 2, 2, wx + sx * 0.18, groundY + 3.2, wz, 'x');
+  }
+  // entrance on the +z face: white portal, tinted double door (dark liner + white frame + centre mullion), red
+  // canopy. r1 critic item 3: the old transClear pane read as a flat white panel by day.
   plainBox(parts, 'white', 3.6, 3.4, 0.14, cx, groundY + 1.9, cz + halfD - 0.02);
-  plainBox(parts, 'transClear', 2.4, 2.7, 0.08, cx, groundY + 1.55, cz + halfD + 0.09);
+  plainBox(parts, 'darkStoneGrey', 2.4, 2.7, 0.05, cx, groundY + 1.55, cz + halfD + 0.035);
+  plainBox(parts, 'transBlue', 2.4, 2.7, 0.07, cx, groundY + 1.55, cz + halfD + 0.095);
+  plainBox(parts, 'white', 0.16, 2.55, 0.09, cx, groundY + 1.5, cz + halfD + 0.155);
+  plainBox(parts, 'white', 2.4, 0.16, 0.09, cx, groundY + 2.75, cz + halfD + 0.155);
   plainBox(parts, 'brightRed', 4.2, 0.22, 1.1, cx, groundY + 3.75, cz + halfD + 0.5);
   // bell tower at a back corner: brick stack, warm bell, red pyramid cap, flag
   const tx = cx - halfW * 0.52, tz = cz - halfD * 0.52;
@@ -777,22 +808,38 @@ function generateHospital(ctx, b, rng, halfW, halfD, cx, cz, groundY) {
   courseBands(parts, 'lightStoneGrey', cx, cz, halfW, halfD, groundY + 0.35, groundY + storyH, { pitch: 1.3 });
   const roofTop = flatRoof(ctx, parts, studs, 'lightStoneGrey', cx, cz, halfW, halfD, groundY + storyH, { capH: 0.3, parapetH: 0.35 });
   const deck = roofTop - 0.35;
-  // entrance on the +z face: glazed bay, white canopy, lit sign board behind a red cross (the cross bars and the
-  // board sit at strictly increasing depths so no two faces are coplanar)
-  plainBox(parts, 'transClear', 4.6, 3.0, 0.08, cx, groundY + 1.7, cz + halfD + 0.09);
+  // entrance on the +z face: tinted glazed bay over a dark liner with a white frame (r1 item 3 — flat 4.6×3.0
+  // transClear read as a white panel by day), white canopy, lit sign board behind a red cross (the cross bars
+  // and the board sit at strictly increasing depths so no two faces are coplanar)
+  plainBox(parts, 'darkStoneGrey', 4.6, 3.0, 0.05, cx, groundY + 1.7, cz + halfD + 0.035);
+  plainBox(parts, 'transBlue', 4.6, 3.0, 0.07, cx, groundY + 1.7, cz + halfD + 0.095);
+  plainBox(parts, 'white', 0.18, 3.0, 0.09, cx, groundY + 1.7, cz + halfD + 0.155);
+  plainBox(parts, 'white', 4.6, 0.18, 0.09, cx, groundY + 3.11, cz + halfD + 0.155);
   plainBox(parts, 'white', 5.6, 0.22, 1.3, cx, groundY + 3.55, cz + halfD + 0.5);
   plainBox(parts, 'signGlow', 3.2, 3.2, 0.06, cx, groundY + 4.9, cz + halfD + 0.04);
-  plainBox(parts, 'brightRed', 0.85, 2.2, 0.12, cx, groundY + 4.9, cz + halfD + 0.10);
-  plainBox(parts, 'brightRed', 2.2, 0.85, 0.12, cx, groundY + 4.9, cz + halfD + 0.14);
-  // ward windows: two framed, glazed bays per side face, some lit at night
+  plainBox(parts, 'crossGlow', 0.85, 2.2, 0.12, cx, groundY + 4.9, cz + halfD + 0.10);
+  plainBox(parts, 'crossGlow', 2.2, 0.85, 0.12, cx, groundY + 4.9, cz + halfD + 0.14);
+  // ward windows: four framed, glazed bays per ±x face and two on the back (-z) — r1 critic item 1 (the building
+  // read as a plain box from three of four sides). Lit overlays are split vertically into two panes (item 2).
   for (const sx of [1, -1]) {
-    for (const oz of [-0.55, 0.55]) {
+    for (const oz of [-0.72, -0.27, 0.27, 0.72]) {
       const wx = cx + sx * halfW, wz = cz + oz * halfD;
       plainBox(parts, 'lightStoneGrey', 0.12, 2.0, 2.6, wx + sx * 0.05, groundY + 4.7, wz);
       plainBox(parts, 'transBlue', 0.08, 1.6, 2.2, wx + sx * 0.11, groundY + 4.7, wz);
-      if (rng.chance(0.6)) plainBox(parts, 'winCool', 0.02, 1.45, 2.0, wx + sx * 0.16, groundY + 4.7, wz);
+      if (rng.chance(0.6)) litPaneGrid(parts, 'winCool', 1.45, 2.0, 2, 1, wx + sx * 0.16, groundY + 4.7, wz, 'x');
     }
   }
+  for (const ox of [-0.45, 0.45]) {
+    const wx = cx + ox * halfW, wz = cz - halfD;
+    plainBox(parts, 'lightStoneGrey', 2.6, 2.0, 0.12, wx, groundY + 4.7, wz - 0.05);
+    plainBox(parts, 'transBlue', 2.2, 1.6, 0.08, wx, groundY + 4.7, wz - 0.11);
+    if (rng.chance(0.6)) litPaneGrid(parts, 'winCool', 1.45, 2.0, 2, 1, wx, groundY + 4.7, wz - 0.16, 'z');
+  }
+  // side service door on the -x face at street level (r1 item 1), with a small canopy
+  const dx = cx - halfW;
+  plainBox(parts, 'lightStoneGrey', 0.14, 2.8, 1.7, dx - 0.03, groundY + 1.4, cz + halfD * 0.35);
+  plainBox(parts, 'transBlue', 0.08, 2.3, 1.3, dx - 0.10, groundY + 1.35, cz + halfD * 0.35);
+  plainBox(parts, 'white', 0.7, 0.16, 2.0, dx - 0.28, groundY + 2.9, cz + halfD * 0.35);
   // ambulance bay on the -z face
   plainBox(parts, 'brightRed', 3.4, 3.0, 0.14, cx - halfW * 0.4, groundY + 1.55, cz - halfD - 0.05);
   // rooftop helipad + white H, and a red beacon mast at the opposite corner

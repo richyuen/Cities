@@ -38,14 +38,22 @@ export const UPKEEP_UTILITY = { power_plant: 1.5, water_tower: 0.75, fire_depart
 
 // Education & healthcare. Same shape as the police block above: a civic building stamps a Chebyshev coverage
 // radius, coverage is capacity-weighted city-wide (like power/water), and the two stats feed happiness and RCI
-// demand. They differ in what they change: a school speeds up level-ups and is required for a building to reach
-// level 3 (an educated neighbourhood supports density), while a hospital attracts residents (healthier city →
-// higher housing demand) and lifts happiness a little more than a school does.
+// demand. They differ in what they change: a school speeds up level-ups and is the reliable route to level 3 (an
+// educated neighbourhood supports density — an unschooled one can still get there through sustained happiness, see
+// LEVEL3_WEALTH_* below), while a hospital attracts residents (healthier city → higher housing demand) and lifts
+// happiness a little more than a school does.
 // Starting points — tune in-browser like every other constant in this file.
 export const SCHOOL_RADIUS = 14;             // cells (Chebyshev) — one school covers a neighbourhood
 export const HOSPITAL_RADIUS = 16;           // cells (Chebyshev) — a hospital serves a wider district than a school
 export const MATURE_TICKS = 20;              // ticks at occupancy ≥ 0.9 before a building may level up
-export const MATURE_TICKS_SCHOOLED = 12;     // school coverage speeds that up (and is required for level 3)
+export const MATURE_TICKS_SCHOOLED = 12;     // school coverage speeds that up (and is the reliable level-3 route)
+// C6 retune: level 3 used to be school-or-nothing, which can read as a hard wall when coverage geometry leaves a
+// neighbourhood out. An unschooled building can now also reach level 3 through sustained city happiness — a school
+// still dominates (12 mature ticks vs 20 + 30 wealth ticks), while a well-run city is never permanently walled off.
+// Hysteresis keeps the streak from flickering at the threshold: it accrues at ≥ 0.62 and only resets below 0.58.
+export const LEVEL3_WEALTH_HAPPINESS = 0.62; // city happiness at/above which an unschooled building accrues wealthTicks
+export const LEVEL3_WEALTH_TICKS = 30;       // consecutive ticks (15 game-sec) needed on top of MATURE_TICKS
+export const LEVEL3_WEALTH_RESET = 0.58;     // below this the streak resets; 0.58–0.62 holds the current count
 export const EDUCATION_HAPPINESS_WEIGHT = 0.07;   // weight of education coverage in hTarget
 export const HEALTH_HAPPINESS_WEIGHT = 0.08;      // weight of health coverage in hTarget
 export const HEALTH_DEMAND_BONUS = 0.10;     // added to residential pressure at full health coverage
@@ -197,7 +205,7 @@ export class SimModel {
     const seed = ((b.seed | 0) ^ Math.imul(idh, 0x27d4eb2f)) | 0;
     return {
       b, occ: this.startOccupancy, rate: 0.005 + 0.012 * hashInt(seed), level: clamp(b.level | 0, 1, 3),
-      mature: 0, nearPark: false, powered: false, watered: false, policed: false, schooled: false, hospitaled: false,
+      mature: 0, wealthTicks: 0, nearPark: false, powered: false, watered: false, policed: false, schooled: false, hospitaled: false,
       roadConnected: false, notified: false, cap: 0,
       fireSeed: seed ^ 0x5bd1e995,
       crimeSeed: seed ^ 0x27d4eb2f,
@@ -489,11 +497,16 @@ export class SimModel {
       else { jobsI += filled; capI += cap; }
       if (s.occ >= 0.9) {
         s.mature++;
+        // C6 wealth route: sustained city happiness (see LEVEL3_WEALTH_* above) accrues a second level-3 path for
+        // unschooled buildings. Uses the previous tick's smoothed happiness — deterministic and one tick behind.
+        if (this.happiness >= LEVEL3_WEALTH_HAPPINESS) s.wealthTicks++;
+        else if (this.happiness < LEVEL3_WEALTH_RESET) s.wealthTicks = 0;
         const pz = zone === 'r' ? P.r : zone === 'c' ? P.c : P.i;
-        // School coverage both accelerates maturity and is required to reach level 3 — the missing "educated
-        // neighbourhood supports density" step. Hospital coverage is a happiness/demand service, not a gate.
+        // School coverage both accelerates maturity and is the reliable level-3 route; the wealth route is the
+        // fallback. Hospital coverage is a happiness/demand service, not a gate.
         const matureNeed = s.schooled ? MATURE_TICKS_SCHOOLED : MATURE_TICKS;
-        if (served && lvl < 3 && s.mature >= matureNeed && pz > 0.15 && (lvl < 2 || s.schooled)) {
+        const level3Ok = lvl < 2 || s.schooled || s.wealthTicks >= LEVEL3_WEALTH_TICKS;
+        if (served && lvl < 3 && s.mature >= matureNeed && pz > 0.15 && level3Ok) {
           growth.push(b.id);
           if (!s.notified) { s.notified = true; fresh.push(b.id); }
         }

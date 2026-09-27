@@ -102,6 +102,8 @@ export function createPanel(dom, { perDayTicks = 1200 } = {}) {
     ['Happiness', (s) => pct(s.happiness)],
     ['Traffic', (s) => pct(s.traffic)],
     ['Park access', (s) => pct(s.parkShare)],
+    ['Education', (s) => pct(s.educationCoverage ?? 0)],
+    ['Health', (s) => pct(s.healthCoverage ?? 0)],
     ['Treasury', (s) => fmtMoney(s.money), (s) => (s.money < 0 ? 'neg' : '')],
     ['Net / day', (s, b) => (b.net >= 0 ? '+' : '') + fmtMoney(b.net), (s, b) => (b.net < 0 ? 'neg' : 'pos')],
     ['Income / day', (s, b) => fmtMoney(b.income.total)],
