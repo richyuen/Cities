@@ -150,6 +150,27 @@ try {
     `load restores the tornado near its saved position/age (x ${pre.x.toFixed(0)} → ${post ? post.x.toFixed(0) : 'none'}, age ${pre.age.toFixed(1)} → ${post ? post.age.toFixed(1) : 'none'})`);
   check(post && Math.abs(post.dirX - pre.dirX) < 1e-6 && Math.abs(post.dirZ - pre.dirZ) < 1e-6, 'load restores the path direction');
 
+  // crafted saves are sanitised: two tornadoes -> one; non-finite fields are dropped instead of freezing
+  const crafted = await page.evaluate(() => {
+    const d = window.__city.ctx.modules.get('disasters').api;
+    d.clear();
+    d.loadState({ tornadoes: [
+      { id: 1, x: 0, z: 0, dirX: 1, dirZ: 0, age: 3, life: 60 },
+      { id: 2, x: 10, z: 10, dirX: 1, dirZ: 0, age: 3, life: 60 },
+    ] });
+    const capped = d.getActive().length;
+    d.loadState({ tornadoes: [{ id: 3, x: null, z: 0, dirX: 1, dirZ: 0, age: 3, life: 60 }] });
+    const bogus = d.getActive().length;
+    d.loadState({ tornadoes: [{ id: 4, x: 1e9, z: 0, dirX: 0, dirZ: 0, age: -5, life: 1e6 }] });
+    const t = d.getActive()[0];
+    const bounded = !!t && Number.isFinite(t.x) && Math.abs(t.x) < 2000 && Number.isFinite(t.dirX) && t.age >= 0 && t.life <= 240;
+    d.clear();
+    return { capped, bogus, bounded };
+  });
+  check(crafted.capped === 1, `a crafted 2-tornado save loads exactly one (got ${crafted.capped})`);
+  check(crafted.bogus === 0, `non-finite fields are dropped, not frozen (got ${crafted.bogus})`);
+  check(crafted.bounded, 'out-of-range x/life and a zero direction are clamped/normalised on load');
+
   check(captureErrors.length === 0, `all captures report no errors (${captureErrors.length})`);
 } finally {
   await app.close();

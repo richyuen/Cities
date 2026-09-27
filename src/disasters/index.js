@@ -99,9 +99,21 @@ const api = {
   getState() { return { tornadoes: S.active.map((t) => ({ id: t.id, x: t.x, z: t.z, dirX: t.dirX, dirZ: t.dirZ, age: t.age, life: t.life })) }; },
   loadState(patch) {
     clear();
+    const world = S.ctx.world;
+    const cs = world.cellSize || 8;
+    const maxX = world.size.w * cs / 2 + cs, maxZ = world.size.h * cs / 2 + cs;
     for (const t of (patch?.tornadoes || []).slice(0, MAX_ACTIVE)) {
+      // sanitise a crafted/corrupt save: finite numbers only, inside the map, a real direction, a sane lifetime
+      if (![t.x, t.z, t.dirX, t.dirZ].every((v) => typeof v === 'number' && Number.isFinite(v))) continue;
+      const x = t.x, z = t.z;
+      const dir = normalize(t.dirX, t.dirZ);
+      const age = Math.min(Math.max(Number.isFinite(t.age) ? t.age : 0, 0), LIFE_SEC);
+      const life = Math.min(Math.max(Number.isFinite(t.life) ? t.life : LIFE_SEC, 1), LIFE_SEC * 4);
       S.nextId = Math.max(S.nextId, (t.id | 0) + 1);
-      S.active.push({ id: t.id | 0 || S.nextId++, x: t.x, z: t.z, dirX: t.dirX, dirZ: t.dirZ, age: t.age, life: t.life, strength: strengthFor(t.age, t.life) });
+      S.active.push({
+        id: t.id | 0 || S.nextId++, x: Math.min(maxX, Math.max(-maxX, x)), z: Math.min(maxZ, Math.max(-maxZ, z)),
+        dirX: dir.x, dirZ: dir.z, age, life, strength: strengthFor(age, life),
+      });
     }
     syncVisuals(0);
   },
