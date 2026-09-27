@@ -32,9 +32,23 @@ attempted and **dropped with evidence** (the design's §3 escape hatch).
   the additive veil against the already-bright sky, so it never reads as shafts. Code removed; see the review for
   the A/B evidence. The remaining lever is a depth-aware radial-blur post pass, which ARCHITECTURE §7 keeps out of
   scope.
-- **Near-cascade split (terrain r6's other lever) — tried, dropped.** Raising the near-split floor 12 → 26 m
-  changed under 0.02 % of pixels (mean abs diff 0.054 closeup / 0.000 overview); no evidence, so the old split is
-  kept with the result documented in `environment/index.js`.
+- **Near-cascade split (terrain r6's other lever) — tried, dropped.** Raising the near-split floor 12 → 26 m showed
+  no visible gain: the builder's A/B pixel-diff was 0.054 / 0.000 mean abs (≤ 0.02 % of pixels > 8/255); the r2
+  critic's own in-page A/B measured 0.07 % / 2.26 % (noon / dusk) above same-session drift, with the overview
+  already at c1 ≈ 81 m (a structural no-op there). The old split is kept with the result documented in
+  `environment/index.js`; a future terrain pass should re-test the 26 m floor at low sun if it wants the last bit
+  of riser crispness.
+
+## Post-review fixes (r2 critic issues 1 + 4)
+
+- **Night gating (issue 1, real):** `dawn` was 1 for *every* elevation ≤ 6° including night, so the sun-side
+  horizon got the ×1.5 boost at 21.5 h (e = −49°). Fixed to `smoothstep(-8, -1, e) * (1 - smoothstep(6, 22, e))`
+  — full boost −1…6°, faded out below −8°, noon no-op. `check-atmosphere` now asserts night no-op at −10/−20/−49°
+  and runs **22/22**; re-verified environment r8 143.4 / 5.82 / 53 and game r21 60.8 / 15.74 / 847, `errors: []`.
+- **Wording (issue 4):** the "pixel-identical" claim above is corrected to the measured numbers; source comment
+  updated. The drop decision is unchanged (the critic agreed it is defensible).
+- Remaining B3 follow-ups are recorded in `_integrator-todo.md` (rendered dawn sun-side capture in the check;
+  puddle aerial read; unchanged module carry-overs).
 
 ## Verification
 

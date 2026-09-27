@@ -260,9 +260,10 @@ function updateCascades(cam) {
   const pitch = clamp01(-dirY);
   const maxFar = Math.max(320, Math.min(2400, Math.max(2.4 * D + 150, 1700 * (1 - smoothstep(0.25, 0.6, pitch)))));
   // B3 atmosphere: tried raising the near-split floor 12 → 26 m (the terrain r6 "play-distance terraces sample the
-  // mid cascade" lever). A/B pixel-diff at closeup/overview was 0.054 / 0.000 mean abs with ≤ 0.02 % of pixels over
-  // 8/255 — no evidence, so it is NOT shipped (see docs/reviews/atmosphere-b3.md); the open terrain lever stays the
-  // closeup framing + longer-wavelength relief.
+  // mid cascade" lever). No visible gain: the builder's A/B pixel-diff was 0.054 / 0.000 mean abs (≤ 0.02 % of
+  // pixels > 8/255) and the r2 critic's own in-page A/B measured 0.07 % / 2.26 % (noon / dusk) above same-session
+  // drift with the overview already at c1 ≈ 81 m (a structural no-op there) — so it is NOT shipped. Re-test at low
+  // sun in a future terrain pass (docs/reviews/atmosphere-b3.md, atmosphere-b3-critic.md issue 4).
   const c1 = Math.max(12, Math.min(140, 0.06 * D + 6));
   const c2 = Math.max(120, Math.min(1100, 0.55 * D + 60));
   const key = `${Math.round(maxFar / 40)}|${Math.round(c1 / 4)}|${Math.round(c2 / 30)}`;

@@ -25,7 +25,7 @@ const chroma = (c) => Math.max(c[0], c[1], c[2]) - Math.min(c[0], c[1], c[2]);
 
 // --- 1) sky model (Node) -----------------------------------------------------------------------------------------
 const clear = { cloud: 0, rain: 0, fog: 0 };
-for (const [e, minRatio, label] of [[-2, 1.45, 'dawn (sun -2°)'], [4, 1.45, 'sunrise (4°)'], [6, 1.25, 'early (6°)'], [12, 1.2, 'morning (12°)']]) {
+for (const [e, minRatio, label] of [[-2, 1.4, 'twilight (sun -2°)'], [4, 1.45, 'sunrise (4°)'], [6, 1.25, 'early (6°)'], [12, 1.2, 'morning (12°)']]) {
   const p = skyParams(e, clear, {});
   const raw = ramp(SKY_RAMPS.HORIZON_SUN, e, [0, 0, 0]);
   const ratio = chroma(p.horizonSun) / chroma(raw);
@@ -38,6 +38,12 @@ for (const [e, minRatio, label] of [[-2, 1.45, 'dawn (sun -2°)'], [4, 1.45, 'su
   const g = skyParams(e, clear, {}).glow, gr = ramp(SKY_RAMPS.GLOW, e, [0, 0, 0]);
   check(Math.abs(chroma(g) - chroma(gr)) < 1e-9, 'sky chroma noon no-op (glow)');
   check(luminance(skyParams(-9, clear, {}).zenith) < 0.05, 'sky night zenith stays dark');
+  // r2-critic fix: the boost must fade out at night too (it used to be 1 for every e ≤ 6, including -49°)
+  for (const eNight of [-10, -20, -49]) {
+    const pn = skyParams(eNight, clear, {});
+    const rn = ramp(SKY_RAMPS.HORIZON_SUN, eNight, [0, 0, 0]);
+    check(Math.abs(chroma(pn.horizonSun) - chroma(rn)) < 1e-9, `sky chroma night no-op (${eNight}°): chroma ${chroma(pn.horizonSun).toFixed(4)} === raw ${chroma(rn).toFixed(4)}`);
+  }
 }
 
 // --- browser helpers --------------------------------------------------------------------------------------------

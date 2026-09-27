@@ -66,8 +66,9 @@ export function skyParams(e, wf, out = {}) {
   // B3 atmosphere: low-sun chroma boost. The clear-sky ramps are already saturated in linear RGB, but ACES
   // compresses them toward cream at dawn/dusk (r4/effects-r2 finding: the sky is identically pale with effects
   // on/off, so it is environment's tone). Push the sun-side horizon, the away horizon and the glow away from their
-  // own luminance while the sun is low; noon and night are untouched (dawn factor 0 above 22°).
-  const dawn = 1 - smoothstep(6, 22, e);
+  // own luminance while the sun is low. Full boost between about -1° and 6°, fading out below -8° (deep night
+  // untouched, r2-critic fix) and above 22° (noon untouched).
+  const dawn = smoothstep(-8, -1, e) * (1 - smoothstep(6, 22, e));
   if (dawn > 0) {
     saturate(p.horizonSun, 1 + 0.5 * dawn);
     saturate(p.horizonAway, 1 + 0.2 * dawn);

@@ -1,60 +1,68 @@
 {
-  "updated": "2026-09-27T13:18:14.547Z",
+  "updated": "2026-09-27T14:22:38.125Z",
   "modules": {
     "terrain": {
-      "score": 8.2,
-      "round": 6,
-      "pass": false,
-      "errors": 0,
-      "fps": 143.6,
-      "drawCalls": 58,
-      "issues": [
-        "root cause FIXED: three renders shadow depth with side=shadowSide[material.side] (FrontSide->BackSide), so the open heightfield's top faces were culled from every CSM cascade",
-        "groundMat.shadowSide=FrontSide puts real terrain depth into all cascades (live map coverage 1.9%->26%, cast toggle 14.3% of pixels), plus a per-cascade normalBias retune",
-        "play-distance closeup still reads flat (c1 caps at 12 m so terraces beyond it sample the 0.48 m mid cascade) and the closeup preset's grazing 4.2 m eye over a 0.8 m-stepped plain foreshortens the bands",
-        "noon plains are physically sub-pixel",
-        "pipe bars unchanged"
-      ],
-      "review": "docs/reviews/terrain-r6.md",
-      "wave": 0,
-      "updated": "2026-09-26T03:29:27.194Z"
-    },
-    "environment": {
-      "score": 8.7,
-      "round": 5,
+      "score": 8.5,
+      "round": 8,
       "pass": true,
       "errors": 0,
-      "fps": 142.9,
-      "drawCalls": 54,
+      "fps": 143.4,
+      "drawCalls": 58,
       "issues": [
-        "showcase test-rig terrain still a literal circular disc/basin with enclosing rim from pulled-back/aerial views (rig-only, env source unchanged)",
+        "B3 FIXED framing: closeup eye 4.2->6.5m, target 68m/+2.2m, fov 40 live-verified - r8 closeup-12 shows two broad riser bands at play distance (pre was thin grazing bars) and closeup-18 is a legible terrace hero frame",
+        "whole-game overview-18 shows terrace contours and game street/closeup read clean",
+        "near-cascade 12->26m tried and dropped - my independent in-page A/B 0.22 meanAbs/0.07% >8 at noon (below same-session drift 0.30/0.31%) and 0.71/2.26% at dusk (small, above drift) so the drop is defensible and the overview floor change is a structural no-op (c1 already ~81m) but 'pixel-identical' is overstated",
+        "remaining lever: noon plains are physically sub-pixel - longer-wavelength relief (1.2m steps / low rolling undulation) is the documented next lever, a B1-scale heightgen change",
+        "root cause FIXED (B6): shadowSide=FrontSide puts real terrain depth into all cascades + per-cascade normalBias retune",
+        "pipe bars unchanged",
+        "sub-4m closeup NdotL unchanged"
+      ],
+      "review": "docs/reviews/atmosphere-b3-critic.md",
+      "wave": 0,
+      "updated": "2026-09-27T14:14:34.100Z"
+    },
+    "environment": {
+      "score": 8.8,
+      "round": 8,
+      "pass": true,
+      "errors": 0,
+      "fps": 143.4,
+      "drawCalls": 53,
+      "issues": [
+        "B3 FIXED: dawn/dusk chroma boost (skyMath saturate + dawn factor) live-verified - sky uniforms match skyParams exactly at every tod, chroma ratios x1.5 at <=6deg, x1.477 at 8.09deg, exact x1.0 >=22deg, rendered dusk crop chroma 33.9->48.6 (R-B +17.9->+37.0) vs noon -34",
+        "POST-REVIEW FIX (critic issue 1): the dawn factor now fades out below -8deg (smoothstep(-8,-1,e)) so deep night is untouched",
+        "check-atmosphere asserts night no-op at -10/-20/-49deg (22/22) and re-verified env r8 143.4/5.82/53, game r21 60.8/15.74/847",
+        "post-review wording fix (issue 4): the near-split drop is documented as no visible gain (0.07%/2.26% pixels noon/dusk above drift), not pixel-identical",
+        "god rays attempted and dropped correctly (A/B 0.027% of pixels >8/255, visually identical - residual lever is a depth-aware post pass, out of ARCHITECTURE 7 scope)",
+        "showcase test-rig terrain still a literal circular disc/basin with enclosing rim from pulled-back/aerial views (rig-only)",
         "rig near-zone still a flat low-detail gradient under grazing/low cameras incl. sky preset (rig-only)",
         "rig ridge silhouette still low-poly/faceted (rig-only)",
-        "terrain-vs-terrain riser self-shadow magnitude still sub-threshold at ~20m (terrain's lever, env bias/radius A/B showed no delta)",
+        "terrain-vs-terrain riser self-shadow magnitude sub-threshold at ~20m (terrain's lever - env bias/radius A/B showed no delta)",
         "rain streaks dominate wide overview shots at intensity 0.6 (minor)"
       ],
-      "review": "docs/reviews/environment-r5.md",
+      "review": "docs/reviews/atmosphere-b3-critic.md",
       "wave": 0,
-      "updated": "2026-09-25T17:48:27.713Z"
+      "updated": "2026-09-27T14:22:38.124Z"
     },
     "roads": {
       "score": 8.8,
-      "round": 4,
+      "round": 6,
       "pass": true,
       "errors": 0,
       "fps": 143,
       "drawCalls": 78,
       "issues": [
+        "B3 sheen constants shipped + live-verified (roughness 0.44, clearcoat 0.35, clearcoatRoughness 0.22, envMapIntensity 1.1) - game street-12 road -6 luma vs pre-B3 r18, noon presets consistent, low-sun sheen survives (deadend-18)",
+        "Noon plastic sheen angle-variance nit materially reduced by the B3 constants (no pre-B3 material A/B possible without src edits - post-state consistent across presets)",
         "Faint straight-edged shading/UV steps on large coplanar asphalt plates (Issue 3, untouched, still minor)",
-        "Noon plastic sheen still angle-dependent (r3 carry-over, unchanged)",
         "lastBuildMs 36-54ms (not perf-budgeted)",
         "Thin marking slivers/hairlines on junction decks (fixed, verified in fresh r4v captures)",
         "Blunt square-cut median island noses (fixed, tapered noses verified)",
         "junction-variant north-end bend bulb 8m from avenue (fixed: now 4-way T at (0,160) + bend to n15/56,128)"
       ],
-      "review": "docs/reviews/roads-r4.md",
+      "review": "docs/reviews/atmosphere-b3-critic.md",
       "wave": 0,
-      "updated": "2026-09-22T03:25:50.766Z"
+      "updated": "2026-09-27T14:14:22.387Z"
     },
     "simulation": {
       "score": 8.6,
@@ -89,38 +97,40 @@
       "updated": "2026-09-27T07:12:11.292Z"
     },
     "audio": {
+      "score": 8.7,
+      "round": 5,
+      "pass": true,
+      "errors": 0,
+      "fps": 143.6,
+      "drawCalls": 107,
+      "issues": [
+        "B3 FIXED at grazing/normal angles: puddles now physical - envMapIntensity 2.6, roughness 0.05, opacity 0.46, emissive 0.12, softened rim 0.10+0.55*rim (audio-puddle-v2|csm) live-verified - closeup crops show reflected gradients and a dark scene reflection instead of a flat cyan wash",
+        "residual: at steep aerial angles puddles still read as flat tinted tiles (aerial pre/post crops near-identical, ~10% normal-incidence reflectance leaves the base tint dominant) - a tod-tinted rim would close it",
+        "aerial preset trees still sparse/clearing-like",
+        "faint plate/skirt colour seam at extreme near-vertical altitude (250m+)",
+        "no distinct god rays at low sun (attempted and dropped in B3 with A/B evidence, very minor)"
+      ],
+      "review": "docs/reviews/atmosphere-b3-critic.md",
+      "wave": 0,
+      "updated": "2026-09-27T14:14:07.723Z"
+    },
+    "effects": {
       "score": 8.6,
       "round": 3,
       "pass": true,
       "errors": 0,
-      "fps": 89.6,
-      "drawCalls": 107,
-      "issues": [
-        "aerial preset trees still sparse/clearing-like",
-        "faint plate/skirt colour seam at extreme near-vertical altitude (250m+)",
-        "puddles read as tinted wet tiles rather than glossy reflective water at normal range",
-        "no distinct god rays at low sun (very minor, haze now present)"
-      ],
-      "review": "docs/reviews/audio-r3.md",
-      "wave": 0,
-      "updated": "2026-09-17T15:27:16.228Z"
-    },
-    "effects": {
-      "score": 8.6,
-      "round": 2,
-      "pass": true,
-      "errors": 0,
-      "fps": 99.6,
+      "fps": 143.2,
       "drawCalls": 76,
       "issues": [
         "quality tiers conflate AO with MSAA (low disables both, muddying the AO-specific delta)",
         "raw GTAO buffer shows grain on grazing-angle faces in debug view (invisible post-curve in the final image)",
         "~3% of pixels drift by <=8/255 across identical re-stages (GPU float/order noise, not a seeded-RNG leak)",
-        "dawn sky still pale/low-contrast in every showcase shot, confirmed identical on/off so it is environment's tone not an effects regression"
+        "dawn sky pale (r2) was environment's tone and is fixed in B3 (environment 8.8) - effects path unchanged",
+        "B3 atmosphere regression hold: my effects r3 batch 143.2/6.20/76, errors 0, no effects source change"
       ],
       "review": "docs/reviews/effects-r2.md",
       "wave": 0,
-      "updated": "2026-09-17T05:36:45.430Z"
+      "updated": "2026-09-27T14:14:46.515Z"
     },
     "zoning": {
       "score": 8.6,
@@ -275,17 +285,18 @@
   },
   "game": {
     "score": 8.8,
-    "round": 4,
+    "round": 20,
     "pass": true,
     "issues": [
       "traffic still sparse from wide/elevated framing (minor, unchanged 4 rounds)",
-      "demand bars R-filled/C-I-empty on fresh Day-1 city (not a bug, deterministic)"
+      "demand bars R-filled/C-I empty on fresh Day-1 city (not a bug, deterministic)",
+      "B3 atmosphere regression hold: my r20 batch 60.1/16.25/847 errors 0 (builder r19 61.0/15.93/847, pre-B3 r18 61.4/15.53/847) - dusk sky warmer at overview-18 while street-12 noon sky is pixel-identical (0.032 meanAbs), terraces read at play distance, no regression"
     ],
     "judges": "judge1:0-5;judge2:0-5;judge3:0-5;overall:0-15 (ours lost every blind pair to reference marketing screenshots)",
     "errors": 0,
-    "fps": 92.2,
-    "drawCalls": 792,
+    "fps": 60.1,
+    "drawCalls": 847,
     "review": "docs/reviews/game-r4.md",
-    "updated": "2026-09-18T15:45:30.769Z"
+    "updated": "2026-09-27T14:14:58.047Z"
   }
 }
