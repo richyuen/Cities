@@ -43,13 +43,22 @@ Three independent judge subagents, images only, no key. Set 1/2 baseline: **0/5 
 | 01 | theirs | ours | A ×3 | loss |
 | 02 | theirs | ours | A ×3 | loss |
 | 03 | ours | theirs | B ×3 | loss |
-| 04 | theirs | ours | A, **B, B** | **WIN (ours, 2–1)** |
+| 04 | theirs | ours | A, B, B (see below) | **disputed → re-judged: loss** |
 | 05 | theirs | ours | A ×3 | loss |
 
-**Result: 1/5 (first round win; sets 1–2 were 0/5).** Every judge reason is image-consistent, no pick cites the HUD
-(the `?hud=0` capture removed it and the "Show HUD" chip entirely), and the surviving complaints narrowed to:
-`overview`/`aerial` still read as **top-down maps** (pairs 02/05), the **night street** is thin/dark (pair 03), and
-the skyline aerial still loses to the references' hero-subject closeups (pair 01). Next levers, in order:
-(1) an angled/oblique aerial composition with a foreground anchor instead of straight-down; (2) a livelier night
-street (more lit windows/streetlights/traffic in frame, a subject); (3) micro-detail density/props (the content
-lever both remaining complaints share).
+**Corrected result: 0/5** — the same as sets 1–2. The table above is kept as-is (it is the raw record), but the
+pair-04 "win" was a **judging artifact**: judge 2's reasons for pairs 04 and 05 describe each other's references,
+and judge 3's pair-04 reason calls the tower "A" (it is B). A fresh blind re-judge of pair 04 alone (two new
+independent judges, no other context) both described the images correctly and picked **A = theirs, confidence 5**
+("a vibrant, light-filled, richly detailed diorama full of citizens, vehicles and variety" vs "gray, static,
+dominated by a single flat tower with little sense of a living city"). Pair 04 is a loss; the earlier two votes
+were answer slips. The critic's audit (`docs/reviews/beauty-v5-critic.md`) independently reached the same
+conclusion (its own picks: A, A, B, A, A → theirs 5/5).
+
+**What set 3 does prove:** no judge reason mentions the HUD or any UI chrome in any of the 15 verdicts (the
+`?hud=0` capture removed it), and the surviving complaints are content/composition, not presentation: the
+straight-down `overview`/`aerial` read as maps (pairs 02/05), the night street is dark/thin (03), and our closeup
+is a cropped hero tower with no activity vs the references' bustling dioramas (01/04). Next levers, in order:
+(1) an oblique aerial with a foreground anchor; (2) a livelier night street (lit windows/streetlights/traffic, a
+subject); (3) micro-detail density/props/set dressing (the content lever every loss shares); (4) closeup framing
+that fits the hero (the tower crops > 40 % of the frame).

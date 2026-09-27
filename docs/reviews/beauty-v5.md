@@ -3,8 +3,8 @@
 **What shipped:** a `?hud=0` capture mode (HUD *and* the "Show HUD" chip hidden, `--hud` passthrough in
 `tools/shot.mjs`), a recomposition of the five core game camera presets around actual subjects (skyline 3/4 hero
 framing, closeup picks the tallest building near downtown, overview/aerial tightened ~25 %), and the third blind
-judge set — which produced the **first round win (1/5) and zero HUD complaints** (sets 1–2 were 0/5 unanimous).
-Design: `C:\Users\ryuen\.opencode\plan\beauty-shots.md`.
+judge set — **0/5 again, but with zero HUD complaints** (sets 1–2 also lost 0/5 *with* chrome complaints in the
+reasons; set 3's reasons are purely content/composition). Design: `C:\Users\ryuen\.opencode\plan\beauty-shots.md`.
 
 > Evidence, not a pass — the independent critic re-measures in `docs/reviews/beauty-v5-critic.md`.
 
@@ -36,10 +36,14 @@ Design: `C:\Users\ryuen\.opencode\plan\beauty-shots.md`.
 - Screenshots read: `shots/beauty/v5/01-skyline-golden.png` (city filling the frame, warm dusk, streets/traffic
   visible), `04-closeup-golden.png` (a hero tower 3/4 with neighbours and a road), `05-aerial-dawn.png` (clean plan
   view), `shots/game/r28/skyline-12.png` (the same framing in the shipped game, HUD on, Tornado tool visible).
-- **Blind set 3** (`docs/judge-set3-verdicts.md`, seed 23, three independent judges): **1/5** (pair 04 won 2–1) vs
-  0/5 in sets 1–2. No judge mentioned the HUD in set 3; the reasons narrowed to the straight-down
-  overview/aerial reads (pairs 02/05), the thin night street (03) and a hero-subject closeup beating our skyline
-  aerial (01).
+- **Blind set 3** (`docs/judge-set3-verdicts.md`, seed 23, three independent judges): raw picks gave one disputed
+  pair-04 "win"; a fresh blind re-judge of pair 04 (two new judges, both describing the images correctly) picked
+  the reference, so the corrected result is **0/5 — the same as sets 1–2**. The qualitative change is real though:
+  **no judge mentioned the HUD/chrome in any of the 15 reasons**, and the losses narrowed to content/composition
+  (map-like straight-down aerial/overview, a thin night street, a cropped hero tower with no activity vs the
+  references' bustling dioramas). The builder's first write-up claimed a 1/5 win from the slipped votes; corrected
+  here and in `docs/judge-set3-verdicts.md` after the critic's audit. Next levers: oblique aerial with a foreground
+  anchor; livelier night street; micro-detail density/props; closeup framing that fits the hero.
 
 ## Known gaps / honest caveats
 
