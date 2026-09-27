@@ -105,6 +105,10 @@ const api = {
   /** Rider fare income in $/tick, pushed by transit; shows up as its own budget income line (C5). */
   setTransitFareRevenue(v) { S.model.transitFare = Math.max(0, Number(v) || 0); },
   getTransitFareRevenue() { return S.model.transitFare; },
+  /** Active-disaster insurance/cleanup cost in $/tick, pushed by the `disasters` module while a hazard is live;
+   *  shows up as its own budget expense line (D2). */
+  setDisasterCost(v) { S.model.disasterCost = Math.max(0, Number(v) || 0); },
+  getDisasterCost() { return S.model.disasterCost; },
   /** Ignite a building by id (any kind). Returns false if not found or already on fire. */
   igniteBuilding(id) { return S.model.igniteBuilding(id); },
   /** ids of buildings currently on fire. */

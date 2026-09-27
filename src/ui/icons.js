@@ -152,6 +152,12 @@ export const icons = {
   // domino mask, matching the in-world burglary indicator's navy band + two eye holes
   'hazard:burglary': svg(`<path d="M2.2 8.6c1.8-2.4 5.8-2.2 8.2-.2.6.5 2.6.5 3.2 0 2.4-2 6.4-2.2 8.2.2 1.2 1.8-.2 6-3.2 6.8-2.2.6-4.4-.6-5.8-1.8-.5-.4-1.1-.4-1.6 0-1.4 1.2-3.6 2.4-5.8 1.8-3-.8-4.4-5-3.2-6.8z" fill="#1d3557" ${O}/>
     <circle cx="8.4" cy="11.2" r="1.5" fill="${WHITE}"/><circle cx="15.6" cy="11.2" r="1.5" fill="${WHITE}"/>`),
+  // funnel cloud: stacked swirl bands narrowing to the ground
+  'hazard:tornado': svg(`<path d="M3 4h18l-5.2 3.2H8.2L3 4z" fill="${GREY}" ${O}/>
+    <path d="M8.2 7.2h7.6l-3.1 3.1h-4.2l-.3-3.1z" fill="#8d9296" ${O}/>
+    <path d="M8.5 10.3h4.2l-2.6 3.2h-2.4l.8-3.2z" fill="${GREY}" ${O}/>
+    <path d="M7.7 13.5h2.4l-1.5 3.1H7.2l.5-3.1z" fill="#8d9296" ${O}/>
+    <path d="M7.2 16.6h1.4L8 20.6l-1-2 .2-2z" fill="${GREY}" ${O}/>`),
 
   // one-way street: dark road plate with a lane arrow pointing up
   oneway: svg(`<rect x="2" y="2" width="20" height="20" rx="2" fill="${ROAD}" ${O}/>

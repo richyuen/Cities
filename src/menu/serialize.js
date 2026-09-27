@@ -39,6 +39,7 @@ export function serializeSave(ctx, { name }) {
     roads, zones, parks, buildings, props,
     simulation: mod(ctx, 'simulation')?.getState?.() ?? null,
     transit: mod(ctx, 'transit')?.getState?.() ?? null,
+    disasters: mod(ctx, 'disasters')?.getState?.() ?? null,
   };
 }
 
@@ -57,6 +58,7 @@ export function applySave(ctx, save) {
   // can be resolved against the just-replayed road network in the same frame.
   mod(ctx, 'traffic')?.rebuildNetwork?.();
   mod(ctx, 'transit')?.loadState?.(save.transit);
+  mod(ctx, 'disasters')?.loadState?.(save.disasters);
   if (save.clock) {
     ctx.clock.set(save.clock.hours);
     ctx.clock.timeScale = save.clock.timeScale ?? 1;

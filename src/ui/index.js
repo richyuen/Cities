@@ -58,6 +58,7 @@ function buildTreasuryModal(ctx) {
       h('span', {}, 'Expenses / day'), h('span', {}, fmtMoney(bud.perDay.expenses.total)),
       h('span', {}, 'Transit upkeep / day'), h('span', {}, fmtMoney(bud.perDay.expenses.transit || 0)),
       h('span', {}, 'Policy upkeep / day'), h('span', {}, fmtMoney(bud.perDay.expenses.policies || 0)),
+      h('span', {}, 'Disaster costs / day'), h('span', {}, fmtMoney(bud.perDay.expenses.disasters || 0)),
       h('span', {}, 'Net / day'), h('span', {}, fmtMoney(bud.perDay.net))),
     h('h4', {}, 'Debt'),
     h('div', { class: 'lc-bar debt' }, h('i', { style: `width:${Math.round(st.debt * 100)}%` })),

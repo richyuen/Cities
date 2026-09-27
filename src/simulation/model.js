@@ -172,7 +172,7 @@ export class SimModel {
     this.newCandidates = [];                          // ids that became candidates this tick
     this.roadAdjCoverage = null;
     this.unserved = [];                                // building ids missing road, power, or water
-    this.budget = { income: { r: 0, c: 0, i: 0, transit: 0, total: 0 }, expenses: { roads: 0, buildings: 0, utilities: 0, transit: 0, policies: 0, total: 0 }, net: 0 };
+    this.budget = { income: { r: 0, c: 0, i: 0, transit: 0, total: 0 }, expenses: { roads: 0, buildings: 0, utilities: 0, transit: 0, policies: 0, disasters: 0, total: 0 }, net: 0 };
     this.debt = 0;                                    // 0..1 service degradation from a negative treasury
     this.wealth = 0;                                  // 0..1 bonus from a healthy treasury
     this.bankruptTicks = 0;                            // consecutive ticks with debt saturated at 1.0
@@ -184,6 +184,7 @@ export class SimModel {
     this.transitCoverage = 0;                          // 0..1, share of zoned capacity near a bus stop (transit pushes)
     this.transitUpkeep = 0;                            // $/tick, bus line + bus upkeep (transit pushes)
     this.transitFare = 0;                              // $/tick, rider fare income (transit pushes, C5)
+    this.disasterCost = 0;                             // $/tick, active-disaster insurance/cleanup (disasters pushes)
   }
 
   _blankStats() {
@@ -192,7 +193,7 @@ export class SimModel {
       workforce: 0, capacity: { r: 0, c: 0, i: 0 }, occupancy: { r: 0, c: 0, i: 0 }, jobsC: 0, jobsI: 0,
       demand: { r: 0, c: 0, i: 0 }, parkShare: 0, income: 0, expenses: 0, buildings: 0, roads: 0, net: 0, debt: 0, wealth: 0, services: 1,
       bankrupt: false, bankruptTicks: 0, powerCoverage: 0, waterCoverage: 0, crime: 0, policeCoverage: 0, burglaries: 0,
-      transitCoverage: 0, educationCoverage: 0, healthCoverage: 0, policyUpkeep: 0,
+      transitCoverage: 0, educationCoverage: 0, healthCoverage: 0, policyUpkeep: 0, disasterCost: 0,
       day: 1, tick: 0, cityName: this.cityName, cityLevel: 0, cityLevelName: LEVEL_NAMES[0],
     };
   }
@@ -589,7 +590,8 @@ export class SimModel {
       if (!u.onFire && u.damage > 0) u.damage = Math.max(0, u.damage - FIRE_REPAIR_RATE);
     }
     const expPol = fx.upkeep;   // flat $/tick per active policy (not scaled by the scenario upkeepMul)
-    const income = incR + incC + incI + this.transitFare, expenses = expRoads + expBld + expUtil + this.transitUpkeep + expPol;
+    const expDisaster = this.disasterCost;   // active-disaster insurance/cleanup (disasters pushes; see src/disasters)
+    const income = incR + incC + incI + this.transitFare, expenses = expRoads + expBld + expUtil + this.transitUpkeep + expPol + expDisaster;
     this.money += income - expenses;
     if (this.bankrupt && this.money < BANKRUPT_FLOOR) this.money += (BANKRUPT_FLOOR - this.money) * BANKRUPT_SPRING;
     const bg = this.budget;
@@ -597,6 +599,7 @@ export class SimModel {
     bg.expenses.roads = expRoads; bg.expenses.buildings = expBld; bg.expenses.utilities = expUtil;
     bg.expenses.transit = this.transitUpkeep;
     bg.expenses.policies = expPol;
+    bg.expenses.disasters = expDisaster;
     bg.expenses.total = expenses;
     bg.net = income - expenses;
 
@@ -629,7 +632,7 @@ export class SimModel {
     st.powerCoverage = totalCap ? poweredCap / totalCap : 0; st.waterCoverage = totalCap ? wateredCap / totalCap : 0;
     st.crime = this.crime; st.policeCoverage = policeShare; st.burglaries = this.burglaries.size;
     st.transitCoverage = transit;
-    st.educationCoverage = education; st.healthCoverage = health;
+    st.educationCoverage = education; st.healthCoverage = health; st.disasterCost = expDisaster;
     st.policyUpkeep = expPol;
     st.day = this.day; st.tick = this.tick; st.cityName = this.cityName; st.cityLevel = cityLevel; st.cityLevelName = LEVEL_NAMES[cityLevel];
 
@@ -660,7 +663,8 @@ export class SimModel {
         expenses: {
           roads: bg.expenses.roads * perDay, buildings: bg.expenses.buildings * perDay,
           utilities: bg.expenses.utilities * perDay, transit: bg.expenses.transit * perDay,
-          policies: bg.expenses.policies * perDay, total: bg.expenses.total * perDay,
+          policies: bg.expenses.policies * perDay, disasters: bg.expenses.disasters * perDay,
+          total: bg.expenses.total * perDay,
         },
         net: bg.net * perDay,
       },
