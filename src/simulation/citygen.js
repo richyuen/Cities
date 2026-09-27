@@ -11,8 +11,9 @@ export const USE_WORLD_ROADS = true;
 /**
  * C6: stage one school and one hospital in every showcase variant so the panel's Education/Health rows read
  * non-zero (the civics r1 critic found the simulation showcase had 0/0) and the coverage grids have something to
- * show. Two fixed blocks near the district centre; they take precedence over that block's park/RCI lots and do not
- * consume rng, so the rest of the layout is unchanged.
+ * show. Two fixed blocks near the district centre; they take precedence over that block's park/RCI lots and add no
+ * rng calls of their own. (The branch does `continue` past that block's park/lot draws, so blocks *after* a service
+ * block re-roll relative to a no-service layout — deterministic either way, cross-boot hashes identical.)
  */
 export const SERVICE_BLOCKS = { '1,2': 'school', '3,2': 'hospital' };
 

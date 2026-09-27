@@ -755,22 +755,26 @@ function generateSchool(ctx, b, rng, halfW, halfD, cx, cz, groundY) {
   plinth(ctx, parts, 'darkStoneGrey', cx, cz, halfW, halfD, groundY, 0.35, 0.08);
   courseBands(parts, 'white', cx, cz, halfW, halfD, groundY + 0.35, groundY + storyH, { pitch: 1.3 });
   const roofTop = flatRoof(ctx, parts, studs, 'darkStoneGrey', cx, cz, halfW, halfD, groundY + storyH, { capH: 0.3, parapetH: 0.35 });
-  // classroom windows on the long (+z / -z) faces: white frame, trans-blue glazing; about half get a mullioned
-  // 2x2 grid of lit panes (winWarm/winCool emissive, dead by day — see buildings/index.js updateNight)
+  // classroom windows on the long (+z / -z) faces: white frame, dark liner (front face 0.01 proud of the frame so
+  // it is what the glass shows, not the white slab), trans-blue glazing; about half get a mullioned 2x2 grid of lit
+  // panes (winWarm/winCool emissive, dead by day — see buildings/index.js updateNight). The liner keeps unlit bays
+  // reading as glass by day (r2 critic item 1: without it ~45 % of bays were blank pale panels, white-on-white).
   for (const sz of [1, -1]) {
     for (const ox of [-1, 1]) {
       const wx = cx + ox * halfW * 0.48, wz = cz + sz * halfD;
       plainBox(parts, 'white', 3.6, 2.5, 0.12, wx, groundY + 3.2, wz + sz * 0.06);
-      plainBox(parts, 'transBlue', 3.1, 2.05, 0.08, wx, groundY + 3.2, wz + sz * 0.13);
-      if (rng.chance(0.55)) litPaneGrid(parts, rng.chance(0.5) ? 'winWarm' : 'winCool', 2.7, 1.75, 2, 2, wx, groundY + 3.2, wz + sz * 0.18);
+      plainBox(parts, 'darkStoneGrey', 3.1, 2.05, 0.04, wx, groundY + 3.2, wz + sz * 0.11);
+      plainBox(parts, 'transBlue', 3.1, 2.05, 0.08, wx, groundY + 3.2, wz + sz * 0.17);
+      if (rng.chance(0.55)) litPaneGrid(parts, rng.chance(0.5) ? 'winWarm' : 'winCool', 2.7, 1.75, 2, 2, wx, groundY + 3.2, wz + sz * 0.22);
     }
   }
   // matching bay on each short (±x) face — r1 critic item 1: the school's side walls were entirely windowless
   for (const sx of [1, -1]) {
     const wx = cx + sx * halfW, wz = cz;
     plainBox(parts, 'white', 0.12, 2.5, 3.6, wx + sx * 0.06, groundY + 3.2, wz);
-    plainBox(parts, 'transBlue', 0.08, 2.05, 3.1, wx + sx * 0.13, groundY + 3.2, wz);
-    if (rng.chance(0.55)) litPaneGrid(parts, rng.chance(0.5) ? 'winWarm' : 'winCool', 2.7, 1.75, 2, 2, wx + sx * 0.18, groundY + 3.2, wz, 'x');
+    plainBox(parts, 'darkStoneGrey', 0.04, 2.05, 3.1, wx + sx * 0.11, groundY + 3.2, wz);
+    plainBox(parts, 'transBlue', 0.08, 2.05, 3.1, wx + sx * 0.17, groundY + 3.2, wz);
+    if (rng.chance(0.55)) litPaneGrid(parts, rng.chance(0.5) ? 'winWarm' : 'winCool', 2.7, 1.75, 2, 2, wx + sx * 0.22, groundY + 3.2, wz, 'x');
   }
   // entrance on the +z face: white portal, tinted double door (dark liner + white frame + centre mullion), red
   // canopy. r1 critic item 3: the old transClear pane read as a flat white panel by day.
@@ -820,20 +824,25 @@ function generateHospital(ctx, b, rng, halfW, halfD, cx, cz, groundY) {
   plainBox(parts, 'crossGlow', 0.85, 2.2, 0.12, cx, groundY + 4.9, cz + halfD + 0.10);
   plainBox(parts, 'crossGlow', 2.2, 0.85, 0.12, cx, groundY + 4.9, cz + halfD + 0.14);
   // ward windows: four framed, glazed bays per ±x face and two on the back (-z) — r1 critic item 1 (the building
-  // read as a plain box from three of four sides). Lit overlays are split vertically into two panes (item 2).
+  // read as a plain box from three of four sides). Lit overlays are split vertically into two panes (item 2) and
+  // sized inside the glazing (r2 critic item 2: a 2.0 m grid over 1.6 m glass spilled onto the frame as black
+  // bands by day); a dark liner sits proud of the frame face behind each pane so unlit bays read as glass by day
+  // (r2 critic item 1). Depths: frame front 0.11, liner [0.08,0.12], glazing [0.12,0.20], lit overlay [0.20,0.22].
   for (const sx of [1, -1]) {
     for (const oz of [-0.72, -0.27, 0.27, 0.72]) {
       const wx = cx + sx * halfW, wz = cz + oz * halfD;
       plainBox(parts, 'lightStoneGrey', 0.12, 2.0, 2.6, wx + sx * 0.05, groundY + 4.7, wz);
-      plainBox(parts, 'transBlue', 0.08, 1.6, 2.2, wx + sx * 0.11, groundY + 4.7, wz);
-      if (rng.chance(0.6)) litPaneGrid(parts, 'winCool', 1.45, 2.0, 2, 1, wx + sx * 0.16, groundY + 4.7, wz, 'x');
+      plainBox(parts, 'darkStoneGrey', 0.04, 1.6, 2.2, wx + sx * 0.10, groundY + 4.7, wz);
+      plainBox(parts, 'transBlue', 0.08, 1.6, 2.2, wx + sx * 0.16, groundY + 4.7, wz);
+      if (rng.chance(0.6)) litPaneGrid(parts, 'winCool', 1.45, 1.35, 2, 1, wx + sx * 0.21, groundY + 4.7, wz, 'x');
     }
   }
   for (const ox of [-0.45, 0.45]) {
     const wx = cx + ox * halfW, wz = cz - halfD;
     plainBox(parts, 'lightStoneGrey', 2.6, 2.0, 0.12, wx, groundY + 4.7, wz - 0.05);
-    plainBox(parts, 'transBlue', 2.2, 1.6, 0.08, wx, groundY + 4.7, wz - 0.11);
-    if (rng.chance(0.6)) litPaneGrid(parts, 'winCool', 1.45, 2.0, 2, 1, wx, groundY + 4.7, wz - 0.16, 'z');
+    plainBox(parts, 'darkStoneGrey', 2.2, 1.6, 0.04, wx, groundY + 4.7, wz - 0.10);
+    plainBox(parts, 'transBlue', 2.2, 1.6, 0.08, wx, groundY + 4.7, wz - 0.16);
+    if (rng.chance(0.6)) litPaneGrid(parts, 'winCool', 1.45, 1.35, 2, 1, wx, groundY + 4.7, wz - 0.21, 'z');
   }
   // side service door on the -x face at street level (r1 item 1), with a small canopy
   const dx = cx - halfW;

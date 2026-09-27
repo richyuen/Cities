@@ -1,5 +1,5 @@
 {
-  "updated": "2026-09-27T07:12:11.293Z",
+  "updated": "2026-09-27T13:18:14.547Z",
   "modules": {
     "terrain": {
       "score": 8.2,
@@ -206,23 +206,21 @@
       "updated": "2026-09-27T07:11:43.941Z"
     },
     "civics": {
-      "score": 8.5,
-      "round": 1,
+      "score": 8.7,
+      "round": 2,
       "pass": true,
       "errors": 0,
-      "fps": 54.3,
-      "drawCalls": 860,
+      "fps": 63.4,
+      "drawCalls": 847,
       "issues": [
-        "school/hospital side facades bare (school windows only on front/back faces)",
-        "close-range lit windows blow out to uniform panes (no mullion/hot core)",
-        "school glazed entrance reads white-on-white by day",
-        "hospital cross goes black at night under the blooming sign board",
-        "informational, not civics: save/load drops occupancy/population",
-        "C6-planned not counted: level-3 gate + sim showcase staging"
+        "FIXED post-review (critic items 1+2): school bays got a darkStoneGrey liner proud of the frame face behind the glazing (all six bays) and hospital ward lit grids resized to 1.45x1.35 inside the 2.2x1.6 glass + liners - re-verified check-civics 38/38, buildings r7 143.9/6.43/299, game r18 61.4/15.53/847, errors 0",
+        "FIXED post-review (critic items 3+4): citygen comment + builder claim reworded (service branch skips that block's draws so later blocks re-roll, determinism unaffected), 36/36 -> 38/38 typos fixed",
+        "balance observation: 74 of the demo's 110 level-3 homes are unschooled after the boot warm-up - level 3 nearly universal in a healthy city (design-sanctioned, owner call)",
+        "demo coverage moved 35%/28% to 29%/33% vs r1 (B5 rebuilt the demo after r1, HUD honest, 8/4 seeding holds)"
       ],
-      "review": "docs/reviews/civics-r1-critic.md",
+      "review": "docs/reviews/civics-r2-critic.md",
       "wave": 0,
-      "updated": "2026-09-25T13:15:24.763Z"
+      "updated": "2026-09-27T13:18:14.547Z"
     },
     "views": {
       "score": 8.7,

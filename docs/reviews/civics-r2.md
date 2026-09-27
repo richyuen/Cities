@@ -17,10 +17,12 @@ facades, mullioned lit windows, tinted framed entrances, glowing red hospital cr
   transient: `getOccupancyState()`/`applyOccupancyState()` are unchanged, so a load restarts the streak (at most
   30 ticks of delay) and can never *grant* level 3 — documented in the design doc.
 - **Showcase staging (`simulation/citygen.js`).** Two fixed service blocks near the district centre
-  (`SERVICE_BLOCKS = { '1,2': 'school', '3,2': 'hospital' }`) take precedence over that block's park/RCI lots; they
-  consume no rng, so the rest of the layout is unchanged. The staged city now returns `services` (kind + id) for
-  tests. Coverage after warm-up: education 90.7–92.3 %, health 100 % in all three variants (school grid 841 cells,
-  hospital 1089).
+  (`SERVICE_BLOCKS = { '1,2': 'school', '3,2': 'hospital' }`) take precedence over that block's park/RCI lots. The
+  citygen branch adds no rng calls of its own, but it skips that block's park/lot draws, so blocks after a service
+  block re-roll relative to a no-service layout (still fully deterministic; cross-boot hashes identical — the
+  r2 critic corrected an earlier "rest of the layout unchanged" claim). The staged city now returns `services`
+  (kind + id) for tests. Coverage after warm-up: education 90.7–92.3 %, health 100 % in all three variants (school
+  grid 841 cells, hospital 1089).
 - **Panel rows (`simulation/panel.js`).** `Education` and `Health` rows added after `Park access` (the r1 critic
   found the showcase panel had no education/health rows at all). Reads 92 % / 100 % in `default`/`boom`, 91 % /
   100 % in `bust`.
@@ -42,7 +44,7 @@ facades, mullioned lit windows, tinted framed entrances, glowing red hospital cr
 
 ## Verification
 
-`node tools/check-civics.mjs` (new, kept): **36/36**.
+`node tools/check-civics.mjs` (new, kept): **38/38**.
 - Node gate proof on a stub world, all four routes: unschooled + happiness 0.65 → candidate at exactly tick 30
   (wealthTicks 30, mature 30); unschooled + happiness 0.4 → no candidate in 120 ticks (gate still real); schooled +
   happiness 0.4 → candidate at exactly tick 12 (`MATURE_TICKS_SCHOOLED`); hysteresis (20 high → 3 below the reset
@@ -64,6 +66,22 @@ emissive slab" is gone), `school-34-day.png` (side bay present), `hospital-34-da
 `hospital-rear-day.png` (back bays + service door, no longer a plain box), `hospital-front-night.png` (cross reads
 red against the glowing board), `showcase-default-day.png` + `shots/simulation/r6/simulation_closeup-12.png`
 (panel rows Education 92 % / Health 100 %), `shots/game/r15/closeup-21h5.png` (no full-game regression).
+
+## Post-review fixes (r2 critic ranked items 1–4, transit-r2 precedent)
+
+- **Item 1 (blank unlit bays):** the dark liner is now placed *proud of the frame's front face* (school: frame front
+  0.12, liner [0.09, 0.13], glazing [0.13, 0.21], lit overlay [0.21, 0.23]; hospital: 0.11 / [0.08, 0.12] /
+  [0.12, 0.20] / [0.20, 0.22]) — the first attempt buried the liner inside the solid frame box, where it was
+  invisible. Verified by eye: `shots/civics/r2/school-front-day.png` (both bays read as glazing, consistent
+  2×2 panes) and `hospital-34-day.png` (no blank panels).
+- **Item 2 (oversized ward lit grid):** hospital grids are now 1.45 × 1.35 inside the 2.2 × 1.6 glazing (was
+  2.0 tall); the day-time black spill bands above/below the glass are gone in `hospital-34-day.png` /
+  `hospital-rear-day.png`.
+- **Items 3–4 (claim accuracy + typo):** `citygen.js` comment, this report and the integrator entry reworded
+  (the service branch skips that block's rng draws so later blocks re-roll; deterministic either way), and the
+  check counts corrected to 38/38.
+- Re-verified after the fixes: `tools/check-civics.mjs` **38/38**, buildings r7 **143.9 / 6.43 / 299**, game r18
+  **61.4 / 15.53 / 847** — all `errors: []`, budgets pass.
 
 ## Known gaps / honest caveats
 
