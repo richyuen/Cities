@@ -17,15 +17,18 @@ export const VIEWS = [
   { id: 'school', label: 'School', kind: 'coverage', grid: 'school' },
   { id: 'health', label: 'Health', kind: 'coverage', grid: 'hospital' },
   { id: 'transit', label: 'Transit', kind: 'coverage', grid: 'transit' },
+  { id: 'traffic', label: 'Traffic', kind: 'congestion' },
   { id: 'land', label: 'Land value', kind: 'land' },
 ];
 const VIEW_BY_ID = new Map(VIEWS.map((v) => [v.id, v]));
 const REBUILD_DEBOUNCE = 0.25;    // seconds; batches a burst of world events into one rebuild
+const CONGESTION_REFRESH = 0.5;   // seconds; the traffic layer follows the traffic module's 2 Hz sample cadence
 
-let S = null; // { ctx, overlay, active, dirty, timer, subs, rng, focus }
+let S = null; // { ctx, overlay, active, dirty, timer, subs, rng, focus, congTimer }
 
 function simApi(ctx) { const m = ctx.modules.get('simulation'); return m?.status === 'ok' ? m.api : null; }
 function transitApi(ctx) { const m = ctx.modules.get('transit'); return m?.status === 'ok' ? m.api : null; }
+function trafficApi(ctx) { const m = ctx.modules.get('traffic'); return m?.status === 'ok' ? m.api : null; }
 function zoningApi(ctx) { const m = ctx.modules.get('zoning'); return m?.status === 'ok' ? m.api : null; }
 
 function rebuild() {
@@ -33,7 +36,7 @@ function rebuild() {
   const view = S.active ? VIEW_BY_ID.get(S.active) : null;
   zoningApi(S.ctx)?.setOverlayVisible?.(!view); // don't blend two translucent overlays into each other
   if (!view) { S.overlay.hide(); return; }
-  S.overlay.update(view, { sim: simApi(S.ctx), transit: transitApi(S.ctx) });
+  S.overlay.update(view, { sim: simApi(S.ctx), transit: transitApi(S.ctx), traffic: trafficApi(S.ctx) });
 }
 
 function markDirty() {
@@ -71,7 +74,7 @@ const api = {
 
 export default {
   id: 'views',
-  deps: ['terrain', 'zoning', 'buildings', 'props', 'simulation', 'transit'],
+  deps: ['terrain', 'zoning', 'buildings', 'props', 'simulation', 'transit', 'traffic'],
   order: 72, // after simulation/traffic, before ui (80)
   showcaseVariants: ['default', ...VIEWS.map((v) => v.id)],
   presets: {
@@ -97,7 +100,7 @@ export default {
 
   async init(ctx) {
     S = {
-      ctx, active: null, dirty: false, timer: 0, subs: [], focus: { x: 0, z: 0, r: 190 },
+      ctx, active: null, dirty: false, timer: 0, subs: [], focus: { x: 0, z: 0, r: 190 }, congTimer: CONGESTION_REFRESH,
       rng: ctx.rng.fork('views'), overlay: null,
     };
     S.overlay = new ViewOverlay(ctx);
@@ -116,6 +119,12 @@ export default {
   update(dt, ctx) {
     if (!S) return;
     S.overlay.setNight(Math.max(0, Math.min(1, 1 - (ctx.clock.daylight ?? 1))));
+    // Congestion changes continuously (cars move every frame), so the traffic layer re-samples on a fixed cadence
+    // instead of waiting for a world event. 2 Hz, matching the traffic module's own congestion sampling.
+    if (S.active === 'traffic' && !S.dirty) {
+      S.congTimer -= dt;
+      if (S.congTimer <= 0) { S.congTimer = CONGESTION_REFRESH; S.dirty = true; S.timer = 0; }
+    }
     if (!S.dirty) return;
     S.timer -= dt;
     if (S.timer <= 0) { S.dirty = false; rebuild(); }

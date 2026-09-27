@@ -101,6 +101,7 @@ export function drawStatsChart(canvas, history, {
   // x axis: game minutes before now (300 ticks = 150 game seconds at 2 tps)
   c.textAlign = 'center'; c.textBaseline = 'top'; c.fillStyle = 'rgba(230,236,244,0.7)';
   for (let s = 0; s <= 150; s += 30) {
+    if (strips.length && s === 150) continue; // the -2:30 tick would sit directly under the strip's 0 % label
     const k = max - 1 - s * 2, px = x0 + ((x1 - x0) * k) / (max - 1);
     c.fillText(s === 0 ? 'now' : `-${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`, px, stripY1 + 3);
     c.strokeStyle = 'rgba(255,255,255,0.14)'; c.beginPath(); c.moveTo(Math.round(px) + 0.5, stripY1); c.lineTo(Math.round(px) + 0.5, stripY1 + 3); c.stroke();

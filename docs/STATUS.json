@@ -1,5 +1,5 @@
 {
-  "updated": "2026-09-27T03:50:12.880Z",
+  "updated": "2026-09-27T05:59:22.819Z",
   "modules": {
     "terrain": {
       "score": 8.2,
@@ -75,20 +75,19 @@
     },
     "ui": {
       "score": 8.9,
-      "round": 4,
+      "round": 5,
       "pass": true,
       "errors": 0,
-      "fps": 143.2,
+      "fps": 143.6,
       "drawCalls": 75,
       "issues": [
-        "series toggle chips lack aria-pressed (visual-only state)",
-        "bottom-left 0% and -2:30 labels nearly touch in the chart corner (panel-inherited)",
-        "R/C demand lines overdraw when values coincide",
-        "r3 nits (dezone grey, RCI contrast) unchanged"
+        "C4 fold-ins verified live: statistics chips set aria-pressed (true/off/false round-trip), -2:30 x-axis tick dropped (chart labels -2:00..now clear of the 0% strip label)",
+        "minimap footer names the active view but the minimap legend stays base-map while tinted (cosmetic follow-up)",
+        "ui showcase Traffic row reads 0% while other sim-fed stats read '—' (showcase-only)"
       ],
-      "review": "docs/reviews/ui-r4-critic.md",
+      "review": "docs/reviews/views-r2-critic.md",
       "wave": 0,
-      "updated": "2026-09-27T03:50:12.879Z"
+      "updated": "2026-09-27T05:59:22.819Z"
     },
     "audio": {
       "score": 8.6,
@@ -172,19 +171,19 @@
     },
     "traffic": {
       "score": 8.6,
-      "round": 3,
+      "round": 5,
       "pass": true,
       "errors": 0,
-      "fps": 123.3,
-      "drawCalls": 106,
+      "fps": 140.8,
+      "drawCalls": 109,
       "issues": [
-        "round-robin signal one-arm queue backup under load (unchanged design tradeoff, not re-penalized)",
-        "closeup hero framing is rear-3/4 elevation rather than front-3/4 in default/night variant (cosmetic)",
-        "shared tool-level real-time sampleMs wait still varies background traffic pose across loads (confirmed harmless to hero/composition)"
+        "new read-only congestion grid API traffic.getCongestionGrid/getCongestionAt (2 Hz + lazy sampling, deterministic, adds no draw calls, grid stays in [0,1] with no NaN across weather/tod/road churn)",
+        "cells that stop being roads decay ~0.85/sample until sampled (invisible, non-road cells are never painted)",
+        "pre-existing: traffic keeps driving while the clock is paused (C4 cross-module seam in integrator todo)"
       ],
-      "review": "docs/reviews/traffic-r3.md",
+      "review": "docs/reviews/views-r2-critic.md",
       "wave": 0,
-      "updated": "2026-09-18T04:39:54.989Z"
+      "updated": "2026-09-27T05:58:05.820Z"
     },
     "transit": {
       "score": 8.5,
@@ -222,21 +221,22 @@
       "updated": "2026-09-25T13:15:24.763Z"
     },
     "views": {
-      "score": 8.6,
-      "round": 1,
+      "score": 8.7,
+      "round": 2,
       "pass": true,
       "errors": 0,
-      "fps": 143.4,
+      "fps": 143.7,
       "drawCalls": 413,
       "issues": [
-        "land-value ramp reads as a uniform yellow wash and its high green is confusable with grass",
-        "building tint boxes are oversized translucent shells that do not hug the silhouette at street range",
-        "service yellow washes out to cream on pale power/water buildings",
-        "covered open land gets a full-strength blue pad past the built area"
+        "traffic congestion layer + minimap tint/footer landed, 25/25 functional checks, 2 draw calls, no regression",
+        "land polish sub-item 'faint dark edge on land plates' not implemented (emerald hue substituted, minor)",
+        "minimap keeps base-map legend chips while tinted",
+        "free-flow green low-contrast vs grass by day (night read good)",
+        "pre-existing seam: traffic drives while the clock is paused (integrator todo)"
       ],
-      "review": "docs/reviews/views-r1-critic.md",
+      "review": "docs/reviews/views-r2-critic.md",
       "wave": 0,
-      "updated": "2026-09-25T14:06:55.373Z"
+      "updated": "2026-09-27T05:56:17.146Z"
     },
     "tools": {
       "score": 8.7,

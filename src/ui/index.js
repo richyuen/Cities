@@ -21,6 +21,7 @@ function applyStats(stats) {
   if (stats.jobs !== undefined) S.hud.setJobs(stats.jobs);
   if (stats.happiness !== undefined) S.hud.setHappiness(stats.happiness);
   if (stats.cityLevelName !== undefined) S.hud.setLevel(stats.cityLevelName);
+  if (stats.traffic !== undefined) S.hud.setTraffic(stats.traffic);
   if (stats.powerCoverage !== undefined || stats.waterCoverage !== undefined || stats.transitCoverage !== undefined
     || stats.educationCoverage !== undefined || stats.healthCoverage !== undefined || stats.policeCoverage !== undefined) {
     S.hud.setUtilities(stats.powerCoverage || 0, stats.waterCoverage || 0, stats.transitCoverage || 0,
@@ -204,11 +205,12 @@ function buildStatisticsModal(ctx) {
   };
   for (const s of STATS_SERIES) {
     const val = h('b', {}, '—');
-    const chip = h('button', { class: 'lc-stats-chip on', 'data-series': s.id, title: `Toggle ${s.label}` },
+    const chip = h('button', { class: 'lc-stats-chip on', 'data-series': s.id, 'aria-pressed': 'true', title: `Toggle ${s.label}` },
       h('i', { style: `background:${s.color}` }), h('span', {}, s.label), val);
     chip.addEventListener('click', () => {
       if (selected.has(s.id)) selected.delete(s.id); else selected.add(s.id);
       chip.classList.toggle('on', selected.has(s.id));
+      chip.setAttribute('aria-pressed', selected.has(s.id) ? 'true' : 'false');
       redraw();
     });
     values.set(s.id, val);
@@ -376,6 +378,7 @@ export default {
     S.hud.setStatsAvailable(!!simApi(ctx));
     S.hud.setActiveView(viewsApi(ctx)?.getView?.() ?? null);
     S.minimap = new Minimap(ctx, S.hud.minimapCanvas, moveCameraTo);
+    S.minimap.setActiveView(viewsApi(ctx)?.getView?.() ?? null);
 
     // initial state
     applyStats(ctx.world.stats);
@@ -413,7 +416,11 @@ export default {
       ctx.events.on('building:spawned', () => S.minimap?.markDirty()),
       ctx.events.on('building:removed', () => S.minimap?.markDirty()),
       ctx.events.on('transit:changed', () => S.minimap?.markDirty()),
-      ctx.events.on('view:changed', (p) => S.hud.setActiveView(p?.view ?? null)),
+      ctx.events.on('view:changed', (p) => {
+        S.hud.setActiveView(p?.view ?? null);
+        S.hud.setMinimapView(p?.view ? (p.label || null) : null);
+        S.minimap?.setActiveView(p?.view ?? null);
+      }),
     );
     S.onKey = onKey;
     window.addEventListener('keydown', S.onKey);

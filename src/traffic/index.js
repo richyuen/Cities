@@ -12,6 +12,9 @@ const MAX_BUSES = 24;       // dedicated transit slots appended after the car sl
 const MAX_BUSES_PER_LINE = 4;
 const BUS_MIN_LOOP_M = 320; // one bus per this much route length, rounded, clamped to [1, MAX_BUSES_PER_LINE]
 const DEFAULT_MAX_CARS = 80; // used only when there is no lane data yet to size against (empty world)
+const CONG_PERIOD = 0.5;    // sim-seconds between congestion samples (2 Hz, matching the simulation tick)
+const CONG_EMA = 0.35;      // per-sample weight of the newest car speed ratio
+const CONG_DECAY = 0.85;    // per-sample decay of cells that currently hold no car
 const clamp01 = (v) => Math.max(0, Math.min(1, v));
 
 const S = {
@@ -22,7 +25,31 @@ const S = {
   heroShot: null, // cached {pos,target,fov} for traffic:closeup — decided once, deterministically, in showcase()
   carActive: 0, busSlots: [], activeList: [], busActive: 0,
   transitDefs: [], routes: [], // transit lines: raw defs (re-applied after a graph rebuild) + built routes
+  congestion: null, congestionAt: -1, congestionDirty: true, // per-road-cell speed-ratio grid (Wave C4)
 };
+
+/** Rebuild the per-road-cell congestion grid: 0 = free flow, 1 = stopped. Sampled at most every CONG_PERIOD of sim
+ *  time (from update()) and lazily from getCongestionGrid() when a caller asks for it while stale or after a network
+ *  change, so the grid is correct while paused. A car contributes its own speed / free flow (the lane kind times
+ *  the car's spec multiplier, so a slow bus at its own limit is not "congestion") to the cell it currently occupies,
+ *  EMA-blended; cells with no traffic decay toward 0. Deterministic: a pure function of car state and simTime. */
+function sampleCongestion() {
+  const world = S.ctx.world, { w, h } = world.size, g = S.congestion;
+  if (!g || g.length !== w * h) return;
+  for (let k = 0; k < g.length; k++) if (g[k] !== 0) g[k] *= CONG_DECAY;
+  for (const car of S.activeList) {
+    if (!car.active || !car.currentKey) continue;
+    const free = Math.max(0.5, S.graph.baseSpeed(car.currentKey) * (car.spec?.speedMul || 1));
+    const ratio = clamp01(1 - (car.speed || 0) / free);
+    const i = Math.floor((car.pos.x - world.minX) / world.cellSize);
+    const j = Math.floor((car.pos.z - world.minZ) / world.cellSize);
+    if (i < 0 || j < 0 || i >= w || j >= h) continue;
+    const k = j * w + i;
+    g[k] += (ratio - g[k]) * CONG_EMA;
+  }
+  S.congestionAt = S.simTime;
+  S.congestionDirty = false;
+}
 
 function computeMaxCars(ctx, graph) {
   if (!graph.ready) return 0;
@@ -85,6 +112,7 @@ function repathCars() {
 function rebuildGraph() {
   S.graph.rebuild();
   S.maxCars = computeMaxCars(S.ctx, S.graph) || DEFAULT_MAX_CARS;
+  S.congestionDirty = true; // the road network moved: stale cell statistics
   // The road network can change *in place* without any lane key changing: an upgrade/downgrade rewrites an edge's
   // kind/width (same id, new lane centres and — because the wider footprint samples higher terrain — a new bed
   // height), and any new road joining an existing node moves that node's trims/heights. Cars cache their lane
@@ -479,6 +507,20 @@ const api = {
   pause() { S.paused = true; },
   resume() { S.paused = false; },
   isPaused() { return S.paused; },
+  /** Read-only per-road-cell congestion (Float32Array, 0 = free flow, 1 = stopped; indexed j*w+i). Recomputed at
+   *  most every 0.5 s of sim time and lazily when stale or after a network change, so it is correct while paused.
+   *  Do not mutate — the returned array is the module's own. */
+  getCongestionGrid() {
+    if (!S.congestion) return S.congestion || new Float32Array(0);
+    if (S.congestionDirty || (S.graph?.ready && S.simTime - S.congestionAt >= CONG_PERIOD)) sampleCongestion();
+    return S.congestion;
+  },
+  /** Congestion at cell (i, j): 0 = free flow, 1 = stopped; 0 outside the map. */
+  getCongestionAt(i, j) {
+    const { w, h } = S.ctx.world.size;
+    if (!(i >= 0 && j >= 0 && i < w && j < h)) return 0;
+    return api.getCongestionGrid()[j * w + i];
+  },
 };
 
 export default {
@@ -516,6 +558,8 @@ export default {
     S.density = 1; S.activeCount = 0; S.carActive = 0; S.busActive = 0; S.activeList = [];
     S.transitDefs = []; S.routes = [];
     S.paused = false; S.simTime = 0; S.bounds = null; S.heroShot = null;
+    S.congestion = new Float32Array(ctx.world.size.w * ctx.world.size.h);
+    S.congestionAt = -1; S.congestionDirty = true;
     const bump = () => markDirty();
     S.unsub.push(ctx.events.on('road:added', bump));
     S.unsub.push(ctx.events.on('road:removed', bump));
@@ -542,6 +586,7 @@ export default {
     for (const car of S.activeList) {
       if (!car._heroFrozen) stepCar(car, dt, S.graph, S.simTime, S.carRng, S.pool);
     }
+    if (S.simTime - S.congestionAt >= CONG_PERIOD) sampleCongestion(); // Wave C4: keep the view grid current
     writeInstances(ctx);
   },
 
@@ -581,5 +626,6 @@ export default {
     if (S.kits) for (const k of S.kits) { k.bodyGeo.dispose(); k.cabinGeo.dispose(); k.wheelGeo.dispose(); k.headGeo.dispose(); k.tailGeo.dispose(); }
     S.group = null; S.graph = null; S.pool = []; S.kits = null; S.meshes = []; S.bounds = null; S.heroShot = null;
     S.busSlots = []; S.activeList = []; S.transitDefs = []; S.routes = []; S.busActive = 0; S.carActive = 0; S.activeCount = 0;
+    S.congestion = null; S.congestionAt = -1; S.congestionDirty = true;
   },
 };

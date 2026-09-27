@@ -40,11 +40,12 @@ const KEYS = [['Esc', 'Deselect tool / close'], ['Space', 'Pause / resume'], ['1
 
 // Data views (see the `views` module): the Coverage panel rows double as view toggles, and the active view gets a
 // small legend inside the same panel. Purely presentational here — the view itself lives in `views`.
-const VIEW_NAMES = { power: 'Power coverage', water: 'Water coverage', police: 'Police coverage', school: 'School coverage', health: 'Health coverage', transit: 'Transit coverage', services: 'Services (road + power + water)', land: 'Land value' };
+const VIEW_NAMES = { power: 'Power coverage', water: 'Water coverage', police: 'Police coverage', school: 'School coverage', health: 'Health coverage', transit: 'Transit coverage', traffic: 'Traffic congestion', services: 'Services (road + power + water)', land: 'Land value' };
 const CHIP = (color, label) => `<span><i style="background:${color}"></i>${label}</span>`;
 const VIEW_LEGEND = {
   coverage: () => `<div class="lc-view-chips">${CHIP('#2f8fe0', 'Covered')}${CHIP('#e23b2e', 'Uncovered')}${CHIP('#ffe27a', 'Service')}</div>`,
   transit: () => `<div class="lc-view-chips">${CHIP('#2f8fe0', 'Walk-up')}${CHIP('#e23b2e', 'Too far')}</div>`,
+  congestion: () => `<div class="lc-view-chips">${CHIP('#22c55e', 'Free')}${CHIP('#f2b21a', 'Slow')}${CHIP('#e23b2e', 'Congested')}</div>`,
   land: () => `<div class="lc-view-bar"></div><div class="lc-view-scale"><span>Low</span><span>High</span></div>`,
 };
 
@@ -193,6 +194,7 @@ export class Hud {
     this.powerCov = utilRow('power', 'Power');
     this.waterCov = utilRow('water', 'Water');
     this.transitCov = utilRow('transit', 'Transit');
+    this.trafficCov = utilRow('traffic', 'Traffic');
     this.schoolCov = utilRow('school', 'School');
     this.healthCov = utilRow('health', 'Health');
     this.policeCov = utilRow('police', 'Police');
@@ -200,7 +202,7 @@ export class Hud {
     this.landCov.value.textContent = '';
     this.viewLegend = h('div', { class: 'lc-view-legend', hidden: 'hidden' });
     this.utilities = h('div', { class: 'lc-panel lc-utilities' }, h('div', { class: 'lc-studs' }),
-      h('div', { class: 'lc-rci-title' }, 'Coverage'), this.powerCov.el, this.waterCov.el, this.transitCov.el,
+      h('div', { class: 'lc-rci-title' }, 'Coverage'), this.powerCov.el, this.waterCov.el, this.transitCov.el, this.trafficCov.el,
       this.schoolCov.el, this.healthCov.el, this.policeCov.el, this.landCov.el, this.viewLegend);
     root.append(this.utilities);
 
@@ -240,7 +242,7 @@ export class Hud {
       legend.append(h('span', {}, h('i', { class: cls, style: `background:${c}` }), lbl));
     }
     root.append(h('div', { class: 'lc-panel lc-minimap' }, h('div', { class: 'lc-studs' }), this.minimapCanvas,
-      h('div', { class: 'lc-minimap-foot' }, h('span', {}, 'Map'), h('span', {}, 'Click to move')), legend));
+      h('div', { class: 'lc-minimap-foot' }, this.minimapFoot = h('span', {}, 'Map'), h('span', {}, 'Click to move')), legend));
 
     // ---- show-ui pill ----
     root.append(h('button', { class: 'lc-show-ui lc-brick', onclick: () => this.on.toggleUi() }, 'Show HUD  (H)'));
@@ -271,6 +273,8 @@ export class Hud {
     if (this.healthCov) setText(this.healthCov.value, `${Math.round(Math.max(0, Math.min(1, health || 0)) * 100)}%`);
     if (this.policeCov) setText(this.policeCov.value, `${Math.round(Math.max(0, Math.min(1, police || 0)) * 100)}%`);
   }
+  /** The HUD Traffic row shows the simulation's aggregate traffic stat (the view itself is the congestion map). */
+  setTraffic(v) { if (this.trafficCov) setText(this.trafficCov.value, `${Math.round(Math.max(0, Math.min(1, v || 0)) * 100)}%`); }
 
   // ---------- data views (the `views` module owns the layers; this only reflects state) ----------
   /** Show/hide the eye affordance (false when the views module is not loaded, e.g. the ui showcase). */
@@ -280,11 +284,13 @@ export class Hud {
     view = view || null;
     for (const [id, el] of this.viewRows) el.classList.toggle('on', id === view);
     if (!view) { this.viewLegend.hidden = true; this.viewLegend.innerHTML = ''; return; }
-    const kind = view === 'land' ? 'land' : view === 'transit' ? 'transit' : 'coverage';
+    const kind = view === 'land' ? 'land' : view === 'traffic' ? 'congestion' : view === 'transit' ? 'transit' : 'coverage';
     this.viewLegend.innerHTML = `<div class="lc-view-name">${VIEW_NAMES[view] || view}</div>`
       + `${VIEW_LEGEND[kind]()}<div class="lc-view-foot">V next view &middot; Esc close</div>`;
     this.viewLegend.hidden = false;
   }
+  /** Minimap footer label: the active view's name, or 'Map' when no layer is active. */
+  setMinimapView(label) { if (this.minimapFoot) setText(this.minimapFoot, label || 'Map'); }
 
   // ---------- clock / speed / weather ----------
   setClock(day, hours) {

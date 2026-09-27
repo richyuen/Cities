@@ -7,6 +7,24 @@ const COL = {
   zoneR: [205, 228, 110], zoneC: [130, 185, 240], zoneI: [250, 190, 120],
   bldR: [165, 202, 24], bldC: [40, 120, 205], bldI: [220, 120, 40], bldX: [190, 190, 185],
 };
+// active-data-view palette (C4): coverage / land value / congestion, matching the 3D overlay's colours
+const VIEW_COL = {
+  covered: [47, 143, 224], uncovered: [226, 59, 46],
+  landLow: [209, 42, 30], landMid: [242, 178, 26], landHigh: [20, 195, 142],
+  congFree: [34, 197, 94], congSlow: [242, 178, 26], congCongested: [226, 59, 46],
+};
+const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+const lerp3 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+/** Map a 0..1 value across three stops. */
+const ramp3 = (lo, mid, hi, v) => { const k = clamp01(v); return k < 0.5 ? lerp3(lo, mid, k * 2) : lerp3(mid, hi, (k - 0.5) * 2); };
+/** Land ramp: normalised over the map's own range with a narrow yellow shoulder (mirrors overlay.js). */
+function landRamp(v, lo, hi) {
+  const span = hi - lo;
+  const k = clamp01(span > 1e-6 ? (v - lo) / span : 0.5);
+  if (k < 0.45) return lerp3(VIEW_COL.landLow, VIEW_COL.landMid, k / 0.45);
+  if (k > 0.55) return lerp3(VIEW_COL.landMid, VIEW_COL.landHigh, (k - 0.55) / 0.45);
+  return VIEW_COL.landMid;
+}
 
 export class Minimap {
   constructor(ctx, canvas, onClick) {
@@ -21,6 +39,9 @@ export class Minimap {
     this.dirty = true; // rebuild on first update, then only when the world changes (markDirty), throttled to 2 Hz
     this.cooldown = 0;
     this.camDirty = true;
+    this.activeView = null;   // data view id the map is tinted for (C4), or null for the base map
+    this.viewRefresh = 0.5;   // congestion re-tint cadence while the traffic layer is active
+    this._services = null;
     this.view = { i0: 0, j0: 0, span: w }; // visible window (cells); auto-fits the built area
     this._cam = { x: NaN, z: NaN, tx: NaN, tz: NaN };
     this._onClick = (e) => {
@@ -37,10 +58,82 @@ export class Minimap {
 
   markDirty() { this.dirty = true; }
 
+  /** Tint the minimap for a data view id (C4), or null to restore the base map. */
+  setActiveView(id) {
+    const next = id || null;
+    if (next === this.activeView) return;
+    this.activeView = next;
+    this.dirty = true;
+  }
+
   update(dt) {
     if (this.cooldown > 0) this.cooldown -= dt;
+    // congestion changes continuously; re-tint on a fixed cadence through the same dirty/rebuild path
+    if (this.activeView === 'traffic' && !this.dirty) {
+      this.viewRefresh -= dt;
+      if (this.viewRefresh <= 0) { this.viewRefresh = 0.5; this.dirty = true; }
+    }
     if (this.dirty && this.cooldown <= 0) { this.dirty = false; this.cooldown = 0.5; this.rebuild(); this.compose(); }
     else if (this.camDirty) this.compose();
+  }
+
+  /** Resolve the active view's kind and source grid (recomputed lazily by the owners, so paused is correct). */
+  _viewData() {
+    if (!this.activeView) return null;
+    const world = this.ctx.world, { w, h } = world.size;
+    const views = this.ctx.modules.get('views');
+    const meta = views?.status === 'ok' ? views.api.list().find((v) => v.id === this.activeView) : null;
+    const kind = meta?.kind || (this.activeView === 'land' ? 'land' : this.activeView === 'traffic' ? 'congestion' : 'coverage');
+    const sim = this.ctx.modules.get('simulation');
+    const transit = this.ctx.modules.get('transit');
+    const traffic = this.ctx.modules.get('traffic');
+    let grid = null;
+    if (kind === 'coverage') {
+      if (this.activeView === 'transit') grid = transit?.status === 'ok' ? transit.api.getCoverageGrid() : null;
+      else if (this.activeView === 'services') {
+        const s = sim?.status === 'ok' ? sim.api : null;
+        const road = s?.getCoverageGrid('road'), power = s?.getCoverageGrid('power'), water = s?.getCoverageGrid('water');
+        if (road && power && water) {
+          if (!this._services || this._services.length !== road.length) this._services = new Uint8Array(road.length);
+          for (let k = 0; k < road.length; k++) this._services[k] = road[k] && power[k] && water[k] ? 1 : 0;
+          grid = this._services;
+        }
+      } else grid = sim?.status === 'ok' ? sim.api.getCoverageGrid(this.activeView) : null;
+      if (!grid || grid.length !== w * h) return null;
+    } else if (kind === 'congestion') {
+      grid = traffic?.status === 'ok' ? traffic.api.getCongestionGrid() : null;
+      if (!grid || grid.length !== w * h) return null;
+    }
+    let lo = 1, hi = 0;
+    if (kind === 'land') {
+      const s = sim?.status === 'ok' ? sim.api : null;
+      const cells = world.cells;
+      for (let k = 0; k < w * h; k++) {
+        const t = cells[k].type;
+        if (t !== 'zone' && t !== 'building') continue;
+        const v = s?.cellDesirability ? s.cellDesirability(k % w, (k / w) | 0) : 0.5;
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      }
+      if (!(hi > lo)) { lo -= 0.05; hi += 0.05; }
+    }
+    return { kind, grid, sim: sim?.status === 'ok' ? sim.api : null, lo, hi };
+  }
+
+  /** View tint for one cell, or null when the cell is irrelevant and should fall back to a dimmed base colour. */
+  _viewTint(vd, k, i, j, c) {
+    if (vd.kind === 'coverage') {
+      if (c.type === 'road' || c.type === 'water') return null;
+      if (c.type === 'building' || c.buildingId) return vd.grid[k] === 1 ? VIEW_COL.covered : VIEW_COL.uncovered;
+      if (c.type === 'zone') return vd.grid[k] === 1 ? VIEW_COL.covered : VIEW_COL.uncovered;
+      return null;
+    }
+    if (vd.kind === 'land') {
+      if (c.type !== 'zone' && c.type !== 'building' && !c.buildingId) return null;
+      const v = vd.sim?.cellDesirability ? vd.sim.cellDesirability(i, j) : 0.5;
+      return landRamp(v, vd.lo, vd.hi);
+    }
+    return c.type === 'road' ? ramp3(VIEW_COL.congFree, VIEW_COL.congSlow, VIEW_COL.congCongested, vd.grid[k]) : null;
   }
 
   rebuild() {
@@ -48,6 +141,7 @@ export class Minimap {
     const { w, h } = world.size;
     const d = this.img.data;
     const cells = world.cells;
+    const vd = this._viewData();
     let minI = w, maxI = -1, minJ = h, maxJ = -1;
     for (let idx = 0, p = 0; idx < w * h; idx++, p += 4) {
       const c = cells[idx];
@@ -65,6 +159,11 @@ export class Minimap {
         const t = Math.max(0, Math.min(1, (c.height - world.seaLevel) / 60));
         r = 62 + 70 * t; g = 140 + 50 * t; b = 60 + 50 * t;
       }
+      if (vd) {
+        const tint = this._viewTint(vd, idx, c.i, c.j, c);
+        if (tint) { r = tint[0] | 0; g = tint[1] | 0; b = tint[2] | 0; }
+        else { r = (r * 0.45) | 0; g = (g * 0.45) | 0; b = (b * 0.45) | 0; } // dim context so the layer pops
+      }
       d[p] = r; d[p + 1] = g; d[p + 2] = b; d[p + 3] = 255;
     }
     this.og.putImageData(this.img, 0, 0);
@@ -77,7 +176,9 @@ export class Minimap {
       const j0 = Math.max(0, Math.min(h - span, Math.round(cj - span / 2)));
       this.view = { i0, j0, span };
     } else this.view = { i0: 0, j0: 0, span: Math.max(w, h) };
-    // roads as lines (cells already carry road type, but thin paths and diagonals read better as strokes)
+    // roads as lines (cells already carry road type, but thin paths and diagonals read better as strokes).
+    // Skipped for the congestion layer: there the stroke would paint over the very tint being read.
+    if (vd?.kind === 'congestion') return;
     const og = this.og;
     const cs = world.cellSize;
     og.lineCap = 'round';
