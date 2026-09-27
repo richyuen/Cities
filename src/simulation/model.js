@@ -2,6 +2,8 @@
 // All numbers derive from world.buildings / world.cells / world.roads and the module's own state; no randomness
 // beyond a per-building integer hash (so same seed → same numbers).
 
+import { mergePolicyFx, POLICY_BY_ID, POLICIES } from './policies.js';
+
 export const TICK_DT = 0.5;                  // game seconds per tick (2 Hz)
 export const HISTORY_LEN = 300;
 export const ZONES = ['r', 'c', 'i'];
@@ -123,7 +125,9 @@ export class SimModel {
     this.dayLengthSec = dayLengthSec;
     this.cityName = cityName;
     this.taxRate = { r: 0.09, c: 0.09, i: 0.09 };
-    this.policy = { demandBias: 0, upkeepMul: 1, incomeMul: 1 };
+    this.basePolicy = { demandBias: 0, upkeepMul: 1, incomeMul: 1 };  // scenario knobs (showcases/tests)
+    this.policies = new Set();                                        // active policy ids (see policies.js)
+    this.policyFx = mergePolicyFx(this.basePolicy, []);
     this.reset();
   }
 
@@ -132,6 +136,9 @@ export class SimModel {
     this.gameSeconds = 0;
     this.day = 1;
     this.startOccupancy = occupancy;
+    this.basePolicy = { demandBias: 0, upkeepMul: 1, incomeMul: 1 };  // a reset is a fresh game: no scenario knobs
+    this.policies = new Set();                                        // …and no active policies
+    this.policyFx = mergePolicyFx(this.basePolicy, []);
     this.pressure = { r: 0.2, c: 0.1, i: 0.1 };      // smoothed, [-1, 1]
     this.demand = { r: 0.2, c: 0.1, i: 0.1 };        // clamped [0, 1]
     this.happiness = 0.7;
@@ -157,7 +164,7 @@ export class SimModel {
     this.newCandidates = [];                          // ids that became candidates this tick
     this.roadAdjCoverage = null;
     this.unserved = [];                                // building ids missing road, power, or water
-    this.budget = { income: { r: 0, c: 0, i: 0, total: 0 }, expenses: { roads: 0, buildings: 0, utilities: 0, transit: 0, total: 0 }, net: 0 };
+    this.budget = { income: { r: 0, c: 0, i: 0, total: 0 }, expenses: { roads: 0, buildings: 0, utilities: 0, transit: 0, policies: 0, total: 0 }, net: 0 };
     this.debt = 0;                                    // 0..1 service degradation from a negative treasury
     this.wealth = 0;                                  // 0..1 bonus from a healthy treasury
     this.bankruptTicks = 0;                            // consecutive ticks with debt saturated at 1.0
@@ -176,7 +183,7 @@ export class SimModel {
       workforce: 0, capacity: { r: 0, c: 0, i: 0 }, occupancy: { r: 0, c: 0, i: 0 }, jobsC: 0, jobsI: 0,
       demand: { r: 0, c: 0, i: 0 }, parkShare: 0, income: 0, expenses: 0, buildings: 0, roads: 0, net: 0, debt: 0, wealth: 0, services: 1,
       bankrupt: false, bankruptTicks: 0, powerCoverage: 0, waterCoverage: 0, crime: 0, policeCoverage: 0, burglaries: 0,
-      transitCoverage: 0, educationCoverage: 0, healthCoverage: 0,
+      transitCoverage: 0, educationCoverage: 0, healthCoverage: 0, policyUpkeep: 0,
       day: 1, tick: 0, cityName: this.cityName, cityLevel: 0, cityLevelName: LEVEL_NAMES[0],
     };
   }
@@ -423,6 +430,7 @@ export class SimModel {
   // ---- the tick --------------------------------------------------------------------------------
   step(world) {
     if (this.dirtyStatic) this._recomputeStatic(world);
+    const fx = this.policyFx = mergePolicyFx(this.basePolicy, this.policies);   // derived once per tick
     const P = this.pressure, list = this.list;
     let pop = 0, jobsC = 0, jobsI = 0, capR = 0, capC = 0, capI = 0, parkW = 0;
     let poweredCap = 0, wateredCap = 0, policedCap = 0, schooledCap = 0, hospitaledCap = 0, totalCap = 0;
@@ -456,7 +464,7 @@ export class SimModel {
       if (lvl !== s.level) { s.level = lvl; s.notified = false; s.mature = 0; s.occ *= 0.6; }
       if (!b.onFire) {
         if (b.damage > 0) b.damage = Math.max(0, b.damage - FIRE_REPAIR_RATE);
-        if (hashInt(s.fireSeed ^ Math.imul(this.tick, 0x9e3779b1)) < FIRE_IGNITION_BASE * (0.4 + 0.6 * s.occ)) this._startFire(b);
+        if (hashInt(s.fireSeed ^ Math.imul(this.tick, 0x9e3779b1)) < FIRE_IGNITION_BASE * (0.4 + 0.6 * s.occ) * fx.fireIgnitionMul) this._startFire(b);
       }
       if (!b.onFire && !b.burglary && this.crime > 0.001) {
         const chance = BURGLARY_BASE_CHANCE * (0.3 + 0.7 * s.occ) * this.crime;
@@ -509,12 +517,12 @@ export class SimModel {
     this.bankrupt = this.bankruptTicks >= BANKRUPT_HOLD_TICKS;
     const roadCap = (roads * 110 + 100) * (1 - 0.35 * debt);   // trips a street edge absorbs before congestion
     // Transit pulls riders off the road: a covered city runs a visibly lower traffic level (the stat the HUD
-    // shows and the traffic module sizes its car pool from).
+    // shows and the traffic module sizes its car pool from). `trafficMul` (free transit) scales the whole target.
     const transit = clamp01(this.transitCoverage);
-    const trafficTarget = clamp01(((pop * 0.35 + jobs * 0.5) / roadCap) * (1 - 0.3 * transit));
+    const trafficTarget = clamp01(((pop * 0.35 + jobs * 0.5) / roadCap) * (1 - 0.3 * transit) * fx.trafficMul);
     this.traffic += (trafficTarget - this.traffic) * 0.1;
     const parkShare = (pop > 1 ? parkW / pop : 0) * services;
-    const tax = this.taxRate, pol = this.policy;
+    const tax = this.taxRate;
     const avgTax = (tax.r + tax.c + tax.i) / 3;
     const taxPain = clamp01((avgTax - 0.09) * 5);
     // crime: slow-moving city-wide pressure. Population, unemployment, taxes and debt push it up; police coverage
@@ -524,13 +532,14 @@ export class SimModel {
     // shed). Education gates level-3 growth as well; health is happiness + residential demand only.
     const education = totalCap ? schooledCap / totalCap : 0;
     const health = totalCap ? hospitaledCap / totalCap : 0;
-    const crimeTarget = clamp01(CRIME_BASE + (pop / CRIME_POP_SCALE) * 0.9 + 0.25 * (1 - employment)
-      + 0.3 * taxPain + 0.3 * debt + (this.bankrupt ? 0.2 : 0)) * (1 - CRIME_POLICE_MAX_REDUCTION * policeShare);
+    const crimeTarget = clamp01(clamp01(CRIME_BASE + (pop / CRIME_POP_SCALE) * 0.9 + 0.25 * (1 - employment)
+      + 0.3 * taxPain + 0.3 * debt + (this.bankrupt ? 0.2 : 0)) * (1 - CRIME_POLICE_MAX_REDUCTION * policeShare) * fx.crimeTargetMul);
     this.crime += (crimeTarget - this.crime) * CRIME_RAMP;
     // a fully employed, park-rich, uncongested, low-tax, solvent, schooled and healthy city tops out around 1.0
     // (weights trimmed from their pre-civics values so the two new services are a real lever, not saturation)
     const hTarget = 0.40 * employment + 0.20 * Math.min(1, parkShare * 1.6) + 0.16 * (1 - this.traffic)
-      + 0.09 * (1 - taxPain) + 0.07 * wealth + 0.09 * transit + EDUCATION_HAPPINESS_WEIGHT * education
+      + 0.09 * (1 - taxPain) + 0.07 * wealth + 0.09 * transit * fx.transitHappinessMul + fx.happinessBonus
+      + EDUCATION_HAPPINESS_WEIGHT * education
       + HEALTH_HAPPINESS_WEIGHT * health - 0.3 * debt - FIRE_HAPPINESS_WEIGHT * this.firePressure
       - CRIME_HAPPINESS_WEIGHT * this.crime;
     this.happiness += (clamp01(hTarget) - this.happiness) * 0.05;
@@ -543,35 +552,37 @@ export class SimModel {
     const wantedI = workforce * 0.55 + 30 - 0.5 * Math.max(0, jobsC - wantedC);
     const rel = (want, have) => (want - have) / Math.max(want, have, 1);
     // a bankrupt city (debt → 1) sheds residents and businesses
-    const pR = 0.7 * rel(wantedPop, pop) + 0.5 * (this.happiness - 0.5) + 0.15 - (tax.r - 0.09) * 4 + pol.demandBias
+    const pR = 0.7 * rel(wantedPop, pop) + 0.5 * (this.happiness - 0.5) + 0.15 - (tax.r - 0.09) * 4 + fx.demandBias
       - 0.5 * debt + HEALTH_DEMAND_BONUS * health;
-    const pC = rel(wantedC, jobsC) + 0.2 * (this.happiness - 0.5) - (tax.c - 0.09) * 4 + pol.demandBias - 0.4 * debt
-      + EDUCATION_COMMERCE_BONUS * education;
-    const pI = rel(wantedI, jobsI) + 0.1 * (this.happiness - 0.5) - (tax.i - 0.09) * 4 + pol.demandBias - 0.4 * debt
-      + EDUCATION_INDUSTRY_BONUS * education;
+    const pC = rel(wantedC, jobsC) + 0.2 * (this.happiness - 0.5) - (tax.c - 0.09) * 4 + fx.demandBias + fx.commercialDemandBias
+      - 0.4 * debt + EDUCATION_COMMERCE_BONUS * education;
+    const pI = rel(wantedI, jobsI) + 0.1 * (this.happiness - 0.5) - (tax.i - 0.09) * 4 + fx.demandBias + fx.industrialDemandBias
+      - 0.4 * debt + EDUCATION_INDUSTRY_BONUS * education;
     P.r += (clamp(pR, -1, 1) - P.r) * 0.08;
     P.c += (clamp(pC, -1, 1) - P.c) * 0.08;
     P.i += (clamp(pI, -1, 1) - P.i) * 0.08;
     this.demand.r = clamp01(P.r); this.demand.c = clamp01(P.c); this.demand.i = clamp01(P.i);
 
     // budget
-    const incR = pop * tax.r * TAX_YIELD.r * pol.incomeMul;
-    const incC = jobsC * tax.c * TAX_YIELD.c * pol.incomeMul;
-    const incI = jobsI * tax.i * TAX_YIELD.i * pol.incomeMul;
-    const expRoads = roads * UPKEEP.road * pol.upkeepMul;
-    const expBld = list.length * UPKEEP.building * pol.upkeepMul;
+    const incR = pop * tax.r * TAX_YIELD.r * fx.incomeMul;
+    const incC = jobsC * tax.c * TAX_YIELD.c * fx.incomeMul;
+    const incI = jobsI * tax.i * TAX_YIELD.i * fx.incomeMul * fx.industrialIncomeMul;
+    const expRoads = roads * UPKEEP.road * fx.upkeepMul;
+    const expBld = list.length * UPKEEP.building * fx.upkeepMul;
     let expUtil = 0;
     for (const u of this.utilities) {
-      expUtil += (UPKEEP_UTILITY[u.kind] || 0) * pol.upkeepMul;
+      expUtil += (UPKEEP_UTILITY[u.kind] || 0) * fx.upkeepMul;
       if (!u.onFire && u.damage > 0) u.damage = Math.max(0, u.damage - FIRE_REPAIR_RATE);
     }
-    const income = incR + incC + incI, expenses = expRoads + expBld + expUtil + this.transitUpkeep;
+    const expPol = fx.upkeep;   // flat $/tick per active policy (not scaled by the scenario upkeepMul)
+    const income = incR + incC + incI, expenses = expRoads + expBld + expUtil + this.transitUpkeep + expPol;
     this.money += income - expenses;
     if (this.bankrupt && this.money < BANKRUPT_FLOOR) this.money += (BANKRUPT_FLOOR - this.money) * BANKRUPT_SPRING;
     const bg = this.budget;
     bg.income.r = incR; bg.income.c = incC; bg.income.i = incI; bg.income.total = income;
     bg.expenses.roads = expRoads; bg.expenses.buildings = expBld; bg.expenses.utilities = expUtil;
     bg.expenses.transit = this.transitUpkeep;
+    bg.expenses.policies = expPol;
     bg.expenses.total = expenses;
     bg.net = income - expenses;
 
@@ -605,6 +616,7 @@ export class SimModel {
     st.crime = this.crime; st.policeCoverage = policeShare; st.burglaries = this.burglaries.size;
     st.transitCoverage = transit;
     st.educationCoverage = education; st.healthCoverage = health;
+    st.policyUpkeep = expPol;
     st.day = this.day; st.tick = this.tick; st.cityName = this.cityName; st.cityLevel = cityLevel; st.cityLevelName = LEVEL_NAMES[cityLevel];
 
     // history ring
@@ -633,7 +645,8 @@ export class SimModel {
         income: { r: bg.income.r * perDay, c: bg.income.c * perDay, i: bg.income.i * perDay, total: bg.income.total * perDay },
         expenses: {
           roads: bg.expenses.roads * perDay, buildings: bg.expenses.buildings * perDay,
-          utilities: bg.expenses.utilities * perDay, transit: bg.expenses.transit * perDay, total: bg.expenses.total * perDay,
+          utilities: bg.expenses.utilities * perDay, transit: bg.expenses.transit * perDay,
+          policies: bg.expenses.policies * perDay, total: bg.expenses.total * perDay,
         },
         net: bg.net * perDay,
       },
@@ -646,6 +659,17 @@ export class SimModel {
     this.taxRate[zone] = clamp(Number(rate) || 0, 0, 0.3);
     return true;
   }
+
+  /** Enable/disable a policy by id (see policies.js). Unknown ids are refused; enabling twice or disabling an
+   *  inactive policy is an idempotent no-op. Effects apply from the next step; `upkeep` joins the budget then. */
+  setPolicy(id, on) {
+    if (!POLICY_BY_ID.has(id)) return { ok: false, reason: `unknown policy '${id}'` };
+    if (on) this.policies.add(id); else this.policies.delete(id);
+    return { ok: true };
+  }
+
+  /** Active policy ids in catalogue order (stable for saves/tests). */
+  getActivePolicies() { return POLICIES.filter((p) => this.policies.has(p.id)).map((p) => p.id); }
 
   /** One-time capital spend (e.g. placing a utility building): debits the treasury iff affordable. */
   spend(amount) {

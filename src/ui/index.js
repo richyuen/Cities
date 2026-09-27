@@ -52,6 +52,7 @@ function buildTreasuryModal(ctx) {
       h('span', {}, 'Treasury'), h('span', {}, fmtMoney(st.money)),
       h('span', {}, 'Income / day'), h('span', {}, fmtMoney(bud.perDay.income.total)),
       h('span', {}, 'Expenses / day'), h('span', {}, fmtMoney(bud.perDay.expenses.total)),
+      h('span', {}, 'Policy upkeep / day'), h('span', {}, fmtMoney(bud.perDay.expenses.policies || 0)),
       h('span', {}, 'Net / day'), h('span', {}, fmtMoney(bud.perDay.net))),
     h('h4', {}, 'Debt'),
     h('div', { class: 'lc-bar debt' }, h('i', { style: `width:${Math.round(st.debt * 100)}%` })),
@@ -65,6 +66,55 @@ function buildTreasuryModal(ctx) {
     });
     body.append(h('div', { class: 'lc-slider-row' }, h('div', { class: 'lc-slider-head' }, h('span', {}, label), pctLbl), slider));
   }
+  body.append(h('button', { class: 'lc-pol-open', onclick: () => S.hud.openModal('Policies', buildPolicyModal(S.ctx)) }, 'Policies…'));
+  return body;
+}
+
+/** Policy modal (C2/F5): one row per policy — label, description, $/day upkeep, effect summary, on/off switch.
+ *  Toggling calls `simulation.setPolicy` and refreshes the rows + running total in place. Pure economy: nothing
+ *  is gated behind a policy, and an unavailable simulation hides the entry point (the Treasury modal says so). */
+function buildPolicyModal(ctx) {
+  const sim = simApi(ctx);
+  if (!sim) return h('p', {}, 'Simulation unavailable.');
+  const perDay = (ctx.clock?.dayLengthSec || 600) * (sim.ticksPerSecond || 2);
+  const body = h('div', { class: 'lc-pol' });
+  const rows = new Map();
+  const totalVal = h('b', {}, '—');
+  const total = h('div', { class: 'lc-pol-total' }, h('span', {}, 'Policy upkeep'), totalVal);
+
+  const refresh = () => {
+    const pol = sim.getPolicy();
+    for (const p of pol.list) {
+      const row = rows.get(p.id);
+      if (!row) continue;
+      row.el.classList.toggle('on', p.active);
+      row.switchEl.classList.toggle('on', p.active);
+      row.switchEl.setAttribute('aria-pressed', p.active ? 'true' : 'false');
+      row.stateEl.textContent = p.active ? 'On' : 'Off';
+      row.costEl.textContent = `${fmtMoney(p.upkeep * perDay)} / day`;
+    }
+    totalVal.textContent = `${fmtMoney(pol.upkeepPerDay)} / day`;
+  };
+
+  for (const p of sim.getPolicy().list) {
+    const stateEl = h('span', { class: 'lc-pol-state' }, 'Off');
+    const switchEl = h('button', { class: 'lc-switch', 'data-policy': p.id, title: `Toggle ${p.label}` });
+    const costEl = h('span', { class: 'lc-pol-cost' });
+    const el = h('div', { class: 'lc-pol-row', 'data-policy': p.id },
+      h('div', { class: 'lc-pol-head' }, h('span', { class: 'lc-pol-name' }, p.label), stateEl, switchEl),
+      h('div', { class: 'lc-pol-desc' }, p.desc),
+      h('div', { class: 'lc-pol-foot' }, costEl, h('span', { class: 'lc-pol-fx' }, p.effectText)));
+    switchEl.addEventListener('click', () => {
+      const cur = sim.getPolicy().list.find((x) => x.id === p.id)?.active ?? false;
+      const r = sim.setPolicy(p.id, !cur);
+      if (!r.ok) { S.hud?.notify(r.reason || 'Policy refused', 'warn'); return; }
+      refresh();
+    });
+    rows.set(p.id, { el, switchEl, stateEl, costEl });
+    body.append(el);
+  }
+  refresh();
+  body.append(total, h('div', { class: 'lc-pol-note' }, 'Effects apply on the next simulation tick; upkeep shows as its own line in the Treasury budget.'));
   return body;
 }
 

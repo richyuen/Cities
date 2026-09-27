@@ -1,5 +1,5 @@
 {
-  "updated": "2026-09-27T02:03:29.130Z",
+  "updated": "2026-09-27T03:13:23.066Z",
   "modules": {
     "terrain": {
       "score": 8.2,
@@ -57,19 +57,21 @@
       "updated": "2026-09-22T03:25:50.766Z"
     },
     "simulation": {
-      "score": 8.8,
-      "round": 3,
+      "score": 8.6,
+      "round": 4,
       "pass": true,
       "errors": 0,
-      "fps": 124.7,
-      "drawCalls": 121,
+      "fps": 143.4,
+      "drawCalls": 103,
       "issues": [
-        "Draw calls have crept up over 3 rounds (still well under 400+300 budget, GPU time <40% of cap) - track if future rounds add more detail",
-        "sub-4m camera distance to a wall is unreachable in-game (controls.minDistance=4 in core), not a simulation-owned issue"
+        "free_transit trafficMul multiplies the whole traffic target (design says the transit reduction): -25% traffic even at zero coverage",
+        "Tourism Campaign effect line wraps to two right-aligned lines in the 380px modal",
+        "no toggle-transition shot and policies are absent from the module showcase batch",
+        "stale CRIME_BASE-floor comment under Neighborhood Watch"
       ],
-      "review": "docs/reviews/simulation-r3.md",
+      "review": "docs/reviews/simulation-r4-critic.md",
       "wave": 0,
-      "updated": "2026-09-17T15:42:17.183Z"
+      "updated": "2026-09-27T03:13:23.066Z"
     },
     "ui": {
       "score": 8.9,

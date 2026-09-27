@@ -242,6 +242,26 @@ export const CSS = `
 .lc-ms-foot { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; font-weight: 700; color: var(--lc-muted); }
 .lc-ms-foot span:nth-child(2) { color: #ffe27a; }
 .lc-ms-note { font-size: 11px; font-weight: 600; color: var(--lc-muted); opacity: 0.9; padding-top: 2px; }
+
+/* ---------- policy modal (C2/F5) ---------- */
+.lc-pol { display: flex; flex-direction: column; gap: 8px; }
+.lc-pol-row { padding: 8px 10px; border-radius: 8px; background: rgba(0,0,0,0.22); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.07); }
+.lc-pol-row.on { background: linear-gradient(180deg, rgba(124,203,123,0.16), rgba(124,203,123,0.06)); box-shadow: inset 0 0 0 1px rgba(124,203,123,0.45); }
+.lc-pol-head { display: flex; align-items: center; gap: 8px; font-weight: 800; }
+.lc-pol-name { flex: 1; font-family: var(--lc-display); font-size: 14px; letter-spacing: 0.3px; }
+.lc-pol-state { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.8px; color: var(--lc-muted); }
+.lc-pol-row.on .lc-pol-state { color: #8ad989; }
+.lc-pol-desc { margin-top: 2px; font-size: 12px; color: var(--lc-muted); }
+.lc-pol-foot { display: flex; justify-content: space-between; gap: 10px; margin-top: 5px; font-size: 11px; font-weight: 700; color: var(--lc-muted); }
+.lc-pol-cost { color: #ffe27a; white-space: nowrap; }
+.lc-pol-fx { text-align: right; }
+.lc-pol-total { display: flex; justify-content: space-between; padding: 6px 2px 0; border-top: 1px solid rgba(255,255,255,0.12); font-weight: 800; }
+.lc-pol-total b { color: #ffe27a; font-variant-numeric: tabular-nums; }
+.lc-pol-note { font-size: 11px; font-weight: 600; color: var(--lc-muted); opacity: 0.9; padding-top: 2px; }
+.lc-pol-open { width: 100%; margin-top: 12px; padding: 9px 12px; border-radius: 8px; font-weight: 800; text-align: center; color: var(--lc-text);
+  background: linear-gradient(180deg, rgba(255,255,255,0.16), rgba(255,255,255,0.06)); border: 1px solid rgba(0,0,0,0.5);
+  box-shadow: 0 2px 0 rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.25); }
+.lc-pol-open:hover { background: var(--lc-bg-hover); }
 .lc-info-body .lc-bar.debt > i { background: linear-gradient(180deg, #ff8078, var(--lc-red) 55%, #a81812); }
 .lc-slider-row { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; }
 .lc-slider-row > .lc-slider-head { display: flex; justify-content: space-between; font-weight: 700; }

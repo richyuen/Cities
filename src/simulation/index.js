@@ -2,6 +2,7 @@
 // Visuals exist only in showcase mode (Blox bar chart + DOM panel); in the full game this module is data-only.
 
 import { SimModel, TICK_DT, cityNameFor, POWER_RADIUS, WATER_RADIUS, POLICE_RADIUS, SCHOOL_RADIUS, HOSPITAL_RADIUS } from './model.js';
+import { POLICIES, POLICY_BY_ID, policyEffectText } from './policies.js';
 import { DesirabilityGrid } from './desirability.js';
 import { stageCity } from './citygen.js';
 import { createVisuals } from './visuals.js';
@@ -119,8 +120,22 @@ const api = {
   getHistory() { return S.model.getHistory(); },
   /** ids of buildings that should level up (occupancy ≥ 0.9 for a while and positive demand); buildings module acts */
   getGrowthCandidates() { return [...S.model.growth]; },
-  setPolicy(patch) { Object.assign(S.model.policy, patch); return { ...S.model.policy }; },
-  getPolicy() { return { ...S.model.policy }; },
+  /** Toggle a policy by id (see policies.js): { ok, reason?, active: [ids] }. Effects apply on the next tick. */
+  setPolicy(id, on) {
+    const r = S.model.setPolicy(String(id ?? ''), !!on);
+    return { ...r, active: S.model.getActivePolicies() };
+  },
+  /** { active: [ids], list: [{ id, label, desc, upkeep, effects, effectText, active }], upkeepPerTick, upkeepPerDay } —
+   *  the UI renders straight from this. */
+  getPolicy() {
+    const active = S.model.getActivePolicies();
+    const list = POLICIES.map((p) => ({
+      id: p.id, label: p.label, desc: p.desc, upkeep: p.upkeep, effects: { ...p.effects },
+      effectText: policyEffectText(p.effects), active: active.includes(p.id),
+    }));
+    const upkeepPerTick = list.reduce((s, p) => s + (p.active ? p.upkeep : 0), 0);
+    return { active, list, upkeepPerTick, upkeepPerDay: upkeepPerTick * (S.model.dayLengthSec / TICK_DT) };
+  },
   /** force one tick now (tools/tests); `silent` skips the milestone toast (used by warm-up loops) */
   tick(silent = false) { runTick(!!silent); return api.getStats(); },
   /** [{ level, name, pop, reward: { cash, badge }, claimed }] — the city milestone table. */
@@ -134,17 +149,20 @@ const api = {
     publish(S.model.stats);
     S.ctx.events.emit('sim:reset', {});
   },
-  /** Full round-trippable state for save/load: policy, tax rates, the raw stats snapshot, per-building
-   *  occupancy/maturity (the world replay rebuilds the buildings; the model needs its progression restored) and
-   *  the claimed milestone set. */
+  /** Full round-trippable state for save/load: base policy knobs, active policy ids, tax rates, the raw stats
+   *  snapshot, per-building occupancy/maturity (the world replay rebuilds the buildings; the model needs its
+   *  progression restored) and the claimed milestone set. */
   getState() {
-    return { policy: { ...S.model.policy }, taxRate: { ...S.model.taxRate }, transitUpkeep: S.model.transitUpkeep, stats: snapshot(S.model.stats), occupancy: S.model.getOccupancyState(), milestones: S.model.getClaimedMilestones() };
+    return { policy: { ...S.model.basePolicy }, policies: S.model.getActivePolicies(), taxRate: { ...S.model.taxRate }, transitUpkeep: S.model.transitUpkeep, stats: snapshot(S.model.stats), occupancy: S.model.getOccupancyState(), milestones: S.model.getClaimedMilestones() };
   },
   /** Restore exactly what getState() returned (used by menu's Load) — no synthetic tick warm-up: a loaded save
    * should look exactly as it did when saved, unlike a freshly generated city which has no history to restore. */
   loadState(patch) {
     if (!patch) return;
-    if (patch.policy) Object.assign(S.model.policy, patch.policy);
+    // C2: the active policy set (unknown ids from a future save are skipped). `patch.policy` is the legacy
+    // pre-C2 scenario multiplier patch — old saves stored it instead, so keep honouring it as the base knobs.
+    if (Array.isArray(patch.policies)) S.model.policies = new Set(patch.policies.filter((id) => POLICY_BY_ID.has(id)));
+    if (patch.policy) Object.assign(S.model.basePolicy, patch.policy);
     if (patch.taxRate) S.model.taxRate = { ...patch.taxRate };
     if (typeof patch.transitUpkeep === 'number') S.model.transitUpkeep = patch.transitUpkeep;
     if (patch.stats) {
@@ -220,7 +238,7 @@ export default {
     S.variant = variant;
     const rng = S.rng.fork(`city:${variant}`);
     S.model.reset({ money: pol.money, occupancy: 0.35 });
-    S.model.policy = { demandBias: pol.demandBias, upkeepMul: pol.upkeepMul, incomeMul: pol.incomeMul };
+    S.model.basePolicy = { demandBias: pol.demandBias, upkeepMul: pol.upkeepMul, incomeMul: pol.incomeMul };
     S.model.taxRate = { r: pol.tax, c: pol.tax, i: pol.tax };
     const city = stageCity(ctx.world, rng, { variant });
     S.model.syncBuildings(ctx.world);
