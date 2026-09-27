@@ -1,5 +1,5 @@
 {
-  "updated": "2026-09-27T14:22:38.125Z",
+  "updated": "2026-09-27T15:31:02.934Z",
   "modules": {
     "terrain": {
       "score": 8.5,
@@ -285,18 +285,22 @@
   },
   "game": {
     "score": 8.8,
-    "round": 20,
+    "round": 23,
     "pass": true,
     "issues": [
-      "traffic still sparse from wide/elevated framing (minor, unchanged 4 rounds)",
-      "demand bars R-filled/C-I empty on fresh Day-1 city (not a bug, deterministic)",
-      "B3 atmosphere regression hold: my r20 batch 60.1/16.25/847 errors 0 (builder r19 61.0/15.93/847, pre-B3 r18 61.4/15.53/847) - dusk sky warmer at overview-18 while street-12 noon sky is pixel-identical (0.032 meanAbs), terraces read at play distance, no regression"
+      "B4 r23 critic batch 61.8/15.76/847 errors 0 - pixel-identical to builder r22 (meanAbs<=0.16) so no regression vs the 8.8 record",
+      "3x fresh-load weather-first-command clean (overview rain 0.8/0.85, aerial fog 0.7)",
+      "blind set 2 is 0/5 unanimous (0-15, set1 identical) - critic's own picks matched A,A,A,B,A and the loss reasons are image-consistent",
+      "top lever: preset composition (skyline ~55-70% empty field, overview/aerial data-map, closeup clips facade) - recompose around hero subjects",
+      "cheapest win: HUD-hide/beauty mode (judges counted UI chrome)",
+      "remaining levers: close-range micro-detail density, traffic/prop density bias to arterials",
+      "minor: transit route ribbon reads debug-red at dusk/night, dawn presets face away from the sunrise"
     ],
-    "judges": "judge1:0-5;judge2:0-5;judge3:0-5;overall:0-15 (ours lost every blind pair to reference marketing screenshots)",
+    "judges": "set1: judge1 0-5; judge2 0-5; judge3 0-5; overall 0-15 | set2: identical 0-5/0-5/0-5 overall 0-15 (3/3 unanimous, 0/5); critic's own independent picks matched all five; pair bytes == sources, seed-11 shuffle reproduced, no leak evidence",
     "errors": 0,
-    "fps": 60.1,
+    "fps": 61.8,
     "drawCalls": 847,
-    "review": "docs/reviews/game-r4.md",
-    "updated": "2026-09-27T14:14:58.047Z"
+    "review": "docs/reviews/game-r22-critic.md",
+    "updated": "2026-09-27T15:31:02.933Z"
   }
 }
