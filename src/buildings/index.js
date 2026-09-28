@@ -3,7 +3,7 @@ import { generateBuilding } from './generator.js';
 import { BuildingBatcher } from './batching.js';
 import { BuildingStudField } from './studfield.js';
 import { UnservedIndicators, FireIndicators, FireDrones, BurglaryIndicators, PatrolCars } from './indicators.js';
-import { stageDefault, stageLevels, stageNight } from './showcase.js';
+import { stageDefault, stageLevels, stageNight, stageFacade } from './showcase.js';
 
 // buildings — procedurally generates and renders Blox-style buildings for world.buildings records, and (in the
 // full game only) grows the city: spawns starter buildings on zoned+empty+road-adjacent cells when simulation
@@ -307,16 +307,43 @@ function levelsPreset() {
   return { pos: [b.cx, dist * 0.46 + 10, b.cz + dist], target: [b.cx, 12, b.cz] };
 }
 
+// `facade` variant only: a low street-canyon view down the staged facade row so the ground-floor
+// shopfronts/awnings, balconies and tower crowns are all readable in one frame. Outside that variant
+// there is no staged row, so the preset falls back to its own documented low 3/4 pose of whatever IS
+// staged — deliberately different from `buildings:default`, or a default-variant batch would contain
+// two identical frames (cycle-3 critic issue 4).
+function facadePreset() {
+  const r = S.facadeRow;
+  if (!r) {
+    const b = S.stageBounds;
+    if (!b) return { pos: [46, 18, 40], target: [0, 6, 0], fov: 52 };
+    const dist = Math.max(36, b.spanX * 0.3 + 24);
+    return {
+      pos: [b.cx - dist * 0.72, 8 + dist * 0.2, b.cz + dist * 0.62],
+      target: [b.cx + dist * 0.05, 6, b.cz - dist * 0.04],
+      fov: 52,
+    };
+  }
+  const span = Math.max(24, r.maxX - r.minX);
+  const gy = r.groundY;
+  return {
+    pos: [r.minX - Math.max(20, span * 0.22), gy + Math.min(16, span * 0.1 + 4), r.streetZ + 1],
+    target: [r.minX + span * 0.62, gy + Math.min(11, span * 0.05 + 4), r.streetZ - 1],
+    fov: 55,
+  };
+}
+
 export default {
   id: 'buildings',
   deps: ZONING_PRESENT ? ['terrain', 'roads', 'zoning'] : ['terrain', 'roads'],
   order: 40,
   api,
-  showcaseVariants: ['default', 'levels', 'night'],
+  showcaseVariants: ['default', 'levels', 'night', 'facade'],
   presets: {
     'buildings:default': defaultPreset,
     'buildings:closeup': closeupPreset,
     'buildings:levels': levelsPreset,
+    'buildings:facade': facadePreset,
   },
 
   async init(ctx) {
@@ -340,7 +367,7 @@ export default {
     S.group.add(S.burglaryIndicators.group);
     S.patrolCars = new PatrolCars();
     S.group.add(S.patrolCars.group);
-    S.pendingDirty = false; S.growthAcc = 0; S.growthTick = 0; S.tweens.length = 0; S.closeupTarget = null; S.stageBounds = null;
+    S.pendingDirty = false; S.growthAcc = 0; S.growthTick = 0; S.tweens.length = 0; S.closeupTarget = null; S.stageBounds = null; S.facadeRow = null;
     S.levelUpQueue.length = 0; S.levelUpQueued = new Set(); S.settling = false;
 
     S.unsub.push(ctx.events.on('building:spawned', ({ building }) => regenerateBuilding(ctx, building)));
@@ -437,7 +464,9 @@ export default {
     let result;
     if (variant === 'levels') result = stageLevels(ctx.world, rng);
     else if (variant === 'night') result = stageNight(ctx.world, rng);
+    else if (variant === 'facade') result = stageFacade(ctx.world, rng);
     else result = stageDefault(ctx.world, rng);
+    S.facadeRow = result.row || null;
     S.batcher.flush();
     // Pick the tallest by actual generated height (not zone `level` - industrial stays low-rise at every
     // level, so a level+footprint-area heuristic here previously chose a wide shed over an actual skyscraper).

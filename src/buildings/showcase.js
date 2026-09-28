@@ -71,6 +71,63 @@ export function stageLevels(world, rng) {
   return { placed };
 }
 
+/**
+ * `facade` variant (cycle 3): one building per kind/level along a single street, both sides, so the
+ * new ground-floor shopfronts, balconies, facade rhythm, tower crowns and roof clutter can be compared
+ * side by side. Ten buildings: house/shop/apartment/office/school (north, fronting the street) and
+ * warehouse/plant/hospital/tower/tower-office (south). The `buildings:facade` preset frames the canyon
+ * from the west end; `closeup` keeps picking the tallest staged building (the tower-office).
+ */
+export function stageFacade(world, rng) {
+  const j0 = Math.floor(world.size.h / 2);
+  const iStart = Math.floor(world.size.w / 2) - 20;
+  const streetJ = j0;
+  const a = world.cellToWorld(iStart - 2, streetJ), b = world.cellToWorld(iStart + 36, streetJ);
+  world.addRoad({ x: a.x, z: a.z }, { x: b.x, z: b.z }, 'street');
+  const north = [
+    { zone: 'r', level: 1, w: 1, d: 1, kind: 'house' },
+    { zone: 'c', level: 1, w: 1, d: 1, kind: 'shop' },
+    { zone: 'r', level: 2, w: 2, d: 2, kind: 'apartment' },
+    { zone: 'c', level: 2, w: 2, d: 2, kind: 'office' },
+    { zone: null, level: 1, w: 2, d: 2, kind: 'school' },
+  ];
+  const south = [
+    { zone: 'i', level: 1, w: 2, d: 2, kind: 'warehouse' },
+    { zone: 'i', level: 3, w: 2, d: 2, kind: 'plant' },
+    { zone: null, level: 1, w: 2, d: 2, kind: 'hospital' },
+    { zone: 'r', level: 3, w: 2, d: 2, kind: 'tower' },
+    { zone: 'c', level: 3, w: 2, d: 2, kind: 'tower-office' },
+  ];
+  const placed = [];
+  const place = (specs, j, growSign, gap, rngRow) => {
+    let i = iStart;
+    for (const spec of specs) {
+      const jj = growSign > 0 ? j : j - spec.d + 1;
+      if (spec.zone) for (let dj = 0; dj < spec.d; dj++) for (let di = 0; di < spec.w; di++) world.setZone(i + di, jj + dj, spec.zone, spec.level);
+      const id = world.addBuilding({ i, j: jj, w: spec.w, d: spec.d, zone: spec.zone, level: spec.level, kind: spec.kind, seed: rngRow.int(0, 1e9) });
+      placed.push({ id, i, j: jj, w: spec.w, d: spec.d, zone: spec.zone, level: spec.level, kind: spec.kind });
+      i += spec.w + gap;
+    }
+  };
+  place(north, j0 - 2, -1, 1, rng.fork('north'));
+  place(south, j0 + 2, 1, 1, rng.fork('south'));
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  for (const p of placed) {
+    minX = Math.min(minX, world.minX + p.i * world.cellSize);
+    maxX = Math.max(maxX, world.minX + (p.i + p.w) * world.cellSize);
+    minZ = Math.min(minZ, world.minZ + p.j * world.cellSize);
+    maxZ = Math.max(maxZ, world.minZ + (p.j + p.d) * world.cellSize);
+  }
+  const centre = world.cellToWorld((iStart + iStart + 14) / 2, streetJ);
+  return {
+    placed,
+    row: {
+      minX, maxX, minZ, maxZ, cx: (minX + maxX) / 2, cz: (minZ + maxZ) / 2,
+      streetZ: centre.z, groundY: world.getHeight(centre.x, centre.z), startX: world.minX + iStart * world.cellSize,
+    },
+  };
+}
+
 /** Dense mixed block bounded by two parallel streets + a cross street, for night-window coverage. */
 export function stageNight(world, rng) {
   const j0 = Math.floor(world.size.h / 2);
