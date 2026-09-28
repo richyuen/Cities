@@ -1,5 +1,5 @@
 {
-  "updated": "2026-09-28T12:35:23.701Z",
+  "updated": "2026-09-28T19:41:18.164Z",
   "modules": {
     "terrain": {
       "score": 8.5,
@@ -305,22 +305,20 @@
   },
   "game": {
     "score": 8.8,
-    "round": 42,
+    "round": 49,
     "pass": true,
     "issues": [
-      "LOOP c2 landed: props diorama detail layer (1439 C2 props: yards/fences/gardens/laundry/picnic/crates/bikes + 301 pedestrians + civic entrance clusters) with 2 fix rounds (footprint-aware heights, stable prop variation keys, fence spacing, sliced boot cost)",
-      "check-detail 38/38, game r42 921 draws/10.41ms/93.1fps errors 0",
-      "blind set 5 (c2c, seed 41, balanced 2/3, provenance proven) = 0/5 unanimous like sets 1-4",
-      "plateau 2 of 3 no-move sets",
-      "next: cycle 3 buildings facade/rooftop variety in flight",
-      "cycle 4 = curated beauty-shot list + capture-mode DOF/tilt-shift + low-sun bloom clamp (all three judges name the references depth of field",
-      "the wide heroes lose on scale and must be re-staged as diorama-scale compositions)"
+      "LOOP STOPPED at the plateau rule (sets 4/5/6 all 0/5 unanimous",
+      "3 consecutive no-move sets). Final state: cycle1 subject-aware presets + cycle2 props diorama layer (1439 C2 props, 301 pedestrians) + cycle3 buildings facades/crowns + cycle4 capture-mode DOF (?dof) and low-sun bloom discipline",
+      "all suites green (check-beauty 37/37, check-detail 38/38, check-civics 38/38, check-dof 41/41, check-atmosphere 22/22), game r49 10.34ms/934 draws/0 errors",
+      "blind metric unmoved: judges now cite content density/depth/layering vs hand-authored reference dioramas, and the fixed-band tilt-shift at 0.85 was judged negative (mush/ghostly/smeared) - needs subject-aware focus if reused",
+      "next levers beyond the loop: authored hero set-pieces, layered yard content, subject-aware DOF, fairer pair classes"
     ],
-    "judges": "set1 0-15; set2 0-15; set3 0-15 (corrected); set4 0-15 audited; set5 0-15 (balanced 2/3, bytes+seed proven, audit in flight); cycle1 composition 0/5 but killed chrome/empty-field complaints; cycle2 dressing 0/5 but killed some flatness complaints; remaining: wide-shot scale (02/05), sun bloom (01), night asphalt/facades (03), facade detail (04)",
+    "judges": "set1 0-15, set2 0-15, set3 0-15 corrected, set4 0-15 audited, set5 0-15 audited, set6 0-15 (audit in flight); all balanced (2/3), byte+seed proven, reasons image-consistent; loop cycles 0-4 committed",
     "errors": 0,
-    "fps": 93,
-    "drawCalls": 921,
-    "review": "docs/judge-set5-verdicts.md",
-    "updated": "2026-09-28T12:35:23.700Z"
+    "fps": 92,
+    "drawCalls": 934,
+    "review": "docs/reviews/loop-final.md",
+    "updated": "2026-09-28T19:41:18.163Z"
   }
 }

@@ -99,11 +99,14 @@ try {
       }
     }
 
-    // 03/04/05 — the shipped presets as-is (their geometry is gated by check-beauty).
-    for (const name of ['skyline', 'closeup', 'street']) {
-      const spec = ctx.cameraPresets.get(name);
-      out[name] = spec ? { pos: spec.pos, target: spec.target, fov: spec.fov || 50 } : null;
-    }
+    // 03/04/05 — the shipped presets as-is (their geometry is gated by check-beauty). The closeup preset is
+    // sun-side by tod, so fetch it with the clock at its capture tod; skyline/street are fixed compositions.
+    ctx.clock.set(17.7);
+    out.skyline = ctx.cameraPresets.get('skyline');
+    out.closeup = ctx.cameraPresets.get('closeup');
+    ctx.clock.set(12);
+    out.street = ctx.cameraPresets.get('street');
+    for (const name of ['skyline', 'closeup', 'street']) if (out[name]) out[name] = { pos: out[name].pos, target: out[name].target, fov: out[name].fov || 50 };
     return out;
   });
 
