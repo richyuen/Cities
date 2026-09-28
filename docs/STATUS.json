@@ -1,5 +1,5 @@
 {
-  "updated": "2026-09-28T04:36:30.130Z",
+  "updated": "2026-09-28T12:35:23.701Z",
   "modules": {
     "terrain": {
       "score": 8.5,
@@ -305,20 +305,22 @@
   },
   "game": {
     "score": 8.8,
-    "round": 37,
+    "round": 42,
     "pass": true,
     "issues": [
-      "LOOP c1 landed: subject-aware presets (skyline/overview/aerial/street/closeup), aerial bay water, civic closeup, street clearance+no centre pole, one-lit signals, sky-phase reset",
-      "check-beauty 37/37 incl seeds 2/23",
-      "r37 100.0/9.71/856 errors 0",
-      "blind set 4 (c1fix3, seed 31, balanced 2/3, provenance audited) = 0/5 unanimous like sets 1-3, but every reason now names content/depth/detail, no HUD/chrome and no empty-field complaints",
-      "next levers per docs/judge-set4-verdicts.md: L2 micro-dressing+figures (all pairs), L3 depth of field (01/05), sun glare (01), empty asphalt/density (03), flat facades (04), repetitive towers/bare terrain (02/05)"
+      "LOOP c2 landed: props diorama detail layer (1439 C2 props: yards/fences/gardens/laundry/picnic/crates/bikes + 301 pedestrians + civic entrance clusters) with 2 fix rounds (footprint-aware heights, stable prop variation keys, fence spacing, sliced boot cost)",
+      "check-detail 38/38, game r42 921 draws/10.41ms/93.1fps errors 0",
+      "blind set 5 (c2c, seed 41, balanced 2/3, provenance proven) = 0/5 unanimous like sets 1-4",
+      "plateau 2 of 3 no-move sets",
+      "next: cycle 3 buildings facade/rooftop variety in flight",
+      "cycle 4 = curated beauty-shot list + capture-mode DOF/tilt-shift + low-sun bloom clamp (all three judges name the references depth of field",
+      "the wide heroes lose on scale and must be re-staged as diorama-scale compositions)"
     ],
-    "judges": "set1 0-15; set2 0-15 (4/5 theirs-on-A); set3 0-15 after pair-04 correction; set4 0-15 unanimous (balanced 2/3, byte+seed proven, 3 fresh blind judges); cycle 1 built + 2 hostile verification rounds + 2 fix rounds; docs/LOOP.md protocol",
+    "judges": "set1 0-15; set2 0-15; set3 0-15 (corrected); set4 0-15 audited; set5 0-15 (balanced 2/3, bytes+seed proven, audit in flight); cycle1 composition 0/5 but killed chrome/empty-field complaints; cycle2 dressing 0/5 but killed some flatness complaints; remaining: wide-shot scale (02/05), sun bloom (01), night asphalt/facades (03), facade detail (04)",
     "errors": 0,
-    "fps": 100,
-    "drawCalls": 856,
-    "review": "docs/reviews/loop-c1.md",
-    "updated": "2026-09-28T04:36:30.129Z"
+    "fps": 93,
+    "drawCalls": 921,
+    "review": "docs/judge-set5-verdicts.md",
+    "updated": "2026-09-28T12:35:23.700Z"
   }
 }

@@ -86,6 +86,7 @@ park the branch state, record the negative result here.
 |---|---|---|---|---|---|
 | 0 | protocol + baseline | LOOP.md committed, r30 baseline reproduced, drift measured, STATUS re-based | — | — | r30 72.0/13.34/844 errors 0; drift vs r29 meanAbs 0.0726; hero drift 0.0050; `pairs.mjs --balance` reproduces set1's old shuffle |
 | 1 | L1 hero framing system | check-beauty gates + budgets + no regression + honest blind set | set4 | 0/5 | subject-aware presets (composition.js), aerial bay, civic closeup, street clearance, one-lit signals, sky-phase reset; 2 hostile verification rounds + 2 fix rounds; r37 100.0/9.71/856 errors 0; reasons narrowed to L2/L3 content/depth/detail |
+| 2 | L2 diorama detail layer (props) | check-detail green + module/game budgets + no regression + honest blind set | set5 | 0/5 | 7 new prop kinds, 1439 C2 props, 301 pedestrians, civic clusters; 2 fix rounds (footprint-aware heights, stable variation keys, fence spacing, boot cost -98%); r42 921/10.41/93.1 errors 0; wide heroes still lose on scale, sun bloom and flat faces remain |
 
 Blind-set history: set1 (seed 7) 0/5; set2 (seed 11) 0/5; set3 (seed 23) 0/5 after correction; set4 (seed 31,
 balanced 2/3, audited) 0/5 — no chrome/empty-field mentions left, levers narrowed to content/depth/detail.
