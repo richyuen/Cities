@@ -31,7 +31,7 @@ export async function createContext({ container, dom, params }) {
   const renderer = createRenderer(container);
   const scene = new THREE.Scene();
   scene.name = 'root';
-  const cam = createCamera(renderer, world, events);
+  const cam = createCamera(renderer, world, events, clock);
   const assets = new Assets(rng, (...a) => console.log(...a));
   await assets.load();
   const materials = new Materials();

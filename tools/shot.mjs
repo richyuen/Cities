@@ -86,6 +86,9 @@ export async function openApp(opts = {}) {
       if (weather) { const [k, i] = String(weather).split(':'); c.setWeather(k, i !== undefined ? Number(i) : 0.6); }
       if (tod !== undefined && tod !== null) c.setTime(Number(tod));
       if (preset) { if (!c.setCamera(preset)) console.warn(`[shot] unknown preset "${preset}"`); }
+      // Reset the animated sky/cloud phase so a capture depends only on (seed, tod, preset, settle) — not on
+      // how many frames this session already rendered (LOOP cycle-1 critic issue 4).
+      if (typeof c.resetPresentation === 'function') c.resetPresentation();
     }, { preset, tod, weather, variant, showcase });
   }
 
@@ -103,7 +106,7 @@ export async function openApp(opts = {}) {
       out, url: page.url(), capturedAt: new Date().toISOString(), readyMs, gpu,
       fps: Math.round(Math.min(stats.fps || wallFps, wallFps) * 10) / 10, rafFps: Math.round(wallFps * 10) / 10,
       frameMs: stats.frameMs, gpuMs: stats.gpuMs, gpuFps: stats.gpuFps, drawCalls: stats.drawCalls, triangles: stats.triangles, programs: stats.programs,
-      geometries: stats.geometries, textures: stats.textures, hours: stats.hours, showcase: stats.showcase, seed: stats.seed,
+      geometries: stats.geometries, textures: stats.textures, hours: stats.hours, showcase: stats.showcase, seed: stats.seed, frame: stats.frame,
       modules: stats.modules, moduleErrors: stats.moduleErrors, errors, warnings: stats.warnings.slice(0, 50),
     };
     fs.writeFileSync(out.replace(/\.png$/i, '') + '.json', JSON.stringify(log, null, 2));

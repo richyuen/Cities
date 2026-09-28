@@ -220,7 +220,25 @@ function updateLightPool(force) {
 function applyNightMaterials(isNight) {
   const bulb = S.roleTable.get('lamp-bulb');
   if (bulb) bulb.material.emissiveIntensity = isNight ? bulb.dynamic.night : bulb.dynamic.day;
-  S.trafficPhaseName = null; // force the traffic lenses to re-apply their intensity for the new day/night state
+  S.trafficPhaseName = null; // re-apply the traffic lenses for the new day/night state
+  // The lens state is applied here (not only on phase change): captures pause the clock, so props.update()
+  // may never run between setTime() and the capture — boot/paused shots otherwise keep the boot lens state.
+  applyLensState();
+}
+
+function applyLensState() {
+  const night = S.ctx.clock.isNight;
+  const phase = S.trafficPhaseName || 'green';
+  for (const name of ['red', 'yellow', 'green']) {
+    const role = S.roleTable.get(`trafficlight-lens-${name}`);
+    if (!role) continue;
+    const on = name === phase;
+    role.material.emissiveIntensity = on ? (night ? role.dynamic.night : role.dynamic.day) : 0;
+    // An "off" lens must read as dark glass, not a lit coloured disc: zero emissive alone still lets the
+    // saturated plastic read as on (critic crop: all three aspects glowing).
+    if (!role._baseColor) role._baseColor = role.material.color.clone();
+    role.material.color.copy(role._baseColor).multiplyScalar(on ? 1 : 0.12);
+  }
 }
 
 function updateTrafficPhase(dt) {
@@ -231,13 +249,7 @@ function updateTrafficPhase(dt) {
   else phase = 'red';
   if (phase === S.trafficPhaseName) return;
   S.trafficPhaseName = phase;
-  const night = S.ctx.clock.isNight;
-  for (const name of ['red', 'yellow', 'green']) {
-    const role = S.roleTable.get(`trafficlight-lens-${name}`);
-    if (!role) continue;
-    const on = name === phase;
-    role.material.emissiveIntensity = on ? (night ? role.dynamic.night : role.dynamic.day) : 0.12;
-  }
+  applyLensState();
 }
 
 // ---- auto-population (full game only; showcase stages its own scenes explicitly) ---------------------------

@@ -26,6 +26,7 @@ src/core/                   INTEGRATOR ONLY
   bootScreen.js boot overlay controller (markup + CSS are inline in index.html so they paint pre-bundle)
   renderer.js   WebGLRenderer, color management, shadows, resize, stats
   camera.js     PerspectiveCamera + orbit/pan controls + presets (§6)
+  composition.js subject selection for the core presets (LOOP cycle 1): civic/avenue/tower scoring, sun azimuth
   assets.js     texture/HDRI loader with manifest + procedural fallbacks
   materials.js  Blox palette + shared MeshPhysicalMaterial presets + stud instancer
   showcase.js   ?showcase= runner
@@ -165,9 +166,16 @@ world, ctx, THREE                    for debugging
 Console errors are captured from page load. `errors` must be `[]` to pass.
 
 ## 6. Camera presets (core registers; modules add `id:name` presets)
-`overview` (aerial 45°, whole city), `skyline` (low, wide, looking at downtown), `street` (1.7 m eye height on a road),
-`aerial` (top-down-ish 70°), `closeup` (10 m from a building corner), `night` (= skyline; the tool forces tod 21.5).
-Controls: left-drag orbit, right-drag pan, wheel zoom, WASD pan. Camera never goes below terrain + 1 m.
+The core presets are **subject-aware** (LOOP cycle 1): they frame real city subjects using `src/core/composition.js`
+(civic lots scored by neighbours + street props, avenues by building frontage, the tall cluster by height, the sun's
+azimuth from the clock) instead of fixed offsets. `overview` (oblique ~25° over downtown + the bay), `skyline` (low
+3/4 of the tall cluster with the avenue leading in), `street` (2.8 m eye on the busiest avenue, looking slightly
+down; `MapControls.maxPolarAngle` 89.1° means a street target must sit below the eye or the controls lift the
+camera), `aerial` (~42° from the east over downtown), `closeup` (a civic hero — school/hospital/fire/police —
+framed 3/4 around its +z entrance face, sun-side, height-fitted, with a 3D eye→hero raycast so a neighbour wall
+can't fill the frame), `night` (= skyline; the tool forces tod 21.5). Empty/showcase worlds fall back to the old
+generic framings. Controls: left-drag orbit, right-drag pan, wheel zoom, WASD pan. Camera never goes below
+terrain + 1 m.
 
 ## 7. Visual standard & materials
 - Blox palette (`ctx.materials.palette`): `brightRed, brightBlue, brightYellow, brightGreen, darkGreen, white, black, darkStoneGrey, mediumStoneGrey, lightStoneGrey, tan, brickYellow, reddishBrown, darkOrange, brightOrange, mediumAzur, darkAzur, lime, mediumLilac, sandGreen, sandBlue, darkRed, transClear, transBlue, transYellow, transRed`.

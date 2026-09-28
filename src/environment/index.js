@@ -327,6 +327,18 @@ const api = {
   /** the sky dome mesh (ShaderMaterial; uniforms documented in sky.js) */
   get sky() { return S.sky?.mesh; },
   refreshShadowParams() { setCsmShadowParams(); },
+  /** Tooling hook (tools/shot.mjs calls it after staging tod/preset): reset the animated sky/cloud phase so
+   * captures at the same tod are comparable regardless of how many frames the session has already rendered
+   * (LOOP cycle-1 critic issue 4: the sun-column hero drifted meanAbs 2.77 over +600 frames with no re-stage). */
+  resetPresentation() {
+    S.time = 0;
+    const u = S.sky?.uniforms;
+    if (u) {
+      if (u.uTime) u.uTime.value = 0;
+      if (u.uCloudOffset) u.uCloudOffset.value.set(0, 0);
+    }
+    if (S.stars?.material?.uniforms?.uTime) S.stars.material.uniforms.uTime.value = 0;
+  },
 };
 
 export default {

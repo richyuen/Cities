@@ -29,7 +29,6 @@ const EMISSIVE_ROLES = {
   'trafficlight-lens-yellow': { color: 'brightYellow', day: 0.7, night: 3.0 },
   'trafficlight-lens-green': { color: 'brightGreen', day: 0.8, night: 3.5 },
 };
-const LENS_OFF_INTENSITY = 0.12;
 
 export function buildRoleMaterials(ctx) {
   const M = ctx.materials;
@@ -62,5 +61,5 @@ export function buildRoleMaterials(ctx) {
   // Bus-stop back/side wall is real transmissive plastic (a glazed shelter panel), not opaque plastic.
   roles.set('busstop-panel', { material: M.glass('mediumAzur', { roughness: 0.12, opacity: 0.42, transmission: 0.5 }), instanceColor: false, castShadow: false, receiveShadow: true });
 
-  return { roles, EMISSIVE_ROLES, LENS_OFF_INTENSITY };
+  return { roles, EMISSIVE_ROLES };
 }

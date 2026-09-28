@@ -52,8 +52,13 @@ park the branch state, record the negative result here.
 - `errors: []` in every captured JSON; dev server stays up on 5173; one GPU batch at a time (`nvidia-smi`
   before each batch; external load skews fps, not gpuMs — use `gpuMs`).
 - Perf: `gpuMs ≤ 20`, drawCalls ≤ 1500, fps ≥ 50 for the full city.
-- Determinism: no `Math.random()` in `src/`; same seed → same shots (drift budget: same-session
-  meanAbs ≤ 0.30/255 on identical re-stages, from the B3 measurements).
+- Determinism: no `Math.random()` in the sim/render path. Whitelisted: `src/menu/newCity.js` (the New City seed —
+  the seed *is* the deterministic input) and `src/menu/storage.js` (save-id UUID fallback); both are pre-existing
+  and outside the simulation. Same seed → same city and same shots.
+- Drift budget: same-session meanAbs ≤ 0.30/255 on identical re-stages. `tools/shot.mjs` resets the animated sky
+  phase (`__city.resetPresentation()`) on every stage and records the render `frame` in the capture JSON, so
+  captures depend on (seed, tod, preset, settle) rather than session length; compare captures taken with the
+  same settle counts.
 - Regression: every cycle's batch diffed against the baseline batch; intended changes must be isolated
   (toggleable or A/B'd) so the critic can attribute them.
 - Claims must match measurements exactly. No "pixel-identical", no rounding up, negative results recorded.
