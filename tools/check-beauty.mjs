@@ -166,6 +166,80 @@ try {
   await app3.close();
 }
 
+// Multi-seed gates (re-verification issues 1/2: the street face-plant and the near-centre lamp were
+// seed-dependent). Seeds 2 and 23 must hold the same geometry gates as seed 1.
+for (const seed of [2, 23]) {
+  const appS = await openApp({ seed, tod: 17.7, hud: 0 });
+  try {
+    await appS.page.evaluate(() => window.__city.frames(60));
+    const g = await appS.page.evaluate(() => {
+      const ctx = window.__city.ctx, THREE = window.__city.THREE, world = ctx.world;
+      const cs = world.cellSize || 8;
+      const clearance = (x, z) => {
+        let m = Infinity;
+        for (const b of world.buildings.values()) {
+          const c0 = world.cellToWorld(b.i, b.j);
+          const minX = c0.x - cs / 2, minZ = c0.z - cs / 2, maxX = minX + (b.w || 1) * cs, maxZ = minZ + (b.d || 1) * cs;
+          const dx = x < minX ? minX - x : (x > maxX ? x - maxX : 0);
+          const dz = z < minZ ? minZ - z : (z > maxZ ? z - maxZ : 0);
+          const d = Math.hypot(dx, dz);
+          if (d < m) m = d;
+        }
+        return m;
+      };
+      const out = {};
+      window.__city.setCamera('street');
+      const p = ctx.camera.position, t = ctx.controls.target;
+      out.street = { eye: +(p.y - world.getHeight(p.x, p.z)).toFixed(2), clear: +clearance(p.x, p.z).toFixed(2), nearestCone: 999 };
+      {
+        const vx = t.x - p.x, vz = t.z - p.z, vl = Math.hypot(vx, vz) || 1;
+        const dx = vx / vl, dz = vz / vl, rx = -dz, rz = dx;
+        for (const pr of world.props.values()) {
+          const ox = pr.x - p.x, oz = pr.z - p.z, d = Math.hypot(ox, oz);
+          if (d > 140 || d < 0.01) continue;
+          const lat = Math.abs((ox * rx + oz * rz) / d);
+          const along = (ox * dx + oz * dz) / d;
+          if (along < 0.3 || lat > 0.25) continue;
+          if (d < out.street.nearestCone) out.street.nearestCone = d;
+        }
+        out.street.nearestCone = +out.street.nearestCone.toFixed(1);
+      }
+      window.__city.setCamera('closeup');
+      const tt = ctx.controls.target, cam = ctx.camera;
+      let near = null, bestD = Infinity;
+      for (const b of world.buildings.values()) {
+        const c = world.cellToWorld(b.i + ((b.w || 1) - 1) / 2, b.j + ((b.d || 1) - 1) / 2);
+        const d = Math.hypot(c.x - tt.x, c.z - tt.z);
+        if (d < bestD) { bestD = d; near = { id: b.id, kind: b.kind, x: c.x, z: c.z, h: b.height || 10, w: b.w || 1, d2: b.d || 1 }; }
+      }
+      const cdir = new THREE.Vector3(cam.position.x - near.x, 0, cam.position.z - near.z).normalize();
+      const sd = ctx.clock.sunDir;
+      const diag = Math.hypot(near.w * cs, near.d2 * cs);
+      const nx = near.x + cdir.x * diag / 2, nz = near.z + cdir.z * diag / 2;
+      const gy = world.getHeight(near.x, near.z);
+      const rayDir = new THREE.Vector3(near.x - cam.position.x, gy + near.h * 0.42 - cam.position.y, near.z - cam.position.z).normalize();
+      const hit = world.raycastBuildings(new THREE.Ray(cam.position.clone(), rayDir), near.h * 4 + 80);
+      out.closeup = {
+        kind: near.kind,
+        sunDot: +(cdir.x * sd.x + cdir.z * sd.z).toFixed(3),
+        cornerTop: +new THREE.Vector3(nx, gy + near.h, nz).project(cam).y.toFixed(3),
+        cornerBottom: +new THREE.Vector3(nx, gy, nz).project(cam).y.toFixed(3),
+        unoccluded: !!hit && hit.id === near.id,
+      };
+      return out;
+    });
+    check(g.street.eye > 2.3 && g.street.eye < 3.4, `seed ${seed}: street eye ${g.street.eye} m in (2.3, 3.4)`);
+    check(g.street.clear >= 4, `seed ${seed}: street eye clearance ${g.street.clear} m from facades (>= 4)`);
+    check(g.street.nearestCone >= 10, `seed ${seed}: nearest cone prop ${g.street.nearestCone} m (>= 10)`);
+    check(['school', 'hospital', 'fire_department', 'police_station'].includes(g.closeup.kind), `seed ${seed}: closeup civic (${g.closeup.kind})`);
+    check(g.closeup.sunDot > 0.1, `seed ${seed}: closeup sun-side dot ${g.closeup.sunDot} (> 0.1)`);
+    check(g.closeup.cornerTop <= 1.1 && g.closeup.cornerBottom >= -1.1, `seed ${seed}: closeup near corner inside (${g.closeup.cornerTop} / ${g.closeup.cornerBottom})`);
+    check(g.closeup.unoccluded, `seed ${seed}: closeup unoccluded`);
+  } finally {
+    await appS.close();
+  }
+}
+
 fs.writeFileSync(path.join(OUT, 'summary.json'), JSON.stringify({ ok: failed === 0, failed, checks: results.length, results, captureErrors }, null, 2));
 console.log(`\n[check-beauty] ${results.length - failed}/${results.length} checks passed → ${path.join(OUT, 'summary.json')}`);
 process.exit(failed ? 1 : 0);

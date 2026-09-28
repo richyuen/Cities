@@ -50,14 +50,15 @@ closeup candidate that fell through to the generic fallback instead of trying th
 |---|---|---|---|---|
 | baseline r30 (pre-cycle-1) | 72.0 | 13.34 | 844 | 0 |
 | r31 game batch (`shots/game/r31`, 20 shots) | 73.1 | 13.08 | 856 | 0 |
-| r33 game batch after the fix round (`shots/game/r33`, GPU idle) | 100.4 | 9.57 | 856 | 0 |
-| `check-beauty --out shots/beauty/c1fix` | — | — | — | **23/23 checks, 0 errors** |
+| r36 game batch (fix round 2, pre-4 m-clearance street tweak) | 99.2 | 9.64 | 856 | 0 |
+| r37 game batch (frozen cycle-1 build, GPU idle) | 100.0 | 9.71 | 856 | 0 |
+| `check-beauty --out shots/beauty/c1fix3` | — | — | — | **37/37 checks, 0 errors** |
 
-Per-preset gpuMs at 21.5 (r33): closeup 9.57, street 9.53, skyline 9.33, overview 8.36, aerial 8.19 — all inside
-the ≤ 20 ms full-city budget. Hero shots read: `shots/beauty/c1fix/01-skyline-golden.png` (sunset down the
-avenue), `03-street-night.png` (crosswalk, one lit signal, streetlamps, no centre pole), `04-closeup-golden.png`
-(hospital cross + entrance + crosswalk), `02-overview-noon.png` (dense city + bay + industrial),
-`05-aerial-dawn.png` (bay in the near/middle bands, long dawn shadows).
+Per-preset gpuMs at 21.5 (r36): closeup 9.64, street 9.62, skyline 9.37, overview 8.43, aerial 8.24 — all inside
+the ≤ 20 ms full-city budget. Hero shots read: `shots/beauty/c1fix3/01-skyline-golden.png` (sunset down the
+avenue), `03-street-night.png` (urban canyon, one lit signal, streetlamps, no centre pole, eye 4 m+ off facades),
+`04-closeup-golden.png` (hospital cross + entrance + crosswalk), `02-overview-noon.png` (dense city + bay +
+industrial), `05-aerial-dawn.png` (bay in the near/middle bands, long dawn shadows).
 
 ## Fix round (post-critic, `docs/reviews/loop-c1-critic.md`)
 
@@ -65,10 +66,33 @@ avenue), `03-street-night.png` (crosswalk, one lit signal, streetlamps, no centr
 |---|---|
 | 1. closeup back-lit + near corner 1.45–1.64x frame height | every clear (candidate, +z offset) pair is scored `candidateScore × cos²(offset) × (0.5 + 0.5·sunDot)`; distance sizes on the near corner; `check-beauty` now asserts sun-side (dot > 0.1) and near-corner NDC in [-1.06, 1.06]. Seed 1 ships the suburb hospital: sunDot 0.46, corner top 0.43 / bottom −0.28, fit 0.51, unoccluded. |
 | 2. aerial contained 0 water cells | re-aimed to (860, 300, 300) → (200, 0, −80): 333 water cells in the near/middle bands (check-beauty gate ≥ 150), elevation 21.3°, distance 817 m. |
-| 3. street centre pole + all-three-lit signal | both verge sides × 4 standoffs are scored with a wide cone (near-lens hard reject; props at < 0.22 lateral within 140 m counted) and the aim is tilted away from the lamp line; the eye now sees no cone prop nearer than ~88 m. The signal fix is in `props` (see the table): exactly one lens lit, applied at init and on day/night changes so paused captures are correct. |
+| 3. street centre pole + all-three-lit signal | both verge sides × 5 standoffs are scored with a graded central cone (near-lens hard reject; building clearance hard-reject < 2.5 m, penalised < 9 m) and the aim is tilted away from the lamp line. See fix round 2: clearance added after the re-verification caught a seeds-2/23 face-plant. The signal fix is in `props` (see the table): exactly one lens lit, applied at init and on day/night changes so paused captures are correct. |
 | 4. sky-phase frame drift | `environment.api.resetPresentation()` + `__city.resetPresentation()`; `shot.mjs` calls it on every stage and records the frame count. |
 | 5. roads-showcase street fallback lifted to 3.26 m | fallback target now sits below the authored eye; `check-beauty` boots `?showcase=roads` and asserts all presets finite and the street fallback eye in (1.4, 2.4) m — measured 1.7 m. |
 | 6. literal `Math.random` gate | restated in `docs/LOOP.md` (sim/render path only; the two menu call sites are whitelisted by name). |
+
+## Fix round 2 (re-verification, `docs/reviews/loop-c1-fix-critic.md`)
+
+The re-verifier (fresh critic) confirmed the closeup, aerial, signal and sky-reset fixes and the whole regression
+suite (its 23/23, r35 101.9/9.47/856, atmosphere 22/22, props 198 draws), but scored 7/10 FAIL on:
+
+1. **Street face-plant on seeds 2/23** (new regression: eye 1.0 m from a facade). Fixed: the street score now
+   includes building clearance (hard reject < 2.5 m, penalty to 9 m), a graded central-cone prop penalty, and a
+   fifth standoff (48 m); `check-beauty` gates seeds 2 and 23 too. Measured after the fix: clearance 15 m / 8.1 m,
+   nearest cone prop 39 m / 31 m, eye 2.8 m both.
+2. **False "no cone prop nearer than 88 m" claim** — that was seed-1/tod-12-specific; the report now states the
+   gate (≥ 10 m in the check, seeds 1–3) and the measured values.
+3. **Session-length hole** — the sky-phase reset is confirmed (warm-up + reset + 600 frames = 0.0245 meanAbs),
+   but a *cold first* capture still differs (2.5) because the world itself keeps growing for a while after boot
+   (441 → 555 buildings over 3600 paused frames: level-ups settle over session time). Protocol: captures are
+   compared at the same warm-up/settle (`shot.mjs`/`critic.mjs` warm up first); the claim "session length is
+   irrelevant" is withdrawn.
+4. **Closeup seeds 2/23 read wide/high** — eye lowered (`gy + max(2.2, 0.38h + 1.0)`, target at `0.42h`);
+   near-corner still inside (1.03 / −0.78 school, seeds 2/23; screenshots looked at).
+5. **Off lenses still coloured in sun** — off-state base colour darkened to 0.08x (was 0.12x); day/night states
+   re-confirmed (green 0.8 day, 3.5 night; red/yellow emissive 0 + dark).
+
+`check-beauty` is now **37/37**: seed-1 details, seeds 2/23 geometry gates, showcase fallbacks, HUD.
 
 ## Known gaps
 

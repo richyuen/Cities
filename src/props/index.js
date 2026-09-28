@@ -237,7 +237,7 @@ function applyLensState() {
     // An "off" lens must read as dark glass, not a lit coloured disc: zero emissive alone still lets the
     // saturated plastic read as on (critic crop: all three aspects glowing).
     if (!role._baseColor) role._baseColor = role.material.color.clone();
-    role.material.color.copy(role._baseColor).multiplyScalar(on ? 1 : 0.12);
+    role.material.color.copy(role._baseColor).multiplyScalar(on ? 1 : 0.08);
   }
 }
 

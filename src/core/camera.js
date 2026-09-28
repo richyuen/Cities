@@ -69,15 +69,27 @@ export class CameraPresets {
           // the parallel lamp line at lateral 9 m otherwise converges onto the frame centre and a pole bisects
           // it (cycle-1 critic issue 3). Eye at lateral 7 sits between the lane and the lamp line.
           const tx = near.x + ux * 110 + lx * (-side * 0.5), tz = near.z + uz * 110 + lz * (-side * 0.5);
-          for (const standoff of [16, 24, 32, 40]) {
+          for (const standoff of [16, 24, 32, 40, 48]) {
             const px = near.x - ux * standoff + lx * side, pz = near.z - uz * standoff + lz * side;
             if (segmentBlocked(this.world, px, pz, px, pz)) continue;
             const eyeY = gh(px, pz) + 2.8;
-            // Score obstructions: props close to the lens or near the view axis are what the critic saw (a
-            // lamp 6.6 m out at 4 deg off-axis slipped a 0.06 cone, and the eye stood on the lamp line).
+            // Building clearance: the fix round shipped an eye 1.0 m from a facade on seeds 2/23 (awning +
+            // blown shop windows filled the frame — re-verification issue 1). Hard-reject < 2.5 m, penalise < 9.
+            let clear = Infinity;
+            const cs = this.world.cellSize || 8;
+            for (const b of this.world.buildings.values()) {
+              const c0 = this.world.cellToWorld(b.i, b.j);
+              const minX = c0.x - cs / 2, minZ = c0.z - cs / 2, maxX = minX + (b.w || 1) * cs, maxZ = minZ + (b.d || 1) * cs;
+              const ddx = px < minX ? minX - px : (px > maxX ? px - maxX : 0);
+              const ddz = pz < minZ ? minZ - pz : (pz > maxZ ? pz - maxZ : 0);
+              const d = Math.hypot(ddx, ddz);
+              if (d < clear) clear = d;
+            }
+            // Props: near-lens hard rejects; a graded penalty for anything in the central cone (a lamp 12 m
+            // out at lat 0.11 still reads as a near-centre pole — re-verification issue 2).
             const vx = tx - px, vz = tz - pz, vl = Math.hypot(vx, vz) || 1;
             const dx = vx / vl, dz = vz / vl, rx = -dz, rz = dx;
-            let hardProps = 0, centreProps = 0;
+            let hardProps = 0, centreScore = 0;
             for (const p of this.world.props.values()) {
               const ox = p.x - px, oz = p.z - pz;
               const d = Math.hypot(ox, oz);
@@ -85,14 +97,15 @@ export class CameraPresets {
               if (d < 3 || (d < 8 && lat < 0.4)) { hardProps++; continue; }
               if (d > 140) continue;
               const along = (ox * dx + oz * dz) / d;
-              if (along < 0.3) continue;
-              if (lat < 0.22) centreProps++;
+              if (along < 0.3 || lat > 0.25) continue;
+              centreScore += (d < 45 ? 2 : 0.3) * (45 / Math.max(d, 12));
             }
-            const score = hardProps * 1000 + centreProps;
-            if (!best || score < best.score) best = { px, pz, eyeY, score, hardProps, tx, tz };
+            const hardClear = clear < 4 ? 1 : 0;
+            const score = hardProps * 1000 + hardClear * 500 + (clear < 12 ? (12 - clear) * 4 : 0) + centreScore;
+            if (!best || score < best.score) best = { px, pz, eyeY, score, hardProps, hardClear, clear, tx, tz };
           }
         }
-        if (best && best.hardProps === 0) {
+        if (best && best.hardProps === 0 && best.hardClear === 0) {
           // Look slightly DOWN: MapControls.maxPolarAngle (89.1°) lifts any eye that sits below its target,
           // so a target above eye level silently raises the camera off the street (cycle-1 check: 6.5 m eye).
           return { pos: [best.px, best.eyeY, best.pz], target: [best.tx, best.eyeY - 2.5, best.tz], fov: 50 };
@@ -125,9 +138,9 @@ export class CameraPresets {
         for (const off of [65, 40, 25, -25, -40, -65].map((d) => d * DEG)) {
           const px = s.x + Math.sin(off) * dist, pz = s.z + Math.cos(off) * dist;
           if (segmentBlocked(this.world, px, pz, px, pz)) continue;
-          const eyeY = gy + Math.max(2.4, h * 0.45 + 1.2);
+          const eyeY = gy + Math.max(2.2, h * 0.38 + 1.0);
           // 3D check: the first building the eye→subject ray meets must be the subject itself.
-          const ray = new THREE.Ray(new THREE.Vector3(px, eyeY, pz), new THREE.Vector3(s.x - px, gy + h * 0.45 - eyeY, s.z - pz).normalize());
+          const ray = new THREE.Ray(new THREE.Vector3(px, eyeY, pz), new THREE.Vector3(s.x - px, gy + h * 0.42 - eyeY, s.z - pz).normalize());
           const hit = this.world.raycastBuildings(ray, dist + 60);
           if (hit && hit.id !== s.b.id) continue;
           const face = Math.cos(off);
@@ -136,7 +149,7 @@ export class CameraPresets {
           if (!best || score > best.score) best = { score, px, pz, eyeY, h, gy, s };
         }
       }
-      if (best) return { pos: [best.px, best.eyeY, best.pz], target: [best.s.x, best.gy + best.h * 0.45, best.s.z], fov: FOV };
+      if (best) return { pos: [best.px, best.eyeY, best.pz], target: [best.s.x, best.gy + best.h * 0.42, best.s.z], fov: FOV };
       const cluster = hasCity() ? towerCluster(this.world, c) : null;
       if (cluster) {
         const dist = Math.max(24, cluster.h * 1.5);
