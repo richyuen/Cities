@@ -120,6 +120,7 @@ function applyTod() {
   setV3(u.uGlow, sp.glow); setV3(u.uSunDisc, sp.sunDisc); setV3(u.uCloudAmb, sp.cloudAmb); setV3(u.uCloudLit, sp.cloudLit);
   u.uGlowG.value = sp.glowG; u.uGlowK.value = sp.glowK; u.uHorK.value = sp.horK; u.uHazeK.value = sp.hazeK;
   u.uShowSun.value = e > -3 ? 1 : 0;
+  u.uSunDiscLow.value = sp.sunDiscLow;
   u.uCoverage.value = sp.coverage; u.uDensity.value = sp.density; u.uCloudSharp.value = sp.cloudSharp; u.uHaze.value = sp.haze;
   u.uNight.value = night * (1 - overcast) * (1 - 0.8 * smoothstep(0.2, 0.6, wf.cloud));
   // cloud dimming is capped (not driven to 0): the sky shader's own per-pixel cloud alpha already occludes the

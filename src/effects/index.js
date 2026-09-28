@@ -7,6 +7,7 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { GradeShader } from './grade.js';
+import { TiltShiftShader } from './tiltShift.js';
 import { buildShowcase } from './showcase.js';
 
 // effects — the post-processing finishing pass.
@@ -17,6 +18,7 @@ import { buildShowcase } from './showcase.js';
 //   -> Grade     (custom ShaderPass: AO multiply with contrast curve, vignette, chromatic aberration, night lift)
 //   -> UnrealBloomPass (threshold >= 1.0 so only emissives / sun glints bloom)
 //   -> OutputPass (ACES filmic + sRGB for EVERYTHING, sky included — the composer path is canonical)
+//   -> TiltShift (capture-mode DOF; present only when ?dof=<0..1> > 0, otherwise the exact old chain)
 //   -> SMAAPass  (runs last, on the LDR image, where its luma edge detection works best)
 //
 // sceneRT (the MSAA target carrying depthTexture) is written exactly once per frame, by RenderPass, and read
@@ -46,6 +48,17 @@ const BLOOM_MIP_TINTS = [1.0, 0.6, 0.28, 0.08, 0.0];
 // Threshold is in linear HDR before tone mapping. Sunlit white plastic at noon sits around 1.2-1.4, so the daytime
 // threshold is 1.6 (only emissives / sun glints bloom); at night it drops to 1.0 for the window glow. Never < 1.0.
 const BLOOM_THRESHOLD_DAY = 1.6, BLOOM_THRESHOLD_NIGHT = 1.0, BLOOM_THRESHOLD_MIN = 1.0;
+// Low-sun bloom discipline (LOOP c4, measured on the hero sunset skyline @e=4.86 deg): of the frame's ~4400
+// clipped-white pixels (min channel >= 253) roughly 2500 exist only because the bloom adds on top of the
+// avenue's sun specular (a strength-0 control in the probe session clipped 1867). Dropping the automatic day
+// bloom strength by up to 60% while the sun is low turns the "huge bloom flare" back into a gold reflection.
+// The factor is exactly 0 below -1.5 deg (night keeps its emissive bloom profile, 0.3 / 1.0) and exactly 0
+// at/above 14 deg (noon is bit-identical); it only applies to the automatic strength, never to an explicit
+// api.setBloom override.
+const SUN_BLOOM_DROP = 0.6;
+// DOF defaults. strength 0.55 is the capture-mode default suggestion; only a strength > 0 constructs the pass.
+const DEFAULT_DOF_STRENGTH = 0.55;
+const DOF_FOCUS_RADIUS = 0.14, DOF_FALLOFF = 0.42, DOF_MAX_RADIUS_PX = 18.0;
 const AO_INTENSITY = 1.0;
 const AO_POWER = 2.5;   // contrast curve applied to the AO term in the grade pass (pow(ao, AO_POWER))
 // GTAO in metres (bricks are 0.96 m tall, studs 0.8 m apart, 0.17 m high): a short radius so the term concentrates
@@ -74,7 +87,16 @@ const S = {
   size: { w: 1, h: 1 },
   debug: null,
   bloomOverride: { strength: undefined, radius: undefined, threshold: undefined }, // api.setBloom persists across time:changed
+  sunBloom: true,             // ?sunbloom=0 disables the low-sun bloom discipline (A/B + attribution tooling)
+  sunBloomInfo: { elevation: 0, factor: 0 },
+  dof: { strength: 0, focusY: 0.5 }, // ?dof=<0..1>; 0 = off (no pass constructed, render path unchanged)
 };
+
+/** 0 at night (e <= -1.5 deg) and at/above 14 deg, 1 at low-but-up sun (e in [2, 0.5] deg): the band where the
+ *  low sun's specular fuel makes the bloom read as a flare. Monotone, pure function of sun elevation. */
+function lowSunFactor(elevDeg) {
+  return (1 - THREE.MathUtils.smoothstep(elevDeg, 2, 14)) * THREE.MathUtils.smoothstep(elevDeg, -1.5, 0.5);
+}
 
 function drawingSize(renderer) {
   const v = renderer.getDrawingBufferSize(new THREE.Vector2());
@@ -159,18 +181,54 @@ function buildComposer(ctx) {
   S.passes = { renderPass, gtao, grade, bloom, output, smaa };
   S.size = { w, h };
   applySizes();
+  if (S.dof.strength > 0) buildDofPass();
   applyQuality();
   applyTime(ctx.clock);
+}
+
+/** Capture-mode tilt-shift: constructed ONLY on demand (a non-zero strength); with DOF off it does not exist,
+ *  so the composer contents, the render() chain and the output are exactly the pre-DOF pipeline. */
+function buildDofPass() {
+  if (!S.composer || S.passes.dof) return;
+  const { w, h } = S.size;
+  const pass = new ShaderPass(TiltShiftShader);
+  pass.material.depthTest = false;
+  pass.material.depthWrite = false;
+  pass.uniforms.resolution.value = new THREE.Vector2(w, h);
+  pass.uniforms.strength.value = S.dof.strength;
+  pass.uniforms.focusY.value = S.dof.focusY;
+  pass.uniforms.focusRadius.value = DOF_FOCUS_RADIUS;
+  pass.uniforms.falloff.value = DOF_FALLOFF;
+  pass.uniforms.maxRadius.value = DOF_MAX_RADIUS_PX;
+  pass.renderToScreen = false;
+  const arr = S.composer.passes;
+  arr.push(pass);
+  // keep it directly after OutputPass in the pass list (render() drives the chain by hand, but a correct list
+  // is what getComposer()/tooling sees and what a future composer.render() would use)
+  const at = arr.indexOf(S.passes.output);
+  arr.splice(arr.indexOf(pass), 1);
+  arr.splice(at >= 0 ? at + 1 : arr.length, 0, pass);
+  S.passes.dof = pass;
+}
+
+function removeDofPass() {
+  const pass = S.passes.dof;
+  if (!pass) return;
+  const arr = S.composer?.passes;
+  if (arr) { const i = arr.indexOf(pass); if (i >= 0) arr.splice(i, 1); }
+  pass.dispose();
+  delete S.passes.dof;
 }
 
 /** Per-pass resolutions derived from the current drawing-buffer size and quality tier. */
 function applySizes() {
   const q = QUALITY[S.quality];
-  const { gtao, bloom, grade } = S.passes;
+  const { gtao, bloom, grade, dof } = S.passes;
   const { w, h } = S.size;
   grade.uniforms.resolution.value.set(w, h);
   gtao.setSize(Math.max(1, Math.round(w * q.gtaoScale)), Math.max(1, Math.round(h * q.gtaoScale)));
   bloom.setSize(Math.max(1, Math.round(w * q.bloomScale)), Math.max(1, Math.round(h * q.bloomScale)));
+  if (dof) dof.uniforms.resolution.value.set(w, h);
 }
 
 /** Quality-tier switches. Only re-creates the MSAA scene target when the sample count actually changes. */
@@ -205,7 +263,13 @@ function applyTime(clock) {
   const daylight = THREE.MathUtils.clamp(clock.daylight ?? 1, 0, 1);
   const night = 1 - THREE.MathUtils.smoothstep(daylight, 0.0, 0.25);
   const o = S.bloomOverride;
-  bloom.strength = o.strength ?? (BLOOM_DAY + (BLOOM_NIGHT - BLOOM_DAY) * night);
+  let strength = o.strength ?? (BLOOM_DAY + (BLOOM_NIGHT - BLOOM_DAY) * night);
+  // low-sun discipline: automatic strength only, and exactly 0 at night and at/above 14 deg
+  const elevDeg = (clock.sunElevation ?? 0) * (180 / Math.PI);
+  const lowSun = S.sunBloom ? lowSunFactor(elevDeg) : 0;
+  if (o.strength === undefined && lowSun > 0) strength *= 1 - SUN_BLOOM_DROP * lowSun;
+  S.sunBloomInfo = { elevation: elevDeg, factor: lowSun };
+  bloom.strength = strength;
   bloom.radius = o.radius ?? BLOOM_RADIUS;
   bloom.threshold = Math.max(BLOOM_THRESHOLD_MIN, o.threshold ?? (BLOOM_THRESHOLD_DAY + (BLOOM_THRESHOLD_NIGHT - BLOOM_THRESHOLD_DAY) * night));
   grade.uniforms.nightLift.value = night;
@@ -237,6 +301,13 @@ function render(dt) {
   if (output.enabled) {
     output.renderToScreen = false;
     output.render(renderer, writeBuf, readBuf, dt, false);
+    readBuf = writeBuf; writeBuf = (readBuf === pingA) ? pingB : pingA;
+  }
+
+  // Capture-mode DOF (only present when ?dof>0 or api.setDOF was called): LDR pass between ACES and SMAA.
+  if (S.passes.dof) {
+    S.passes.dof.renderToScreen = false;
+    S.passes.dof.render(renderer, writeBuf, readBuf, dt, false);
     readBuf = writeBuf; writeBuf = (readBuf === pingA) ? pingB : pingA;
   }
 
@@ -309,6 +380,24 @@ const api = {
     if (vignette !== undefined) u.vignetteAmount.value = vignette;
     if (chromatic !== undefined) u.caAmount.value = chromatic;
   },
+  /** Capture-mode tilt-shift. strength in [0,1] (0 removes the pass entirely); focusY is the vUv of the focus
+   *  line. Returns the applied strength. */
+  setDOF(strength, focusY) {
+    const s = THREE.MathUtils.clamp(Number(strength) || 0, 0, 1);
+    S.dof.strength = s;
+    if (focusY !== undefined) S.dof.focusY = THREE.MathUtils.clamp(Number(focusY) || 0.5, 0, 1);
+    if (s > 0) buildDofPass(); else removeDofPass();
+    if (S.passes.dof) {
+      S.passes.dof.uniforms.strength.value = s;
+      S.passes.dof.uniforms.focusY.value = S.dof.focusY;
+    }
+    return s;
+  },
+  getDOF() { return { ...S.dof, enabled: !!S.passes.dof }; },
+  /** Turn the low-sun bloom discipline off/on at runtime (A/B + attribution tooling). */
+  setSunBloom(on) { S.sunBloom = !!on; if (S.ctx) applyTime(S.ctx.clock); },
+  /** Last low-sun bloom state: { elevation (deg), factor (0..1) }. */
+  getSunBloom() { return { enabled: S.sunBloom, ...S.sunBloomInfo }; },
 };
 
 export default {
@@ -335,6 +424,18 @@ export default {
     const q = ctx.params.get('quality');
     if (q && QUALITY[q]) S.quality = q;
     if (ctx.params.get('post') === '0') S.enabled = false;
+    // capture-mode flags: ?dof=<0..1> (bare ?dof = 0.55), ?dofy=<0..1> focus line, ?sunbloom=0 (A/B)
+    const dofRaw = ctx.params.get('dof');
+    if (dofRaw !== null) {
+      const s = dofRaw === '' ? DEFAULT_DOF_STRENGTH : Number(dofRaw);
+      S.dof.strength = Number.isFinite(s) ? THREE.MathUtils.clamp(s, 0, 1) : 0;
+    }
+    const dofyRaw = ctx.params.get('dofy');
+    if (dofyRaw !== null) {
+      const f = Number(dofyRaw);
+      if (Number.isFinite(f)) S.dof.focusY = THREE.MathUtils.clamp(f, 0, 1);
+    }
+    S.sunBloom = ctx.params.get('sunbloom') !== '0';
 
     buildComposer(ctx);
     ctx.setRenderFn(render);

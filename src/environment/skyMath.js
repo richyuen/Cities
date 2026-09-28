@@ -63,6 +63,17 @@ export function skyParams(e, wf, out = {}) {
   p.sunDisc = ramp(SUN_DISC, e, p.sunDisc || [0, 0, 0]);
   p.cloudAmb = ramp(CLOUD_AMB, e, p.cloudAmb || [0, 0, 0]);
   p.cloudLit = ramp(CLOUD_LIT, e, p.cloudLit || [0, 0, 0]);
+  // Cycle 4B lighting discipline: low-sun disc extinction. The ramp above is the atmosphere-free disc radiance
+  // (30+ at noon); a sun sitting in the thickest air near the horizon used to keep that value and was the frame's
+  // single biggest bloom source (set-5 judges: "huge bloom flare" / "blown out" on all three). A soft ramp dims
+  // the visible disc as it approaches the horizon: exact no-op from 16 deg up (noon untouched), ~0.26x at 5 deg
+  // (the judged sunset hero), ~0.15x at the horizon. Only the disc's radiance and core size move — the sun-side
+  // horizon/glow chroma ramps (the check-atmosphere contract and the golden identity) are deliberately untouched.
+  // `sunDiscLow` also drives the dome's disc-core shrink (sky.js uSunDiscLow) so both levers share one trigger:
+  // 0 exactly at/above 16 deg (the disc mask is bit-identical to the high-sun one), 1 at/below 2 deg.
+  p.sunDiscLow = 1 - smoothstep(2, 16, e);
+  const discExt = lerp(1, 0.15, p.sunDiscLow);
+  for (let i = 0; i < 3; i++) p.sunDisc[i] *= discExt;
   // B3 atmosphere: low-sun chroma boost. The clear-sky ramps are already saturated in linear RGB, but ACES
   // compresses them toward cream at dawn/dusk (r4/effects-r2 finding: the sky is identically pale with effects
   // on/off, so it is environment's tone). Push the sun-side horizon, the away horizon and the glow away from their

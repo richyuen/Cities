@@ -51,6 +51,7 @@ export function createSky() {
     uHorK: { value: 3.2 },
     uSunDisc: { value: new THREE.Vector3(30, 28, 24) },
     uShowSun: { value: 1 },
+    uSunDiscLow: { value: 0 },
     uCloudAmb: { value: new THREE.Vector3(0.6, 0.65, 0.8) },
     uCloudLit: { value: new THREE.Vector3(0.55, 0.55, 0.5) },
     uCoverage: { value: 0.4 },
@@ -79,7 +80,7 @@ export function createSky() {
       }`,
     fragmentShader: /* glsl */`
       uniform vec3 uSunDir, uMoonDir, uZenith, uHorizonAway, uHorizonSun, uGlow, uSunDisc, uCloudAmb, uCloudLit, uFog, uMoonCol, uMW;
-      uniform float uGlowG, uGlowK, uHorK, uHazeK, uShowSun, uCoverage, uDensity, uCloudSharp, uHaze, uNight, uMoon, uTime;
+      uniform float uGlowG, uGlowK, uHorK, uHazeK, uShowSun, uSunDiscLow, uCoverage, uDensity, uCloudSharp, uHaze, uNight, uMoon, uTime;
       uniform vec2 uCloudOffset;
       varying vec3 vDir;
       ${NOISE_GLSL}
@@ -99,7 +100,13 @@ export function createSky() {
         float halo = ( 0.55 * hg( cosT, uGlowG ) + 0.22 * hg( cosT, uGlowG * 0.82 ) + 0.06 * pow( max( cosT, 0.0 ), 4.0 ) ) * uGlowK;
         float horizonBoost = 1.0 - 0.6 * smoothstep( 0.05, 0.6, h );
         sky += uGlow * halo * horizonBoost;
-        float disc = smoothstep( 0.99988, 0.99995, cosT ) * uShowSun * smoothstep( -0.004, 0.006, h );
+        // Cycle 4B: the disc core shrinks/softens as the sun nears the horizon (uSunDiscLow = 1 low, 0 high) —
+        // the old ~0.9 deg soft-edged disc was a wide bloom source at the horizon; the halo (not the disc)
+        // carries the golden-hour glow, so a small, intense point + warm halo reads more like a sunset and
+        // blooms less. At uSunDiscLow = 0 (noon and up) the mask is bit-identical to the original.
+        float discA = mix( 0.99988, 0.999925, uSunDiscLow );
+        float discB = mix( 0.99995, 0.999975, uSunDiscLow );
+        float disc = smoothstep( discA, discB, cosT ) * uShowSun * smoothstep( -0.004, 0.006, h );
         sky += uSunDisc * disc;
 
         // horizon haze: thin band that thickens the horizon toward the fog colour, soft above and below
