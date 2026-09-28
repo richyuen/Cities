@@ -1,5 +1,5 @@
 {
-  "updated": "2026-09-27T21:00:05.168Z",
+  "updated": "2026-09-28T04:36:30.130Z",
   "modules": {
     "terrain": {
       "score": 8.5,
@@ -305,23 +305,20 @@
   },
   "game": {
     "score": 8.8,
-    "round": 30,
+    "round": 37,
     "pass": true,
     "issues": [
-      "LOOP c0 baseline: game r30 72.0/13.34/844 errors 0",
-      "drift vs r29 meanAbs 0.073 (worst 0.333), hero shots vs v5 meanAbs 0.005",
-      "baseline is shots/game/r30 + shots/beauty/r30",
-      "blind sets 1-3 all 0/5 (set3 corrected by reason audit)",
-      "set4 pending cycles 1-3 with counterbalanced sides",
-      "next levers per docs/LOOP.md: L1 hero framing, L2 diorama detail, L3 cinematic depth, L4 density toward camera, L5 defects, L6 module >=9 pushes",
-      "r28/r29/r30 is the comparable game line",
-      "batches <= r27 are pixel-incomparable after the V5 preset change"
+      "LOOP c1 landed: subject-aware presets (skyline/overview/aerial/street/closeup), aerial bay water, civic closeup, street clearance+no centre pole, one-lit signals, sky-phase reset",
+      "check-beauty 37/37 incl seeds 2/23",
+      "r37 100.0/9.71/856 errors 0",
+      "blind set 4 (c1fix3, seed 31, balanced 2/3, provenance audited) = 0/5 unanimous like sets 1-3, but every reason now names content/depth/detail, no HUD/chrome and no empty-field complaints",
+      "next levers per docs/judge-set4-verdicts.md: L2 micro-dressing+figures (all pairs), L3 depth of field (01/05), sun glare (01), empty asphalt/density (03), flat facades (04), repetitive towers/bare terrain (02/05)"
     ],
-    "judges": "set1 0-15 (3x0-5); set2 0-15 identical (theirs-on-A 4/5 flagged); set3 0-15 after pair-04 reason audit correction; loop protocol now balances sides and audits reasons per pair (docs/LOOP.md section 3); baseline r30 72.0/13.34/844 errors 0",
+    "judges": "set1 0-15; set2 0-15 (4/5 theirs-on-A); set3 0-15 after pair-04 correction; set4 0-15 unanimous (balanced 2/3, byte+seed proven, 3 fresh blind judges); cycle 1 built + 2 hostile verification rounds + 2 fix rounds; docs/LOOP.md protocol",
     "errors": 0,
-    "fps": 72,
-    "drawCalls": 844,
-    "review": "docs/reviews/loop-c0.md",
-    "updated": "2026-09-27T21:00:05.168Z"
+    "fps": 100,
+    "drawCalls": 856,
+    "review": "docs/reviews/loop-c1.md",
+    "updated": "2026-09-28T04:36:30.129Z"
   }
 }
