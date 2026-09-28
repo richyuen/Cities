@@ -54,6 +54,14 @@ deciding details; no context, no key). Judges ran in parallel and could not see 
 complaints changed character: no judge mentions HUD/chrome, "empty field" is gone, and every reason now names
 *content density, surface detail, depth of field or subject staging* — i.e. the L2/L3 levers, not framing.
 
+**Independent audit (`docs/reviews/loop-c1-set4-audit.md`): valid 0/5.** All ten files byte-identical to their
+sources, the keyed assignment and 2/3 split reproduce from seed 31, every pick maps to the reference side, all 15
+reasons describe content actually visible in the pair/side they name (no shifted or inverted rows), no
+authorship/filename/engine leakage, and only generic cross-judge n-gram overlap. The auditor also magnified pair
+02 and confirmed the "blank gray sky / striated terrain edges" reason. Lever ranking from the audit: (1) content
+density/micro-dressing, (2) subject staging & depth of field, (3) shadow/material quality, (4) lighting discipline,
+(5) map composition (empty arterials, plain facades, repeated towers).
+
 ## Reason audit (orchestrator pass; independent auditor to confirm)
 
 - Judge 3's pair-02 "blank gray sky" is the only phrase I cannot fully substantiate: `shots/beauty/c1fix3/02-overview-noon.png`
