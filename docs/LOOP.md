@@ -1,7 +1,7 @@
 # LOOP — max-effort fidelity loop (Blox Skylines)
 
 This is the protocol for the improvement loop that targets the one metric the project has not moved:
-the **blind A/B win rate against `docs/reference`** (0/5 in sets 1–3). Internal scores, checks and perf
+the **blind A/B win rate against `docs/reference`** (0/5 in sets 1–4). Internal scores, checks and perf
 budgets are regression guards, not the target. The loop is resumable: all state lives in this file's
 scoreboard, `docs/STATUS.json`, `docs/reviews/` and git history.
 
@@ -51,7 +51,9 @@ park the branch state, record the negative result here.
 
 - `errors: []` in every captured JSON; dev server stays up on 5173; one GPU batch at a time (`nvidia-smi`
   before each batch; external load skews fps, not gpuMs — use `gpuMs`).
-- Perf: `gpuMs ≤ 20`, drawCalls ≤ 1500, fps ≥ 50 for the full city.
+- Perf: `gpuMs ≤ 20`, drawCalls ≤ 1500, fps ≥ 50 for the full city. A per-module draw budget counts the
+  module's **own** draw calls (e.g. `props` 61 of its 300), not the scene total of a showcase that deliberately
+  loads other modules (cycle-2 yards variant: 384 = props 38 + buildings + scene).
 - Determinism: no `Math.random()` in the sim/render path. Whitelisted: `src/menu/newCity.js` (the New City seed —
   the seed *is* the deterministic input) and `src/menu/storage.js` (save-id UUID fallback); both are pre-existing
   and outside the simulation. Same seed → same city and same shots.
@@ -85,7 +87,11 @@ park the branch state, record the negative result here.
 | 0 | protocol + baseline | LOOP.md committed, r30 baseline reproduced, drift measured, STATUS re-based | — | — | r30 72.0/13.34/844 errors 0; drift vs r29 meanAbs 0.0726; hero drift 0.0050; `pairs.mjs --balance` reproduces set1's old shuffle |
 | 1 | L1 hero framing system | check-beauty gates + budgets + no regression + honest blind set | set4 | 0/5 | subject-aware presets (composition.js), aerial bay, civic closeup, street clearance, one-lit signals, sky-phase reset; 2 hostile verification rounds + 2 fix rounds; r37 100.0/9.71/856 errors 0; reasons narrowed to L2/L3 content/depth/detail |
 
-Blind-set history: set1 (seed 7) 0/5; set2 (seed 11) 0/5; set3 (seed 23) 0/5 after correction.
+Blind-set history: set1 (seed 7) 0/5; set2 (seed 11) 0/5; set3 (seed 23) 0/5 after correction; set4 (seed 31,
+balanced 2/3, audited) 0/5 — no chrome/empty-field mentions left, levers narrowed to content/depth/detail.
+
+**Backlog status:** L1 done (cycle 1), L2 built + fix rounds (cycle 2, pending set 5), L3 + lighting next
+(cycle 4 draft), L4 partially served by cycle 2 (figures/props), L5 mostly open, L6 untouched.
 
 ## 5. Backlog (ranked; re-rank at E6)
 

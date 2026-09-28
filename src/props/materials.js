@@ -13,14 +13,23 @@ const STATIC_ROLE_COLOR = {
   'sign-post': 'darkStoneGrey',
   'fountain-base': 'mediumStoneGrey',
   'tree-trunk': 'reddishBrown',
+  // C2 detail layer: the fixed-colour hardware halves of the new dressing kinds.
+  'laundry-frame': 'lightStoneGrey',
+  'bike-wheels': 'black',
 };
 
-const INSTANCE_COLOR_ROLES = new Set(['hedge-block', 'sign-face', 'tree-leaves', 'tree-top', 'flowerbed-base', 'flowerbed-flower']);
+// One shared instance-coloured material per family (see buildRoleMaterials); never one per object.
+const INSTANCE_COLOR_ROLES = new Set([
+  'hedge-block', 'sign-face', 'tree-leaves', 'tree-top', 'flowerbed-base', 'flowerbed-flower',
+  // C2 detail layer.
+  'fence-picket', 'garden-soil', 'garden-crop', 'laundry-cloth', 'picnic-table',
+  'crate-stack', 'crate-single', 'bike-frame', 'figure-legs', 'figure-torso', 'figure-head',
+]);
 // Foliage roles get a matte, low-clearcoat material tuned specifically so leaf/hedge clusters read as Blox
 // foliage rather than the shared glossy-plastic look used by hardware roles (sign-face etc.). Only the hedge
 // keeps flat shading - its lumps are low-poly bevel boxes whose facets read as a clipped bush; the tree canopy
 // is a stack of smooth molded plates, so it shades smooth like the ABS it is meant to be.
-const FOLIAGE_INSTANCE_ROLES = new Set(['tree-leaves', 'hedge-block', 'tree-top']);
+const FOLIAGE_INSTANCE_ROLES = new Set(['tree-leaves', 'hedge-block', 'tree-top', 'garden-crop']);
 
 // role -> { name, dayIntensity, nightIntensity } for the dynamic emissive roles we animate ourselves.
 const EMISSIVE_ROLES = {

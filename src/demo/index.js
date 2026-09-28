@@ -52,7 +52,10 @@ function seed(ctx, rng) {
   // The warm-up leaves simulation holding a level-up candidate list for the whole city; apply it and merge the
   // geometry now (boot screen still up), otherwise buildings pop in for ~6.5 s after `ready` (r1 item 1).
   levelUps = ctx.modules.get('buildings')?.api?.settle?.() ?? 0;
-  return { stats, busStops, busLine, levelUps };
+  // LOOP cycle 2 fix round: the terrain/road surface has stopped moving now, so re-resolve the props module's
+  // C2 dressing heights once (its own optional hook, same contract as buildings.settle()).
+  const detailSettled = ctx.modules.get('props')?.api?.settleDetail?.() ?? 0;
+  return { stats, busStops, busLine, levelUps, detailSettled };
 }
 
 export default {
@@ -81,7 +84,7 @@ export default {
     }
     const rng = ctx.rng.fork('demo');
     const t0 = performance.now();
-    const { stats, busStops, busLine, levelUps } = seed(ctx, rng);
+    const { stats, busStops, busLine, levelUps, detailSettled } = seed(ctx, rng);
     S = { ctx, stats };
     const ms = (performance.now() - t0).toFixed(1);
     const pop = ctx.modules.get('simulation')?.api?.getStats?.()?.population ?? '?';
@@ -93,7 +96,8 @@ export default {
       + `${stats.utilities.power} power plants + ${stats.utilities.water} water towers + `
       + `${stats.utilities.fire} fire depts + ${stats.utilities.police} police stations + `
       + `${stats.utilities.school} schools + ${stats.utilities.hospital} hospitals, `
-      + `${busStops} bus stops + ${busLine ? 1 : 0} bus line, warmed-up population ${pop}, ${levelUps} settled level-ups`);
+      + `${busStops} bus stops + ${busLine ? 1 : 0} bus line, warmed-up population ${pop}, ${levelUps} settled level-ups, `
+      + `${detailSettled} C2 heights settled`);
   },
 
   dispose() {

@@ -3,11 +3,13 @@
 // with the origin at the ground-contact point and "forward" = local +Z (the `rot` field on a placed prop is
 // a plain Y rotation that turns +Z into the world facing direction — see geo.dirToRot).
 import * as THREE from 'three';
-import { UNIT_CYL, UNIT_ICO, UNIT_SPHERE, mat, xf, merge } from './geo.js';
+import { UNIT_CYL, UNIT_ICO, UNIT_SPHERE, UNIT_BOX, UNIT_WHEEL, mat, xf, merge } from './geo.js';
 
 export const KIND_NAMES = [
   'streetlamp', 'bench', 'tree_small', 'tree_medium', 'tree_large', 'hedge', 'hydrant', 'trash_bin',
   'bus_stop', 'traffic_light', 'road_sign', 'fountain', 'park_bench', 'flower_bed',
+  // LOOP cycle 2 (L2 diorama detail layer): yard dressing + pedestrians.
+  'fence_picket', 'garden_bed', 'laundry_line', 'picnic_table', 'crate_stack', 'bike', 'figure',
 ];
 
 export const FLOWER_COLORS = ['brightRed', 'brightYellow', 'mediumLilac', 'brightPink', 'mediumAzur', 'brightOrange'];
@@ -15,6 +17,18 @@ export const SIGN_COLORS = ['brightBlue', 'brightRed', 'brightYellow', 'white', 
 export const LEAF_COLORS = ['darkGreen', 'darkGreen', 'brightGreen'];
 export const AUTUMN_COLORS = ['brightOrange', 'darkOrange'];
 export const HEDGE_COLORS = ['darkGreen', 'brightGreen'];
+
+// ---- C2 detail-layer palettes (all instance colours; the role materials are shared/cached) -------------------
+export const FENCE_COLORS = ['white', 'white', 'tan'];
+export const SOIL_COLORS = ['reddishBrown', 'tan', 'darkStoneGrey'];
+export const CROP_COLORS = ['brightGreen', 'darkGreen', 'brightOrange', 'lime', 'brightYellow'];
+export const CLOTH_COLORS = ['brightRed', 'brightBlue', 'brightYellow', 'brightGreen', 'mediumAzur', 'brightOrange', 'white', 'mediumLilac'];
+export const TABLE_COLORS = ['tan', 'brickYellow', 'reddishBrown'];
+export const CRATE_COLORS = ['tan', 'reddishBrown', 'tan'];
+export const BIKE_COLORS = ['brightRed', 'mediumAzur', 'brightBlue', 'brightYellow', 'brightGreen', 'black'];
+export const FIGURE_LEG_COLORS = ['darkStoneGrey', 'mediumStoneGrey', 'darkAzur', 'sandBlue', 'reddishBrown', 'black'];
+export const FIGURE_SHIRT_COLORS = ['brightRed', 'brightBlue', 'brightYellow', 'brightGreen', 'brightOrange', 'white', 'mediumLilac', 'mediumAzur', 'darkRed', 'sandGreen'];
+export const FIGURE_SKIN_COLORS = ['brightYellow', 'brightYellow', 'tan', 'brickYellow'];
 
 // Height (prop-local, from the ground) of the fountain's water surface — kept as a constant so index.js's
 // spray particle FX can start its animation flush with the bowl rather than recomputing the geometry math.
@@ -154,6 +168,103 @@ export function buildRoleGeometry(ctx) {
   // -- flower bed: shallow planter box (flower studs are added by the caller via ctx.materials.studs()) -----
   G['flowerbed-base'] = bb(1.15, 0.26, 1.15, 0.04).clone();
 
+  // ---- C2 detail layer ---------------------------------------------------------------------------------------
+  // All of these are deliberately built from plain boxes (12 tris each) plus at most one beveled plate, so a
+  // single instance stays in the tens of triangles while still reading as Blox ABS under the shared materials.
+
+  // -- fence_picket: a 2 m boundary run — two posts + two rails, instance-coloured white/tan. Authored along
+  // local X from -1 to +1 so placement steps it end-to-end along a lot edge.
+  {
+    const postA = xf(UNIT_BOX, mat(-0.95, 0, 0, 0, 0, 0, 0.11, 0.86, 0.11));
+    const postB = xf(UNIT_BOX, mat(0.95, 0, 0, 0, 0, 0, 0.11, 0.86, 0.11));
+    const railA = xf(UNIT_BOX, mat(0, 0.33, 0, 0, 0, 0, 1.99, 0.08, 0.055));
+    const railB = xf(UNIT_BOX, mat(0, 0.63, 0, 0, 0, 0, 1.99, 0.08, 0.055));
+    G['fence-picket'] = merge([postA, postB, railA, railB]);
+  }
+
+  // -- garden_bed: beveled soil box (one per instance, ~1.9x1.1 m) + a 3x3 grid of small crop clumps ---------
+  {
+    G['garden-soil'] = xf(bb(1.9, 0.3, 1.15, 0.05), mat(0, 0, 0));
+    const crops = [];
+    for (const rz of [-0.34, 0, 0.34]) {
+      for (const rx of [-0.6, 0, 0.6]) {
+        crops.push(xf(UNIT_BOX, mat(rx, 0.3, rz, 0, 0, 0, 0.32, 0.26, 0.28)));
+      }
+    }
+    G['garden-crop'] = merge(crops);
+  }
+
+  // -- laundry_line: two posts + a sagging line (fixed role) + one cloth quad per instance, hung from the line -
+  {
+    G['laundry-frame'] = merge([
+      xf(UNIT_BOX, mat(-1.7, 0, 0, 0, 0, 0, 0.09, 2.0, 0.09)),
+      xf(UNIT_BOX, mat(1.7, 0, 0, 0, 0, 0, 0.09, 2.0, 0.09)),
+      xf(UNIT_BOX, mat(0, 1.84, 0, 0, 0, 0, 3.5, 0.045, 0.045)),
+    ]);
+    // Cloth hangs *below* its placement origin (y = 0 is the line) so each instance can pick its own x/colour.
+    G['laundry-cloth'] = xf(UNIT_BOX, mat(0, -0.54, 0, 0, 0, 0, 0.62, 0.52, 0.035));
+  }
+
+  // -- picnic_table: beveled top + two bench planks + two trestle legs -----------------------------------------
+  {
+    const top = xf(bb(1.75, 0.1, 0.85, 0.03), mat(0, 0.7, 0, 0, 0, 0));
+    const benchA = xf(UNIT_BOX, mat(0, 0.44, -0.62, 0, 0, 0, 1.72, 0.08, 0.28));
+    const benchB = xf(UNIT_BOX, mat(0, 0.44, 0.62, 0, 0, 0, 1.72, 0.08, 0.28));
+    const legA = xf(UNIT_BOX, mat(-0.62, 0, 0, 0, 0, 0, 0.1, 0.7, 1.5));
+    const legB = xf(UNIT_BOX, mat(0.62, 0, 0, 0, 0, 0, 0.1, 0.7, 1.5));
+    G['picnic-table'] = merge([top, benchA, benchB, legA, legB]);
+  }
+
+  // -- crates: a box + lid-rim crate (the rim is what reads as a crate, not a cube) --------------------------
+  {
+    const crateGeo = () => merge([
+      xf(UNIT_BOX, mat(0, 0, 0, 0, 0, 0, 0.52, 0.5, 0.52)),
+      xf(UNIT_BOX, mat(0, 0.5, 0, 0, 0, 0, 0.58, 0.07, 0.58)),
+    ]);
+    G['crate-stack'] = merge([
+      xf(crateGeo(), mat(-0.29, 0, 0, 0, 0.05, 0)),
+      xf(crateGeo(), mat(0.29, 0, 0.02, 0, 0.22, 0)),
+      xf(crateGeo(), mat(0.01, 0.57, -0.01, 0, -0.3, 0)),
+    ]);
+    G['crate-single'] = crateGeo();
+  }
+
+  // -- bike: two spoked wheels (10-seg discs in the YZ plane) + a readable frame triangle ----------------------
+  // Every tube is a plain box scaled along local Y and rotated about X so it runs from hub A to hub B:
+  // seat tube (BB->saddle), down tube (BB->head), top tube (saddle->head), chain/seat stays (BB/saddle->rear
+  // hub), head tube, handlebar and saddle.
+  {
+    G['bike-frame'] = merge([
+      xf(UNIT_BOX, mat(0, 0.32, -0.05, -0.43, 0, 0, 0.06, 0.55, 0.06)),   // seat tube
+      xf(UNIT_BOX, mat(0, 0.32, -0.05, 0.72, 0, 0, 0.06, 0.53, 0.06)),    // down tube
+      xf(UNIT_BOX, mat(0, 0.8, -0.3, 1.605, 0, 0, 0.06, 0.58, 0.06)),     // top tube (saddle -> head)
+      xf(UNIT_BOX, mat(0, 0.7, 0.32, 0.2, 0, 0, 0.075, 0.21, 0.075)),     // head tube
+      xf(UNIT_BOX, mat(0, 0.88, 0.37, 0, 0, 0, 0.46, 0.06, 0.06)),        // handlebar
+      xf(UNIT_BOX, mat(0, 0.84, -0.34, 0, 0, 0, 0.17, 0.06, 0.3)),        // saddle
+      xf(UNIT_BOX, mat(0, 0.33, -0.05, -1.5, 0, 0, 0.05, 0.4, 0.05)),     // chain stay
+      xf(UNIT_BOX, mat(0, 0.8, -0.3, -2.81, 0, 0, 0.05, 0.465, 0.05)),    // seat stay
+    ]);
+    const wheel = (z) => xf(UNIT_WHEEL, mat(0.035, 0.36, z, 0, 0, Math.PI / 2, 0.36, 0.06, 0.36));
+    G['bike-wheels'] = merge([wheel(0.45), wheel(-0.45)]);
+  }
+
+  // -- figure: minifig-scale pedestrian (legs / torso+arms / head+hair), ~1.7 m tall, instance-coloured -------
+  {
+    G['figure-legs'] = merge([
+      xf(UNIT_BOX, mat(-0.11, 0, 0, 0, 0, 0, 0.16, 0.72, 0.2)),
+      xf(UNIT_BOX, mat(0.11, 0, 0, 0, 0, 0, 0.16, 0.72, 0.2)),
+    ]);
+    G['figure-torso'] = merge([
+      xf(UNIT_BOX, mat(0, 0.72, 0, 0, 0, 0, 0.44, 0.6, 0.26)),
+      xf(UNIT_BOX, mat(-0.3, 0.74, 0, 0, 0, 0, 0.1, 0.5, 0.14)),
+      xf(UNIT_BOX, mat(0.3, 0.74, 0, 0, 0, 0, 0.1, 0.5, 0.14)),
+    ]);
+    G['figure-head'] = merge([
+      xf(UNIT_BOX, mat(0, 1.32, 0, 0, 0, 0, 0.3, 0.28, 0.28)),
+      xf(UNIT_BOX, mat(0, 1.6, -0.02, 0, 0, 0, 0.32, 0.1, 0.3)),
+    ]);
+  }
+
   return G;
 }
 
@@ -186,6 +297,48 @@ export function buildKindParts(kind, prng) {
     case 'tree_small': return buildTree(prng, 0.09, 2.0, 2, 3, 0.85);
     case 'tree_medium': return buildTree(prng, 0.14, 3.4, 3, 3, 1.25);
     case 'tree_large': return buildTree(prng, 0.2, 5.6, 3, 4, 1.7);
+    // ---- C2 detail layer: one fixed geometry role per part, instance colour picked from the seeded prng ------
+    case 'fence_picket': return [{ role: 'fence-picket', color: prng.pick(FENCE_COLORS) }];
+    case 'garden_bed': return [
+      { role: 'garden-soil', color: prng.pick(SOIL_COLORS) },
+      { role: 'garden-crop', color: prng.pick(CROP_COLORS) },
+    ];
+    case 'laundry_line': {
+      const parts = [{ role: 'laundry-frame' }];
+      const n = prng.int(3, 4); // 3-4 cloths on the line
+      for (let k = 0; k < n; k++) {
+        const t = n === 1 ? 0.5 : k / (n - 1);
+        const x = -1.25 + t * 2.5;
+        const y = 1.84 - 0.12 * Math.sin(t * Math.PI); // hang slightly with the line's sag
+        parts.push({ role: 'laundry-cloth', local: mat(x, y, 0, 0, prng.range(-0.14, 0.14), 0), color: prng.pick(CLOTH_COLORS) });
+      }
+      return parts;
+    }
+    case 'picnic_table': return [{ role: 'picnic-table', color: prng.pick(TABLE_COLORS) }];
+    case 'crate_stack': {
+      // 3-5 crates: the stack geometry is 3, the loose single adds 0-2 more.
+      const parts = [{ role: 'crate-stack', color: prng.pick(CRATE_COLORS) }];
+      const extra = prng.int(0, 2);
+      for (let k = 0; k < extra; k++) {
+        parts.push({
+          role: 'crate-single',
+          local: mat(prng.range(-0.95, 0.95), 0, prng.range(0.55, 1.05), 0, prng.range(0, Math.PI), 0),
+          color: prng.pick(CRATE_COLORS),
+        });
+      }
+      return parts;
+    }
+    case 'bike': return [{ role: 'bike-frame', color: prng.pick(BIKE_COLORS) }, { role: 'bike-wheels' }];
+    case 'figure': {
+      // Static pose: a seeded lean/twist on top of the placement yaw, so a crowd never reads as one repeated
+      // sprite. The parts share the prop's ground-contact origin, so a small local yaw rotates each part alone.
+      const yaw = prng.range(-0.22, 0.22);
+      return [
+        { role: 'figure-legs', local: mat(0, 0, 0, 0, prng.range(-0.14, 0.14), 0), color: prng.pick(FIGURE_LEG_COLORS) },
+        { role: 'figure-torso', local: mat(0, 0, 0, 0, yaw, 0), color: prng.pick(FIGURE_SHIRT_COLORS) },
+        { role: 'figure-head', local: mat(0, 0, 0, 0, yaw + prng.range(-0.2, 0.2), 0), color: prng.pick(FIGURE_SKIN_COLORS) },
+      ];
+    }
     default: return [];
   }
 }

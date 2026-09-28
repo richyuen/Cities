@@ -7,6 +7,11 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 export const UNIT_CYL = new THREE.CylinderGeometry(1, 1, 1, 14, 1);
 UNIT_CYL.translate(0, 0.5, 0);
 
+// 10-segment cylinder for small round props (bike wheels): 40 tris instead of UNIT_CYL's 56. Same origin
+// convention as UNIT_CYL (base on y=0, extends to y=1, radius 1 in XZ).
+export const UNIT_WHEEL = new THREE.CylinderGeometry(1, 1, 1, 10, 1);
+UNIT_WHEEL.translate(0, 0.5, 0);
+
 // Cone standing on y=0 (dome/nozzle caps), tip at y=1.
 export const UNIT_CONE = new THREE.ConeGeometry(1, 1, 14, 1);
 UNIT_CONE.translate(0, 0.5, 0);
