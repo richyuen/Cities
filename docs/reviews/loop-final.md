@@ -14,7 +14,7 @@ sets: 4, 5, 6) the loop **stops and reassesses** here.
 | 3 | beauty v5 | 5 | 0/5 | corrected after a reason-shift audit |
 | 4 | beauty c1fix3 (cycle 1) | 5 | 0/5 | valid (balanced 2/3, bytes+seed proven, 15/15 reasons) |
 | 5 | beauty c2c (cycle 2) | 5 | 0/5 | valid (same protocol) |
-| 6 | beauty set6 (cycle 4, curated + DOF) | 5 | 0/5 | valid (same protocol; audit `loop-c4-set6-audit.md`) |
+| 6 | beauty set6 (cycle 4, curated + DOF) | 5 | 0/5 | valid (same protocol; audit `loop-c4-set6-audit.md`; same five references reused across 4–6 → plateau signal, not absolute quality) |
 
 The protocol was tightened after set 3: counterbalanced sides (`pairs.mjs --balance`), three fresh judges per set,
 SHA-256 byte provenance, seed reproduction, and a per-reason image-consistency audit before banking. The 0/5s are

@@ -55,6 +55,14 @@ civic vs farm.
 
 **Result: 0/5 unanimous (0–15). Sixth consecutive 0/5 set (1–6).**
 
+**Independent audit (`docs/reviews/loop-c4-set6-audit.md`): valid 0/5, not compromised.** All 15 votes map to the
+reference side; 10/10 pair files byte-identical to their keyed sources; the seed-43 shuffle re-creates the pairs
+byte-for-byte; no leaks; no flagged reasons. Judge 1's pair-01 "broken geometry" was checked at 2× on our B side:
+the balcony/platform and proud window panels exist but nothing floats, clips or detaches — a stylistic read, not a
+defect (consistent with cycle-3's containment scan), so the loss stands and no re-judge is required. Caveat from
+the audit: the same five reference images were reused across sets 4–6, so this is a **plateau signal**, not an
+absolute-quality or regression signal.
+
 ## Why — the decisive findings
 
 1. **The fixed-band tilt-shift at 0.85 is a net negative in judging.** Every judge names it: "heavy
