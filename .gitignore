@@ -8,5 +8,6 @@ judge/
 docs/reference/
 docs/judge-key*.json
 
-# Local Claude Code session config, not project source.
-.claude/
+# Local Claude Code session config, not project source. Exception: the LOOP role definitions (docs/LOOP.md §8).
+.claude/*
+!.claude/agents/

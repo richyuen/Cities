@@ -9,7 +9,7 @@ import puppeteer from 'puppeteer';
 import fs from 'node:fs';
 import path from 'node:path';
 
-export const BASE_URL = process.env.CITY_URL || 'http://127.0.0.1:5173';
+export const BASE_URL = process.env.CITY_URL || `http://127.0.0.1:${process.env.CITY_PORT || 5188}`;
 
 export function parseArgs(argv) {
   const a = {};

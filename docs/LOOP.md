@@ -49,7 +49,7 @@ park the branch state, record the negative result here.
 
 ## 2. Hard gates (every cycle)
 
-- `errors: []` in every captured JSON; dev server stays up on 5173; one GPU batch at a time (`nvidia-smi`
+- `errors: []` in every captured JSON; dev server stays up on 5188; one GPU batch at a time (`nvidia-smi`
   before each batch; external load skews fps, not gpuMs — use `gpuMs`).
 - Perf: `gpuMs ≤ 20`, drawCalls ≤ 1500, fps ≥ 50 for the full city. A per-module draw budget counts the
   module's **own** draw calls (e.g. `props` 61 of its 300), not the scene total of a showcase that deliberately
@@ -90,6 +90,7 @@ park the branch state, record the negative result here.
 | 3 | L2b buildings facade + silhouette variety | check-civics/detail/beauty green + budgets + no regression; read-out combined into set 6 | (set6) | — | shopfronts/awnings/balconies/roof clutter/crowns/setbacks; HIGH defect fixed in-cycle (faceSlab axis: 492 -> 0 parts outside footprints); re-verified 9/10; r46 92.5/10.38/934 errors 0 |
 | 4 | L3 depth + lighting discipline | check-dof + check-atmosphere green + budgets + A/B evidence; read-out combined into set 6 | set6 | 0/5 | capture-mode tilt-shift (?dof, off = pixel-identical, +1 draw, gpuMs +0.3-0.8) + low-sun bloom discipline (skyline clip -32%); r48 92.6/10.34/934 errors 0; curated diorama shot list replaced the wide heroes |
 | — | **STOP (plateau)** | sets 4, 5, 6 all 0/5 unanimous → §6 stop rule | — | — | DOF at 0.85 judged negative ("mush/ghostly/smeared"); final state committed through cycle 4; reassessment in `docs/reviews/loop-final.md` |
+| 5 | W1 authored hero set-pieces (wave 2, §8) | (a) ≥ 3 authored set-piece lots, deterministically sited in the demo city (seed 1 and 2 more seeds), each the framed subject of a shot-list entry; at least one aimed at each lost class: set-6 pair 01 (house: "layered landscaping, pergola, planters"), 02 (park: "packed minifigures, ramps, props"), 04 (civic vs farm: "blank wall, few props"); (b) gates: check-civics/detail/beauty/atmosphere green, game batch `errors: []`, gpuMs ≤ 20, draws ≤ 1500, same seed reproduces the same capture within the drift budget; (c) critic predicts ≥ "narrows" for 01/02/04 with pixel evidence; (d) set 7 (new seed, `?dof` off because set 6 judged 0.85 negative). Win = ≥ 1/5; diagnostic = the targeted pairs' "few props / bare field / blank wall" reasons disappear | set7 | — | in progress (E0 base = setup commit) |
 
 Blind-set history: set1 (seed 7) 0/5; set2 (seed 11) 0/5; set3 (seed 23) 0/5 after correction; set4 (seed 31,
 balanced 2/3, audited) 0/5 — no chrome/empty-field mentions left, levers narrowed to content/depth/detail.
@@ -140,3 +141,50 @@ flower blooms; roads UV steps; environment rig terrain; terrain closeup framing.
 - `node tools/shot.mjs --preset X --tod T --hud 0 --out …` — single hero capture.
 - Vite can serve a stale transform after an edit (B6 note): verify the served module before trusting a
   batch; only if stale, restart vite (`Stop-Process` the node process, `npm run dev`) — never change the port.
+
+## 8. v2 rules (wave 2, from cycle 5; owner restart 2026-10-02 after the §6 plateau stop)
+
+The owner reviewed `docs/reviews/loop-final.md` and restarted the loop. The §6 reassessment's outcome is to change
+the **content class**: wave 2 levers come from loop-final §4, not the L1–L6 backlog (those stay as hygiene).
+
+**Wave-2 backlog (ranked):**
+- **W1 — Authored hero set-pieces.** Hand-designed, deterministically sited landmark lots built from the
+  existing brick vocabulary: construction site (crane, scaffolding, materials), cafe terrace, playground,
+  pergola garden (laundry, animals), fairground/kiosk row with banners. Each must be frameable by the shot list
+  at diorama scale. Targets the set-6 reasons "layered landscaping", "crammed props", "posed minifigures".
+- **W2 — Legible signage.** A letter/decal atlas on shop signs, awnings and civic fronts (set-6: "readable
+  signage"; ours are colour blocks).
+- **W3 — Subject-aware depth.** Focus bound to the framed subject (depth-based, strength 0.3–0.5); a judge
+  panel A/B is required before it may enter the capture path (set-6 found the fixed band to be a defect).
+- **W4 — Content depth in existing systems.** More prop variants per lot, animated pedestrians, facade decals,
+  night window density.
+
+**Enforced roles (`.claude/agents/`):**
+- `critic`: tools Bash/Read/Glob/Grep only (no Edit/Write). It returns its review as its final message; the
+  orchestrator saves it verbatim to `docs/reviews/<cycle>-critic.md`. **Integrity check:** the orchestrator
+  runs `git status --porcelain -- src tools docs ARCHITECTURE.md index.html package.json` before and after every
+  critic run. Any change by the critic voids the review and gets reverted, and a fresh critic reruns.
+- `judge`: Read tool only, the images and the fixed template, nothing else. The audit checks that every reason
+  matches its pair.
+- (If the agent definitions are not loaded in a session, use `general-purpose` subagents with the full text of
+  `.claude/agents/<role>.md` pasted in as the prompt preamble; the integrity check still applies.)
+
+**Prediction ledger (makes the critic falsifiable).** At E3 the critic predicts, per blind pair, whether the cycle
+`closes / narrows / no change / worse` the reference's deciding advantage. After E4 the orchestrator scores each
+prediction against the judges' reasons and records the critic's hit rate in the scoreboard notes. Two
+consecutive cycles with a hit rate < 50% → the critic brief is revised before the next cycle.
+
+**Metric additions:**
+- **Primary (unchanged):** blind A/B vs `docs/reference` (5 marketing dioramas), `pairs.mjs --balance`,
+  3 fresh judges, audited.
+- **Secondary (needs owner input):** a same-scale panel, meaning ours vs in-game (not marketing) screenshots of
+  shipped city builders at a matching camera distance, so the metric can register achievable progress. **Blocked
+  until the owner supplies the images** in `docs/reference-ingame/` (the loop never downloads or fabricates
+  reference images). Until then, only the primary metric is reported.
+- **Reference freshness:** sets 4–6 reused the same five references. When the owner adds references, new sets
+  draw from the larger pool, and the key records which were used.
+- **Reason-shift tracking:** even at 0/N, the audit lists each set's deciding reasons. A cycle counts as
+  "moved the reasons" when a reason category from the previous set disappears for the pair the cycle targeted.
+  This is a diagnostic only, never a win.
+
+**Wave-2 stop rules:** §6 applies, with the cycle cap reset to cycles 5–8. A stop now ends with an owner reassessment again.

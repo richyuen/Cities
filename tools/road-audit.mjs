@@ -15,7 +15,7 @@
 //      and render sunk below the new surface.
 //
 // Usage:  node tools/road-audit.mjs [--seed 1] [--verbose]
-// Exit code 1 if any check fails. The dev server must be running on http://127.0.0.1:5173.
+// Exit code 1 if any check fails. The dev server must be running on http://127.0.0.1:5188.
 
 import { openApp, buildUrl } from './shot.mjs';
 

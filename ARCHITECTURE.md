@@ -214,7 +214,7 @@ node tools/critic.mjs --module roads --round 1     # presets × tod {6.5, 12, 18
 node tools/critic.mjs --game --round 1             # full game, standard presets
 node tools/status.mjs set roads score=7.5 round=2 pass=false issues="a;b;c" review=docs/reviews/roads-r2.md
 ```
-The dev server must stay up on http://127.0.0.1:5173 (`npm run dev`). Never kill it. Never change its port.
+The dev server must stay up on http://127.0.0.1:5188 (`npm run dev`). Never kill it. Never change its port.
 
 ## 9. Process
 1. Builder: read this file + `docs/REFERENCE.md`, implement in your folder, screenshot, look, iterate, then report with paths to screenshots and real numbers. If you need a core change, write `docs/core-requests/<id>.md` (what, why, proposed diff) — do **not** edit core.

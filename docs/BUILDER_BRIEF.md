@@ -12,7 +12,7 @@ You are one builder agent in a multi-agent pipeline building an AAA-looking, Blo
 
 ## Hard rules
 - You own **only** `src/<your-module>/`. Never edit `src/core/`, any other module folder, `ARCHITECTURE.md`, `tools/`, `index.html`, `package.json`. If you need a core change, write `docs/core-requests/<your-module>.md` (what, why, minimal proposed diff) and work around it meanwhile.
-- The dev server is already running at http://127.0.0.1:5173 with HMR. **Never start, stop, or restart it. Never change its port.** Other agents are screenshotting it concurrently.
+- The dev server is already running at http://127.0.0.1:5188 with HMR. **Never start, stop, or restart it. Never change its port.** Other agents are screenshotting it concurrently.
 - No `Math.random()`. Use `ctx.rng.fork('<module>')` (keep the fork in module state) or `rng.hash2/hash3/noise2D/fbm`.
 - CC0 assets only (already in manifest) or procedural. Do not download anything else.
 - No programmer art: no `MeshBasicMaterial` on world geometry, no unlit surfaces, no default cubes. Use `ctx.materials.plastic()/glass()/emissive()/bevelBox()/studs()`. Share materials; never create a material per object in a loop.
