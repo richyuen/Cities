@@ -155,3 +155,37 @@ export function stageNight(world, rng) {
   }
   return { placed };
 }
+
+/**
+ * `houses` variant (LOOP c6): a street with a row of eleven level-1 houses on its north side (doors on +z face the
+ * street), consecutive seeds so the row shows the seeded subsets of the house vocabulary (ridge direction, porch,
+ * dormers, siding, shutters, planters, tiles), and the centre lot flagged `landmark: true` (the hero house: two
+ * storeys + the full vocabulary, never levels up). Presets `buildings:houses` (the row across the street) and
+ * `buildings:hero` (3/4 of the landmark) frame it.
+ */
+export function stageHouses(world, rng) {
+  const j0 = Math.floor(world.size.h / 2);
+  const iStart = Math.floor(world.size.w / 2) - 6;
+  const n = 11, heroIdx = 5;
+  const a = world.cellToWorld(iStart - 3, j0), b = world.cellToWorld(iStart + n + 2, j0);
+  world.addRoad({ x: a.x, z: a.z }, { x: b.x, z: b.z }, 'street');
+  const j = j0 - 1;
+  const placed = [];
+  let hero = null;
+  for (let k = 0; k < n; k++) {
+    const i = iStart + k;
+    world.setZone(i, j, 'r', 1);
+    const rec = { i, j, w: 1, d: 1, zone: 'r', level: 1, kind: 'house', seed: rng.int(0, 1e9) };
+    if (k === heroIdx) rec.landmark = true;
+    const id = world.addBuilding(rec);
+    placed.push({ id, i, j, w: 1, d: 1, zone: 'r', level: 1, kind: 'house' });
+    if (k === heroIdx) hero = { id, ...world.cellToWorld(i, j) };
+  }
+  const cs = world.cellSize;
+  const minX = world.minX + iStart * cs, maxX = world.minX + (iStart + n) * cs;
+  const rowZ = world.cellToWorld(iStart, j).z, streetZ = world.cellToWorld(iStart, j0).z;
+  return {
+    placed,
+    houses: { minX, maxX, rowZ, streetZ, groundY: world.getHeight((minX + maxX) / 2, rowZ), hero },
+  };
+}

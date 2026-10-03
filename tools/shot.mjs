@@ -73,6 +73,10 @@ export async function openApp(opts = {}) {
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForFunction(() => window.__city && window.__city.ready === true, { timeout: Number(opts.timeout || 90000), polling: 100 });
   const readyMs = Date.now() - t0;
+  // The boot overlay (#lc-boot) fades out for ~0.7 s of wall time after ready. A capture on an exact held frame
+  // shortly after ready would include it (LOOP c6 buildings critic issue 1). Remove it now rather than wait for the
+  // fade: waiting is wall-time, so the number of frames rendered before staging would vary between loads.
+  await page.evaluate(() => { document.getElementById('lc-boot')?.remove(); });
   const gpu = await page.evaluate(() => {
     try {
       const gl = window.__city.ctx.renderer.getContext();
@@ -94,25 +98,42 @@ export async function openApp(opts = {}) {
     }, { preset, tod, weather, variant, showcase });
   }
 
-  async function capture(out, { settle = 45, sampleMs = 1000 } = {}) {
+  async function capture(out, { settle = 45, sampleMs = 1000, reset = true } = {}) {
     // Screenshot first, on an exact held frame (settle frames after staging), THEN sample fps/gpu stats. Sampling
     // first let the number of rendered frames scale with fps, which moved the sky/cloud/traffic/signal phase whenever
     // performance changed (LOOP c6 zoning critic issue 2). Falls back to the old order on builds without holdAfter.
     const canHold = await page.evaluate(() => typeof window.__city.holdAfter === 'function');
-    if (canHold) await page.evaluate((n) => window.__city.holdAfter(n), settle);
-    else await page.evaluate((n) => window.__city.frames(n), settle);
     fs.mkdirSync(path.dirname(out), { recursive: true });
-    const heldFrame = await page.evaluate(() => window.__city.stats().frame);
-    if (canHold) await page.screenshot({ path: out, type: 'png' });
-    // FrameStats.fps spans the last 90 frame timestamps, so the held gap must roll out before sampling.
-    if (canHold) await page.evaluate(() => { window.__city.release(); return window.__city.frames(100); });
+    let heldFrame = null;
+    if (canHold) {
+      // a hold left over from a failed capture would make holdAfter/frames wait forever: always start released
+      try {
+        // One in-page call: release any stale hold, reset the presentation phase, and schedule the hold. Frames keep
+        // rendering during tool round-trips, so resetting here (not only at stage time) makes the screenshot exactly
+        // `settle` frames after the reset, whatever the latency between stage() and capture().
+        await page.evaluate(({ n, reset }) => {
+          const c = window.__city;
+          c.release();
+          if (reset && typeof c.resetPresentation === 'function') c.resetPresentation();
+          return c.holdAfter(n);
+        }, { n: settle, reset });
+        heldFrame = await page.evaluate(() => window.__city.stats().frame);
+        await page.screenshot({ path: out, type: 'png' });
+      } finally {
+        await page.evaluate(() => window.__city.release()).catch(() => {});
+      }
+      // FrameStats.fps spans the last 90 frame timestamps, so the held gap must roll out before sampling.
+      await page.evaluate(() => window.__city.frames(100));
+    } else {
+      await page.evaluate((n) => window.__city.frames(n), settle);
+    }
     const f0 = await page.evaluate(() => window.__city.stats().frame);
     const s0 = Date.now();
     await new Promise((r) => setTimeout(r, sampleMs));
     const stats = await page.evaluate(() => window.__city.stats());
     const wallFps = ((stats.frame - f0) * 1000) / (Date.now() - s0);
     if (!canHold) await page.screenshot({ path: out, type: 'png' });
-    stats.frame = canHold ? heldFrame : stats.frame;
+    if (canHold) stats.frame = heldFrame;
     const errors = [...new Set([...stats.errors, ...pageErrors, ...consoleErrors])];
     const log = {
       out, url: page.url(), capturedAt: new Date().toISOString(), readyMs, gpu,
@@ -125,7 +146,15 @@ export async function openApp(opts = {}) {
     return log;
   }
 
-  return { browser, page, url, gpu, stage, capture, close: () => browser.close() };
+  return { browser, page, url, gpu, stage, capture, close: async () => {
+    // browser.close() occasionally never resolves on this machine (seen by the c6 critic and in the harness test):
+    // give it 8 s, then kill the browser process so a batch cannot hang.
+    const done = await Promise.race([browser.close().then(() => true, () => true), new Promise((r) => setTimeout(() => r(false), 8000))]);
+    if (!done) {
+      try { browser.process()?.kill(); } catch { /* already gone */ }
+      try { browser.disconnect(); } catch { /* already gone */ }
+    }
+  } };
 }
 
 export async function shot(opts) {
@@ -147,5 +176,6 @@ if (isMain) {
     const short = { out: log.out, fps: log.fps, gpuMs: log.gpuMs, gpuFps: log.gpuFps, drawCalls: log.drawCalls, triangles: log.triangles, gpu: log.gpu, modules: log.modules, errors: log.errors };
     console.log(JSON.stringify(short, null, 2));
     if (a.strict && log.errors.length) process.exit(1);
+    process.exit(0); // a browser.close() that never resolves must not keep the CLI alive
   }).catch((e) => { console.error('[shot] FAILED:', e.message || e); process.exit(1); });
 }

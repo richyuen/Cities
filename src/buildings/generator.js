@@ -25,8 +25,20 @@ function box(ctx, parts, mat, w, h, d, x, y, z, bevel = 0.05) {
 // structural volumes per building (body, roof cap, pilasters...), ruinous for the dozens-to-hundreds of tiny
 // window frame/pane/lit pieces a facade needs. Those use a plain 12-tri box instead; the bevel is imperceptible
 // at that scale anyway. Non-indexed to match bevelBox for merge-bucket compatibility (see cylinder()).
+// LOOP c6: a house now emits ~430 small boxes, so plainBox clones one cached unit box and scales its positions in
+// place instead of building a BoxGeometry + toNonIndexed() per call. Same vertex order, normals and UVs, and the
+// positions are bit-identical (±0.5·w == w/2 exactly), so every pre-existing building's geometry is unchanged.
+let UNIT_BOX = null;
+function unitBoxClone(w, h, d) {
+  if (!UNIT_BOX) UNIT_BOX = new THREE.BoxGeometry(1, 1, 1).toNonIndexed();
+  const g = UNIT_BOX.clone();
+  const a = g.attributes.position.array;
+  for (let i = 0; i < a.length; i += 3) { a[i] *= w; a[i + 1] *= h; a[i + 2] *= d; }
+  return g;
+}
+
 function plainBox(parts, mat, w, h, d, x, y, z) {
-  const g = new THREE.BoxGeometry(Math.max(0.02, w), Math.max(0.02, h), Math.max(0.02, d)).toNonIndexed();
+  const g = unitBoxClone(Math.max(0.02, w), Math.max(0.02, h), Math.max(0.02, d));
   g.translate(x, y, z);
   parts.push({ mat, geom: g });
 }
@@ -229,34 +241,6 @@ function cornerBricks(parts, mat, cx, cz, halfW, halfD, y0, y1, { pitch = 1.2, l
   }
 }
 
-/** Stepped brick roof: stacked plate courses with studs on each exposed step. Returns the ridge height. */
-function steppedRoof(ctx, parts, studs, mat, cx, cz, spanX, spanZ, baseY, roofH, rng, out = null) {
-  const steps = THREE.MathUtils.clamp(Math.round(roofH / 0.5), 3, 5);
-  const stepH = roofH / steps;
-  const insetX = (spanX * rng.range(0.45, 0.6)) / 2 / steps;
-  const insetZ = (spanZ * rng.range(0.45, 0.6)) / 2 / steps;
-  let w = spanX, d = spanZ, y = baseY;
-  for (let k = 0; k < steps; k++) {
-    const g = ctx.materials.bevelBox(quant(w), quant(stepH * 1.03), quant(d), 0.05).clone();
-    g.translate(cx, y, cz);
-    parts.push({ mat, geom: g });
-    y += stepH;
-    const last = k === steps - 1;
-    const nw = last ? 0 : Math.max(0.8, w - insetX * 2);
-    const nd = last ? 0 : Math.max(0.8, d - insetZ * 2);
-    if (last) {
-      studGrid(studs, cx, cz, w / 2, d / 2, y, mat, { max: 120 });
-      if (out) out.top = { y, halfW: w / 2, halfD: d / 2 };
-    } else {
-      // The exposed step is only as wide as the next step's inset, so a 0.4 m world-grid inset would leave no
-      // room for a stud at all: run one centred row of studs along the middle of the ledge instead.
-      studPerimeter(studs, cx, cz, (w + nw) / 4, (d + nd) / 4, y, mat, { max: 60 });
-    }
-    w = nw; d = nd;
-  }
-  return y;
-}
-
 /** Flat roof: proud cap plate, brick parapet ring with a stud row on top, and a studded deck inside. */
 function flatRoof(ctx, parts, studs, mat, cx, cz, halfW, halfD, y, opts = {}) {
   const { capH = 0.3, over = 0.03, parapetH = 0.35, parapetT = 0.36, out = null } = opts;
@@ -337,7 +321,6 @@ const AWNING_COLORS = ['brightRed', 'brightYellow', 'brightOrange', 'lime', 'bri
 const CROWN_STYLES = ['parapet', 'setback', 'mast', 'pylons', 'pyramid', 'mast'];
 const TOWER_CLUTTER = ['ac', 'vent', 'bulkhead', 'tank', 'mast'];
 const LOW_CLUTTER = ['ac', 'vent', 'bulkhead', 'tank'];
-const HOUSE_CLUTTER = ['vent', 'ac', 'tank'];
 const BALCONY_RAILS = ['darkStoneGrey', 'white', 'lightStoneGrey', 'black'];
 const FACE_LIST = [
   { key: 'x+', axis: 'x', sign: 1 },
@@ -663,6 +646,482 @@ function towerCrown(ctx, parts, studs, rng, o) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// LOOP cycle-6 house craft (level-1 `house`). Replaces the stepped-pyramid box house with a gabled cottage
+// vocabulary: a gable roof (two tilted slabs, staggered tile courses, ridge cap, white fascia + barge boards,
+// stepped-brick gable-end triangles), dormers on the front slope, a +z porch (deck, posts, baluster runs with top
+// and bottom rails, tiled porch roof, steps), clapboard siding courses with corner boards and a belt course,
+// white window surrounds with muntins, shutters and flower boxes, a framed front door and porch light, a brick
+// chimney through the back slope. No AC/vent/tank roof clutter on houses.
+//
+// rng discipline: every draw of the pre-c6 house branch is replayed first, in its original order and count
+// (storeys, roof height, roof colour, the stepped-roof insets, every per-window lit flag, porch light, chimney,
+// trim, quoins), so storeys/colours/chimney/lit windows stay what that seed always gave; the c6 draws follow as
+// one fixed-size block (same count whatever the outcome) and the old trailing roof-clutter draws are gone.
+// The per-building fork (`${seed}:${id}`, index.js) means nothing here can move another building's stream.
+//
+// `b.landmark === true` (the record flag the demo sets on its hero garden house; it is a plain record field, so
+// it survives serialize/applySave) forces two storeys and the full vocabulary (porch, 2 dormers, siding,
+// shutters, flower boxes, gable windows, raised beds) whatever the draws say; index.js never levels it up.
+// A landmark may also carry `colors: { body, roof }` (palette names) to pin its palette across world seeds.
+//
+// Footprint: the porch needs ~2.1 m (1.5 m deck + 0.6 m steps), so a porch house's body loses 1.4 m of depth
+// and moves 0.7 m back; everything (roof overhangs 0.28-0.32 m, steps, beds) stays inside the cell footprint.
+// Layer offsets out of a wall (outer faces, strictly increasing, no coplanar visible faces):
+//   siding course 0.045 < window liner 0.055 < door leaf 0.07 / shutter 0.08 < glass 0.08 < lit 0.095
+//   < muntin 0.105 < surround 0.12 < header 0.13 < sill 0.15 < corner board 0.17 (corner posts) .
+
+const SHUTTER_COLORS = ['darkGreen', 'darkRed', 'earthBlue', 'black', 'reddishBrown', 'sandBlue', 'darkStoneGrey'];
+const DOOR_COLORS = ['brightRed', 'darkGreen', 'earthBlue', 'darkRed', 'reddishBrown', 'brightYellow', 'sandBlue'];
+const DECK_COLORS = ['lightStoneGrey', 'tan', 'reddishBrown', 'mediumStoneGrey'];
+const PLANTER_COLORS = ['reddishBrown', 'white', 'darkGreen', 'tan'];
+const FLOWER_COLORS = ['brightRed', 'brightPink', 'brightYellow', 'mediumLilac', 'white', 'brightOrange', 'brightPurple'];
+
+/** Seeded colour from `list` with a real luminance gap to `body` (falls back to the first that differs). */
+function pickContrast(rng, list, body, gap = 0.15) {
+  const lb = paletteLum(body);
+  const cands = list.filter((c) => c !== body && Math.abs(paletteLum(c) - lb) > gap);
+  return rng.pick(cands.length ? cands : list.filter((c) => c !== body));
+}
+
+/** Replays the pre-c6 house branch's stepped-roof inset draws and its per-window lit draws (allFacades order:
+ *  x+, x-, z+, z-; per floor; per column of the old 1.7 m / 0.6 layout). Returns lit material (or null) per
+ *  face key -> floor -> column, reused by the new windows so a house keeps its night pattern's density. */
+function legacyHouseLit(rng, floorsN, halfW, halfD) {
+  rng.range(0.45, 0.6); rng.range(0.45, 0.6);
+  const lit = {};
+  for (const face of FACE_LIST) {
+    const { cols } = columnLayout(face.axis === 'x' ? halfD : halfW, 1.7, 0.6, 1);
+    const rows = [];
+    for (let f = 0; f < floorsN; f++) {
+      const row = [];
+      for (let c = 0; c < cols; c++) row.push(rng.chance(0.42) ? (rng.chance(0.85) ? 'winWarm' : 'winCool') : null);
+      rows.push(row);
+    }
+    lit[face.key] = rows;
+  }
+  return lit;
+}
+
+/** Clapboard siding: thin proud courses at ~0.28 m pitch on all four walls (they wrap the corners like
+ *  courseBands); window/door/trim layers all sit further out, so the courses run behind them. */
+function clapboard(parts, mat, cx, cz, halfW, halfD, y0, y1, { pitch = 0.28, proud = 0.045, bandH = 0.13 } = {}) {
+  const w = proud + BAND_EMBED;
+  for (let y = y0; y + bandH <= y1 + 1e-4; y += pitch) {
+    const cy = y + bandH / 2;
+    plainBox(parts, mat, w, bandH, (halfD + proud) * 2, cx + halfW + (proud - BAND_EMBED) / 2, cy, cz);
+    plainBox(parts, mat, w, bandH, (halfD + proud) * 2, cx - halfW - (proud - BAND_EMBED) / 2, cy, cz);
+    plainBox(parts, mat, (halfW + proud) * 2, bandH, w, cx, cy, cz + halfD + (proud - BAND_EMBED) / 2);
+    plainBox(parts, mat, (halfW + proud) * 2, bandH, w, cx, cy, cz - halfD - (proud - BAND_EMBED) / 2);
+  }
+}
+
+/** A few brick flowers (stem + head) and a leaf strip on a planter top (world space, along x). */
+function flowerRow(parts, frng, x0, x1, z, y, depth) {
+  plainBox(parts, 'darkGreen', Math.max(0.1, x1 - x0), 0.08, depth, (x0 + x1) / 2, y + 0.04, z);
+  const n = Math.max(2, Math.round((x1 - x0) / 0.3));
+  for (let k = 0; k < n; k++) {
+    const x = x0 + ((k + 0.5) / n) * (x1 - x0);
+    const dz = (k % 2 ? 1 : -1) * depth * 0.18;
+    const sh = 0.1 + frng.range(0, 0.12);
+    plainBox(parts, 'brightGreen', 0.05, sh, 0.05, x, y + 0.08 + sh / 2, z + dz);
+    plainBox(parts, frng.pick(FLOWER_COLORS), 0.15, 0.13, 0.15, x, y + 0.08 + sh + 0.06, z + dz);
+  }
+}
+
+/** One house window on a face: dark liner, glass, optional lit overlay, a muntin cross, a white surround
+ *  (jambs, cornice header, proud sill), optional louvred shutters and a flower box hung under the sill. */
+function houseWindow(parts, face, cx, cz, norm, t, y0, w, h, o) {
+  const P = (mat, ww, hh, proud, y, tt, th) => facePlate(parts, mat, face, cx, cz, norm, ww, hh, proud, y, tt, th);
+  const yc = y0 + h / 2;
+  const sw = 0.13;
+  P('darkStoneGrey', w, h, 0.055, yc, t, 0.035);
+  P(o.glass, w - 0.02, h - 0.02, 0.08, yc, t, 0.02);
+  if (o.lit) P(o.lit, w * 0.72, h * 0.7, 0.095, yc, t, 0.01);
+  P(o.trim, 0.06, h, 0.105, yc, t, 0.02);
+  P(o.trim, w, 0.06, 0.105, yc + h * 0.1, t, 0.02);
+  P(o.trim, sw, h + sw * 2, 0.12, yc, t - w / 2 - sw / 2, 0.1);
+  P(o.trim, sw, h + sw * 2, 0.12, yc, t + w / 2 + sw / 2, 0.1);
+  P(o.trim, w + sw * 2 + 0.14, 0.16, 0.13, y0 + h + sw * 0.6, t, 0.11);
+  P(o.trim, w + sw * 2 + 0.06, 0.1, 0.15, y0 - sw * 0.5, t, 0.13);
+  if (o.shutter) {
+    for (const s of [-1, 1]) {
+      const ts = t + s * (w / 2 + sw + 0.17);
+      P(o.shutter, 0.3, h + 0.04, 0.08, yc, ts, 0.06);
+      for (const dy of [-0.25, 0, 0.25]) P(o.shutter, 0.22, 0.045, 0.095, yc + dy * h, ts, 0.03);
+    }
+  }
+  if (o.planter) {
+    const by = y0 - sw * 0.5 - 0.05 - 0.13; // box centre: hung just under the sill
+    P(o.planter, w + 0.3, 0.26, 0.34, by, t, 0.3);
+    const c = faceCentre(face, cx, cz, norm + 0.19, t);
+    const top = by + 0.13;
+    if (face.axis === 'z') flowerRow(parts, o.frng, c.x - w / 2 - 0.05, c.x + w / 2 + 0.05, c.z, top, 0.2);
+    else {
+      // x faces: same planting turned 90 degrees
+      plainBox(parts, 'darkGreen', 0.2, 0.08, w + 0.1, c.x, top + 0.04, c.z);
+      const n = Math.max(2, Math.round(w / 0.3));
+      for (let k = 0; k < n; k++) {
+        const z = c.z - w / 2 + ((k + 0.5) / n) * w;
+        const sh = 0.1 + o.frng.range(0, 0.12);
+        plainBox(parts, 'brightGreen', 0.05, sh, 0.05, c.x, top + 0.08 + sh / 2, z);
+        plainBox(parts, o.frng.pick(FLOWER_COLORS), 0.15, 0.13, 0.15, c.x, top + 0.08 + sh + 0.06, z);
+      }
+    }
+  }
+}
+
+/** Box in a local frame (u = along a ridge, y = up, v = across it, +v down-slope on the +v side): optional
+ *  rotation about u (`rotU` > 0 tilts local +v downward) or about v (`rotV`), then `push` maps it to world. */
+function lbox(ctx, push, mat, w, h, d, u, y, v, { rotU = 0, rotV = 0, bevel = 0 } = {}) {
+  let g;
+  if (bevel > 0) {
+    const qh = Math.max(0.08, quant(h));
+    g = ctx.materials.bevelBox(Math.max(0.08, quant(w)), qh, Math.max(0.08, quant(d)), bevel).clone();
+    g.translate(0, -qh / 2, 0);
+  } else {
+    g = unitBoxClone(Math.max(0.02, w), Math.max(0.02, h), Math.max(0.02, d));
+  }
+  if (rotU) g.rotateX(rotU);
+  if (rotV) g.rotateZ(rotV);
+  g.translate(u, y, v);
+  push(mat, g);
+}
+
+/** Staggered tile courses on one tilted roof plane (local frame, see lbox). The plane's top surface passes
+ *  through (y = yR, v = 0) and descends toward side `s` (+1/-1) at `theta`; courses start `s0` down-slope and
+ *  run to `slopeLen`. Each course is tilted `delta` shallower than the plane so its lower (butt) edge stands
+ *  proud, giving the stepped shingle line; `tileW` > 0 splits courses into staggered tiles. */
+function tileCourses(ctx, push, mat, { W, yR, theta, s, slopeLen, s0 = 0.18, pitch = 0.4, len = 0.44, th = 0.06, delta = 0.08, tileW = 0 }) {
+  const phi = theta - delta;
+  const sinT = Math.sin(theta), cosT = Math.cos(theta), sinP = Math.sin(phi), cosP = Math.cos(phi);
+  let k = 0;
+  for (let d0 = s0; d0 + 0.12 < slopeLen; d0 += pitch, k++) {
+    const L = Math.min(len, slopeLen - d0);
+    const py = yR - d0 * sinT, pv = d0 * cosT;
+    const y = py - (L / 2) * sinP + (th / 2) * cosP;
+    const v = s * (pv + (L / 2) * cosP + (th / 2) * sinP);
+    if (tileW <= 0) { lbox(ctx, push, mat, W, th, L, 0, y, v, { rotU: s * phi }); continue; }
+    const gap = 0.05, p = tileW + gap;
+    const off = (k % 2) * p * 0.5;
+    for (let u0 = -W / 2 - off; u0 < W / 2; u0 += p) {
+      const a = Math.max(-W / 2, u0), b2 = Math.min(W / 2, u0 + tileW);
+      if (b2 - a < 0.12) continue;
+      lbox(ctx, push, mat, b2 - a, th, L, (a + b2) / 2, y, v, { rotU: s * phi });
+    }
+  }
+}
+
+function generateHouse(ctx, b, rng, halfW, halfD, cx, cz, groundY, mats) {
+  const { body, frameMat, glassMat, plinthMat, roofOverride = null } = mats;
+  const parts = [];
+  const studs = [];
+  const hero = b.landmark === true;
+
+  // ---- replay of the pre-c6 draws, original order and count ----
+  const twoStoryDraw = rng.chance(0.35);
+  const roofHDraw = 2.0 + rng.range(-0.3, 0.5);
+  const roofDraw = pick(rng, RESI_ROOF);
+  const roofMat = roofOverride || roofDraw;
+  const lit = legacyHouseLit(rng, twoStoryDraw ? 2 : 1, halfW, halfD);
+  const porchLightDraw = rng.chance(0.55);
+  let chimney = null;
+  if (rng.chance(0.75)) chimney = { mat: rng.chance(0.5) ? 'reddishBrown' : 'darkStoneGrey', fx: rng.range(0.35, 0.6), fz: rng.range(0.3, 0.6), extra: rng.range(0, 0.9) };
+  const quoinMat = rng.pick(TRIM_COLORS);
+  const quoinDraw = rng.chance(0.55);
+  // ---- c6 draws: one fixed-size block, appended ----
+  const ridgeXDraw = rng.chance(0.6);
+  const porchDraw = rng.chance(0.62);
+  const sidingDraw = rng.chance(0.7);
+  const shutterDraw = rng.chance(0.55);
+  const planterDraw = rng.chance(0.5);
+  const dormerDraw = rng.pick([0, 1, 2, 2]);
+  const gableWinDraw = rng.chance(0.6);
+  const postsDraw = rng.chance(0.5) ? 4 : 2;
+  const tilesDraw = rng.chance(0.7);
+  const shutterMat = pickContrast(rng, SHUTTER_COLORS, body);
+  const doorMat = pickContrast(rng, DOOR_COLORS, body);
+  const deckMat = rng.pick(DECK_COLORS);
+  const planterMat = rng.pick(PLANTER_COLORS);
+  const frng = rng.fork('flowers'); // stateless fork: flower colours never shift the main stream
+
+  const twoStory = hero || twoStoryDraw;
+  const ridgeX = hero || ridgeXDraw;
+  const porch = hero || porchDraw;
+  const siding = hero || sidingDraw;
+  const shutters = hero || shutterDraw;
+  const planters = hero || planterDraw;
+  const gableWin = hero || gableWinDraw;
+  const nPosts = hero ? 4 : postsDraw;
+  const splitTiles = hero || tilesDraw;
+  // White trim reads on every mid/dark body; light bodies keep their contrasting frame colour instead.
+  const trim = paletteLum(body) > 0.75 ? frameMat : 'white';
+
+  const groundH = 3.0, upperH = 2.7;
+  const floorsN = twoStory ? 2 : 1;
+  const { floors, top } = floorList(floorsN, groundH, upperH);
+  const porchD = 1.5, stairW = 1.3;
+  const hw = halfW;
+  const hd = porch ? halfD - 0.7 : halfD;
+  const bz = porch ? cz - 0.7 : cz;
+  const Y = (y) => groundY + y;
+
+  // ---- body ----
+  box(ctx, parts, body, hw * 2, top, hd * 2, cx, groundY, bz);
+  interiorLiner(parts, body, hw * 2, top, hd * 2, cx, groundY, bz);
+  plinth(ctx, parts, plinthMat, cx, bz, hw, hd, groundY);
+  if (siding) {
+    clapboard(parts, body, cx, bz, hw, hd, Y(0.42), Y(top - 0.06));
+    // corner boards: one square post per corner, proud of both faces so it caps the siding course ends
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) plainBox(parts, trim, 0.26, top - 0.35, 0.26, cx + sx * (hw + 0.04), Y(0.35 + (top - 0.35) / 2), bz + sz * (hd + 0.04));
+    if (twoStory) floorBands(parts, trim, cx, bz, hw, hd, floors, groundY, { proud: 0.08, bandH: 0.16 });
+  } else {
+    courseBands(parts, body, cx, bz, hw, hd, Y(0.35), Y(top), { pitch: 1.2 });
+    if (quoinDraw) for (const face of FACE_LIST) quoinStrips(parts, quoinMat, face, cx, bz, hw, hd, Y(0.35), Y(top));
+  }
+
+  // ---- windows ----
+  const winSpec = [{ y0: 0.85, h: 1.4, w: 0.95 }, { y0: groundH + 0.6, h: 1.25, w: 0.9 }];
+  let windows = 0;
+  for (const face of FACE_LIST) {
+    const { norm, tan } = faceAxes(face, hw, hd);
+    for (let f = 0; f < floorsN; f++) {
+      let ts;
+      if (face.key === 'z+' && f === 0) ts = [-hw * 0.62, hw * 0.62];
+      else if (face.axis === 'x' && tan < 2.2) ts = [0];
+      else ts = [-tan * 0.5, tan * 0.5];
+      const ws = winSpec[f];
+      const litRow = (lit[face.key] && (lit[face.key][f] || lit[face.key][0])) || [];
+      ts.forEach((t, k) => {
+        // the landmark is lived in: its street-front ground floor is always lit at night
+        const litMat = hero && face.key === 'z+' && f === 0 ? 'winWarm' : (litRow.length ? litRow[k % litRow.length] : null);
+        houseWindow(parts, face, cx, bz, norm, t, Y(ws.y0), ws.w, ws.h, {
+          glass: glassMat, trim, lit: litMat,
+          shutter: shutters && face.key !== 'z-' ? shutterMat : null,
+          planter: planters && face.key !== 'z-' && (f === 0 || (hero && face.key === 'z+')) ? planterMat : null,
+          frng,
+        });
+        windows++;
+      });
+    }
+  }
+
+  // ---- front door (+z) ----
+  const front = FACE_LIST[2];
+  const zF = bz + hd;
+  const dY = porch ? 0.45 : 0.35;
+  // a one-storey porch roof meets the wall at 2.86 m, so its door is a little shorter (header stays under it)
+  const doorH = porch && !twoStory ? 1.95 : 2.1;
+  {
+    const P = (mat, ww, hh, proud, y, tt, th) => facePlate(parts, mat, front, cx, bz, hd, ww, hh, proud, y, tt, th);
+    P(doorMat, 1.0, doorH, 0.07, Y(dY + doorH / 2), 0, 0.06);
+    P(glassMat, 0.5, 0.42, 0.09, Y(dY + doorH - 0.48), 0, 0.02);
+    for (const dy of [0.45, 1.05]) P(doorMat, 0.62, 0.36, 0.09, Y(dY + dy), 0, 0.02); // raised panels
+    P('brightYellow', 0.08, 0.08, 0.12, Y(dY + 1.0), 0.36, 0.03);
+    for (const s of [-1, 1]) P(trim, 0.15, doorH + 0.22, 0.12, Y(dY + (doorH + 0.22) / 2), s * 0.575, 0.1);
+    P(trim, 1.46, 0.2, 0.13, Y(dY + doorH + 0.16), 0, 0.11);
+    // porch lamp(s): a pair hugging the door jambs under a porch (clear of the inner posts), one beside a stoop door
+    if (hero || porchLightDraw) for (const t of porch ? [-0.75, 0.75] : [0.92]) P('porchWarm', 0.2, 0.28, 0.14, Y(dY + 1.62), t, 0.08);
+  }
+
+  // ---- porch (+z) or stoop + door hood ----
+  let postTop = 0;
+  if (porch) {
+    const zD = zF + porchD;
+    const deckTop = 0.45;
+    box(ctx, parts, deckMat, hw * 2, deckTop, porchD + 0.02, cx, groundY, zF + porchD / 2 - 0.01, 0.03);
+    plainBox(parts, trim, hw * 2 + 0.06, 0.08, 0.12, cx, Y(deckTop - 0.03), zD - 0.04); // deck nosing
+    // steps (two risers, inside the cell: zD + 0.6 = cell edge - 0.05)
+    box(ctx, parts, 'lightStoneGrey', stairW, 0.3, 0.33, cx, groundY, zD + 0.15, 0.03);
+    box(ctx, parts, 'lightStoneGrey', stairW, 0.15, 0.3, cx, groundY, zD + 0.44, 0.03);
+    // porch roof: a shallow shed slab from the wall out past the posts, tiled, with a white fascia
+    const yW = twoStory ? 3.22 : 2.86;
+    const alpha = 0.2, prT = 0.14;
+    const run = porchD + 0.22;
+    const Lp = run / Math.cos(alpha);
+    const prW = twoStory ? hw * 2 + 0.24 : hw * 2 - 0.06;
+    const pushP = (mat, g) => { g.translate(cx, groundY, zF); parts.push({ mat, geom: g }); };
+    lbox(ctx, pushP, roofMat, prW, prT, Lp, 0, yW - (Lp / 2) * Math.sin(alpha) - (prT / 2) * Math.cos(alpha),
+      (Lp / 2) * Math.cos(alpha) - (prT / 2) * Math.sin(alpha), { rotU: alpha, bevel: 0.03 });
+    tileCourses(ctx, pushP, roofMat, { W: prW - 0.08, yR: yW, theta: alpha, s: 1, slopeLen: Lp, s0: 0.05, delta: 0.06, tileW: splitTiles ? 0.8 : 0 });
+    const yEdge = yW - run * Math.tan(alpha);
+    lbox(ctx, pushP, trim, prW, 0.2, 0.07, 0, yEdge - 0.2, run - 0.1);
+    // posts, then baluster runs (top + bottom rail, spindles) between them; the stair opening stays clear
+    const zPost = zD - 0.13;
+    const under = (z) => yW - (z - zF) * Math.tan(alpha) - prT / Math.cos(alpha);
+    postTop = under(zPost) + 0.02;
+    const outer = hw - 0.14, inner = stairW / 2 + 0.22;
+    const postsU = nPosts === 4 ? [-outer, -inner, inner, outer] : [-outer, outer];
+    for (const u of postsU) {
+      plainBox(parts, trim, 0.2, postTop - deckTop, 0.2, cx + u, Y(deckTop + (postTop - deckTop) / 2), zPost);
+      plainBox(parts, trim, 0.3, 0.12, 0.3, cx + u, Y(deckTop + 0.06), zPost); // plinth block
+      plainBox(parts, trim, 0.3, 0.1, 0.3, cx + u, Y(postTop - 0.07), zPost);  // capital
+    }
+    const yB = deckTop + 0.1, yT = deckTop + 0.66;
+    const run1 = (x0, x1, z0, z1) => {
+      // one straight baluster run from (x0,z0) to (x1,z1) along x or z
+      const alongX = Math.abs(x1 - x0) > Math.abs(z1 - z0);
+      const len = alongX ? Math.abs(x1 - x0) : Math.abs(z1 - z0);
+      if (len < 0.3) return;
+      const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2;
+      plainBox(parts, trim, alongX ? len : 0.1, 0.09, alongX ? 0.1 : len, mx, Y(yT), mz);
+      plainBox(parts, trim, alongX ? len : 0.08, 0.07, alongX ? 0.08 : len, mx, Y(yB), mz);
+      const n = Math.max(1, Math.floor(len / 0.2));
+      for (let k = 0; k < n; k++) {
+        const f = (k + 0.5) / n;
+        plainBox(parts, trim, 0.065, yT - yB, 0.065, x0 + (x1 - x0) * f, Y((yT + yB) / 2), z0 + (z1 - z0) * f);
+      }
+    };
+    const xL = cx - outer, xR = cx + outer;
+    if (nPosts === 4) {
+      run1(xL + 0.1, cx - inner - 0.1, zPost, zPost);
+      run1(cx + inner + 0.1, xR - 0.1, zPost, zPost);
+    } else {
+      const xs = stairW / 2 + 0.12;
+      run1(xL + 0.1, cx - xs, zPost, zPost);
+      run1(cx + xs, xR - 0.1, zPost, zPost);
+      for (const s of [-1, 1]) plainBox(parts, trim, 0.16, yT - deckTop + 0.1, 0.16, cx + s * xs, Y(deckTop + (yT - deckTop + 0.1) / 2), zPost); // newels
+    }
+    run1(xL, xL, zF + 0.12, zPost - 0.1);
+    run1(xR, xR, zF + 0.12, zPost - 0.1);
+    // in front of the porch: raised flower beds (hero) or two clipped shrubs
+    const bedZ = zD + 0.3, bedD = 0.5;
+    const bx0 = stairW / 2 + 0.14, bx1 = hw - 0.05;
+    for (const s of [-1, 1]) {
+      const bx = cx + s * (bx0 + bx1) / 2, bw = bx1 - bx0;
+      if (hero) {
+        box(ctx, parts, plinthMat === 'darkStoneGrey' ? 'darkStoneGrey' : 'reddishBrown', bw, 0.42, bedD, bx, groundY, bedZ, 0.03);
+        plainBox(parts, 'reddishBrown', bw - 0.12, 0.04, bedD - 0.12, bx, Y(0.42), bedZ);
+        flowerRow(parts, frng, bx - bw / 2 + 0.1, bx + bw / 2 - 0.1, bedZ, Y(0.38), bedD - 0.16);
+      } else {
+        box(ctx, parts, 'darkGreen', Math.min(1.1, bw), 0.6, 0.5, cx + s * (bx0 + 0.6), groundY, bedZ, 0.05);
+      }
+    }
+  } else {
+    faceSlab(parts, ctx, 'lightStoneGrey', front, cx, bz, { off: hd + 0.32, y: Y(0.09), w: 1.7, h: 0.16, d: 0.62 });
+    faceSlab(parts, ctx, roofMat, front, cx, bz, { off: hd + 0.36, y: Y(dY + 2.6), w: 1.8, h: 0.12, d: 0.72, tilt: 0.3 });
+    for (const s of [-1, 1]) faceBoxAt(parts, trim, front, cx, bz, { off: hd + 0.18, t: s * 0.8, y: Y(dY + 2.35), w: 0.1, h: 0.4, d: 0.34 });
+    // two clipped shrubs, kept under the window planters (0.45 m) and inside the cell
+    for (const s of [-1, 1]) box(ctx, parts, 'darkGreen', 0.8, 0.45, 0.6, cx + s * (hw - 0.5), groundY, zF + 0.42, 0.05);
+  }
+
+  // ---- gable roof (local frame: u along the ridge, v across; ridge along x or z) ----
+  const ridgeZ = !ridgeX;
+  const Lh = ridgeX ? hw : hd, Sh = ridgeX ? hd : hw;
+  const tanT = hero ? Math.max(0.95, roofHDraw / Sh) : THREE.MathUtils.clamp(roofHDraw / Sh, 0.62, 1.05);
+  const theta = Math.atan(tanT);
+  const sinT = Math.sin(theta), cosT = Math.cos(theta);
+  const lift = 0.12, slabT = 0.2;
+  const yR = top + Sh * tanT + lift; // ridge line of the slabs' top surfaces (relative to ground)
+  const ovG = 0.28;
+  const ovFor = (s) => (s > 0 && ridgeX && porch && !twoStory ? 0.12 : 0.32);
+  const push = (mat, g) => { if (ridgeZ) g.rotateY(Math.PI / 2); g.translate(cx, groundY, bz); parts.push({ mat, geom: g }); };
+  const W = 2 * (Lh + ovG);
+  for (const s of [1, -1]) {
+    const ov = ovFor(s);
+    const Ls = (Sh + ov) / cosT;
+    const yC = yR - (Ls / 2) * sinT - (slabT / 2) * cosT;
+    const vC = s * ((Ls / 2) * cosT - (slabT / 2) * sinT);
+    lbox(ctx, push, roofMat, W, slabT, Ls, 0, yC, vC, { rotU: s * theta, bevel: 0.03 });
+    tileCourses(ctx, push, roofMat, { W: W - 0.1, yR, theta, s, slopeLen: Ls, tileW: splitTiles ? 0.8 : 0 });
+    // fascia along the eave and barge boards up both rakes (trim)
+    const yE = yR - (Sh + ov) * tanT;
+    lbox(ctx, push, trim, W, 0.22, 0.07, 0, yE - 0.2, s * (Sh + ov - 0.095));
+    for (const q of [-1, 1]) {
+      lbox(ctx, push, trim, 0.08, 0.26, Ls + 0.02, q * (Lh + ovG + 0.04), yC + 0.03 * cosT, vC + s * 0.03 * sinT, { rotU: s * theta });
+    }
+  }
+  lbox(ctx, push, roofMat, W + 0.06, 0.2, 0.34, 0, yR + 0.02, 0, { bevel: 0.03 }); // ridge cap
+  // stepped-brick gable ends (attic infill under the slabs): each course stops inside the slab thickness
+  const courseH = 0.24;
+  for (let k = 0; ; k++) {
+    const y0 = top + k * courseH, y1 = y0 + courseH;
+    const half = (yR - slabT / (2 * cosT) - y1) / tanT;
+    if (half < 0.12) break;
+    lbox(ctx, push, body, 2 * Lh, courseH, 2 * half, 0, y0 + courseH / 2, 0);
+  }
+  // small framed attic window in each gable end
+  if (gableWin) {
+    const gy = top + Sh * tanT * 0.3 + 0.35;
+    const gw = 0.55, gh = 0.6;
+    if ((yR - slabT / cosT - (gy + gh / 2 + 0.15)) / tanT > gw / 2 + 0.15) {
+      for (const q of [-1, 1]) {
+        const u = q * Lh;
+        lbox(ctx, push, 'darkStoneGrey', 0.035, gh, gw, u + q * 0.0375, gy, 0);
+        lbox(ctx, push, glassMat, 0.02, gh - 0.02, gw - 0.02, u + q * 0.07, gy, 0);
+        lbox(ctx, push, trim, 0.02, gh, 0.06, u + q * 0.095, gy, 0);
+        lbox(ctx, push, trim, 0.1, gh + 0.24, 0.12, u + q * 0.07, gy, -(gw / 2 + 0.06));
+        lbox(ctx, push, trim, 0.1, gh + 0.24, 0.12, u + q * 0.07, gy, gw / 2 + 0.06);
+        lbox(ctx, push, trim, 0.11, 0.12, gw + 0.3, u + q * 0.075, gy + gh / 2 + 0.06, 0);
+        lbox(ctx, push, trim, 0.13, 0.1, gw + 0.34, u + q * 0.085, gy - gh / 2 - 0.05, 0);
+      }
+    }
+  }
+  // dormers on the +v slope (ridge along x only, so they face the +z front)
+  let dormers = 0;
+  const nD = ridgeX ? (hero ? 2 : dormerDraw) : 0;
+  const phiD = 0.75, tanD = Math.tan(phiD), cosD = Math.cos(phiD), sinD = Math.sin(phiD);
+  const dw = 1.2, sp = dw / 2 + 0.14;
+  const vf = Sh - 0.55;
+  const ys = yR - vf * tanT; // roof top surface at the dormer front
+  const dh = Math.min(1.05, vf * tanT - sp * tanD - 0.22);
+  if (nD > 0 && dh >= 0.75) {
+    const us = nD === 1 ? [0] : [-Lh * 0.45, Lh * 0.45];
+    const vb = vf - dh / tanT - 0.15;
+    const yDr = ys + dh + sp * tanD + 0.06;
+    const vFront = vf + 0.16;
+    const vMb = (yR - yDr) / tanT - 0.1;
+    const tm = 0.12, Lm = sp / cosD;
+    const litD = lit['z+'] && lit['z+'][0] ? lit['z+'][0] : [];
+    us.forEach((ud, k) => {
+      lbox(ctx, push, body, dw, dh + 0.25, vf - vb, ud, ys - 0.25 + (dh + 0.25) / 2, (vf + vb) / 2, { bevel: 0.03 });
+      for (const q of [-1, 1]) {
+        const uC = ud + q * ((Lm / 2) * cosD - (tm / 2) * sinD);
+        const yC = yDr - (Lm / 2) * sinD - (tm / 2) * cosD;
+        lbox(ctx, push, roofMat, Lm, tm, vFront - vMb, uC, yC, (vFront + vMb) / 2, { rotV: -q * phiD });
+        lbox(ctx, push, trim, Lm + 0.02, 0.2, 0.07, uC + q * 0.02 * sinD, yC + 0.02 * cosD, vFront + 0.035, { rotV: -q * phiD });
+      }
+      for (let c = 0; ; c++) {
+        const y0 = ys + dh + c * 0.16, y1 = y0 + 0.16;
+        const half = (yDr - tm / (2 * cosD) - y1) / tanD;
+        if (half < 0.08) break;
+        lbox(ctx, push, body, 2 * half, 0.16, vf - vMb, ud, y0 + 0.08, (vf + vMb) / 2);
+      }
+      // framed window on the dormer front (layers out along +v)
+      const ww = 0.62, wh = Math.min(0.72, dh - 0.3), wy = ys + dh * 0.5 + 0.02;
+      lbox(ctx, push, 'darkStoneGrey', ww, wh, 0.035, ud, wy, vf + 0.0375);
+      lbox(ctx, push, glassMat, ww - 0.02, wh - 0.02, 0.02, ud, wy, vf + 0.07);
+      const lm = hero ? (k === 0 ? 'winWarm' : null) : (litD.length ? litD[k % litD.length] : null);
+      if (lm) lbox(ctx, push, lm, ww * 0.7, wh * 0.66, 0.01, ud, wy, vf + 0.09);
+      lbox(ctx, push, trim, 0.05, wh, 0.02, ud, wy, vf + 0.095);
+      for (const q of [-1, 1]) lbox(ctx, push, trim, 0.12, wh + 0.24, 0.1, ud + q * (ww / 2 + 0.06), wy, vf + 0.07);
+      lbox(ctx, push, trim, ww + 0.36, 0.12, 0.11, ud, wy + wh / 2 + 0.06, vf + 0.075);
+      lbox(ctx, push, trim, ww + 0.3, 0.1, 0.13, ud, wy - wh / 2 - 0.05, vf + 0.085);
+      dormers++;
+    });
+  }
+  // brick chimney through the back half of the roof (legacy-drawn position, now measured against the slope)
+  let chimTop = 0;
+  if (chimney) {
+    const x = cx + hw * chimney.fx, z = bz - hd * chimney.fz;
+    const lu = ridgeX ? x - cx : -(z - bz), lv = ridgeX ? z - bz : x - cx;
+    if (Math.abs(lv) < Sh - 0.6 && Math.abs(lu) < Lh - 0.6) {
+      const surf = yR - Math.abs(lv) * tanT;
+      const base = surf - 0.3 - 0.55 * tanT; // the downhill face still starts below the slope (stack half-depth 0.5)
+      const h = surf - base + 0.75 + chimney.extra;
+      brickStack(ctx, parts, studs, chimney.mat, x, z, 1.0, 0.8, Y(base), h, { studTop: false });
+      plainBox(parts, 'darkStoneGrey', 1.16, 0.12, 1.16, x, Y(base + h + 0.06), z); // cap
+      studs.push({ x, y: Y(base + h + 0.12), z, color: 'darkStoneGrey' });
+      chimTop = base + h + 0.12;
+    }
+  }
+  const height = Math.max(yR + 0.12, chimTop);
+  return {
+    parts, studs, height, kind: 'house',
+    features: { landmark: hero, body, roof: roofMat, trim, storeys: floorsN, ridge: ridgeX ? 'x' : 'z', porch, posts: porch ? nPosts : 0, dormers, siding, shutters, planters, gableWin, splitTiles, windows, quoins: !siding && quoinDraw ? 4 : 0, clutter: 0 },
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
 function generateResidential(ctx, b, rng, halfW, halfD, cx, cz, groundY) {
   const parts = [];
   const studs = [];
@@ -673,47 +1132,16 @@ function generateResidential(ctx, b, rng, halfW, halfD, cx, cz, groundY) {
   const glassMat = rng.chance(0.75) ? 'transClear' : 'transBlue';
   const plinthMat = rng.chance(0.5) ? 'darkStoneGrey' : 'lightStoneGrey';
 
-  if (b.level <= 1) {
-    const twoStory = rng.chance(0.35);
-    const groundH = 3.0, upperH = 2.7;
-    const { floors, top } = floorList(twoStory ? 2 : 1, groundH, upperH);
-    box(ctx, parts, body, halfW * 2, top, halfD * 2, cx, groundY, cz);
-    interiorLiner(parts, body, halfW * 2, top, halfD * 2, cx, groundY, cz);
-    plinth(ctx, parts, plinthMat, cx, cz, halfW, halfD, groundY);
-    courseBands(parts, body, cx, cz, halfW, halfD, groundY + 0.35, groundY + top, { pitch: 1.2 });
-    const roofH = 2.0 + rng.range(-0.3, 0.5);
-    const roofMat = pick(rng, RESI_ROOF);
-    const roofInfo = {};
-    steppedRoof(ctx, parts, studs, roofMat, cx, cz, halfW * 2 * 1.08, halfD * 2 * 1.08, groundY + top, roofH, rng, roofInfo);
-    allFacades(ctx, parts, rng, cx, cz, groundY, halfW, halfD, floors, {
-      pitch: 1.7, frameMat, glassMat, litFrac: 0.42, warmFrac: 0.85, minCols: 1, marginFrac: 0.6,
-    });
-    // door on the +z facade (front face 2 cm proud of the wall - flush leaves z-fight the wall plane,
-    // cycle-3 critic issue 2)
-    plainBox(parts, 'darkStoneGrey', 1.0, 1.9, 0.12, cx, groundY + 0.95, cz + halfD - 0.04);
-    if (rng.chance(0.55)) plainBox(parts, 'porchWarm', 0.35, 0.22, 0.06, cx + 0.7, groundY + 1.9, cz + halfD - 0.01);
-    // squared brick chimney stack (stud on the cap) instead of a smooth cylinder
-    if (rng.chance(0.75)) {
-      brickStack(ctx, parts, studs, rng.chance(0.5) ? 'reddishBrown' : 'darkStoneGrey',
-        cx + halfW * rng.range(0.35, 0.6), cz - halfD * rng.range(0.3, 0.6), 1.15, 0.85,
-        groundY + top + roofH * 0.28, 1.5 + rng.range(0, 0.9));
-    }
-    // garden hint: a couple of hedge blobs near the door
-    if (halfW > 2) {
-      plainBox(parts, 'darkGreen', 0.7, 0.55, 0.6, cx - halfW + 0.6, groundY, cz + halfD - 0.5);
-      plainBox(parts, 'darkGreen', 0.6, 0.45, 0.5, cx + halfW - 0.55, groundY, cz + halfD - 0.45);
-    }
-    // cycle-3 rhythm: a seeded quoin/course treatment plus small roof clutter on the stepped top plate
-    const trimMat = rng.pick(TRIM_COLORS);
-    let quoins = 0, clutter = 0;
-    if (rng.chance(0.55)) { for (const face of FACE_LIST) quoinStrips(parts, trimMat, face, cx, cz, halfW, halfD, groundY + 0.35, groundY + top); quoins = 4; }
-    if (roofInfo.top && roofInfo.top.halfW > 0.9 && roofInfo.top.halfD > 0.9) {
-      clutter = roofClutter(ctx, parts, studs, rng, {
-        cx, cz, deckY: roofInfo.top.y, halfW: roofInfo.top.halfW - 0.15, halfD: roofInfo.top.halfD - 0.15,
-        menu: HOUSE_CLUTTER, maxItems: 2,
-      }).placed;
-    }
-    return { parts, studs, height: top + roofH, kind: 'house', features: { quoins, clutter } };
+  // Level-1 house, or a `landmark` residential record at any level (LOOP c6: a landmark is always the hero house
+  // and never densifies; see generateHouse and index.js enqueueLevelUps).
+  if (b.level <= 1 || b.landmark === true) {
+    // Optional authored palette, landmark only: `b.colors = { body, roof }` (palette names; unknown names are
+    // ignored). It replaces the drawn colours after the draws, so the rng stream is the same with or without it.
+    const want = b.landmark === true && b.colors ? b.colors : null;
+    const hBody = want && PALETTE[want.body] ? want.body : body;
+    const hFrame = hBody === body ? frameMat : (paletteLum(hBody) > 0.5 ? 'darkStoneGrey' : 'white');
+    const hRoof = want && PALETTE[want.roof] ? want.roof : null;
+    return generateHouse(ctx, b, rng, halfW, halfD, cx, cz, groundY, { body: hBody, frameMat: hFrame, glassMat, plinthMat, roofOverride: hRoof });
   }
 
   if (b.level === 2) {

@@ -3,7 +3,7 @@ import { generateBuilding } from './generator.js';
 import { BuildingBatcher } from './batching.js';
 import { BuildingStudField } from './studfield.js';
 import { UnservedIndicators, FireIndicators, FireDrones, BurglaryIndicators, PatrolCars } from './indicators.js';
-import { stageDefault, stageLevels, stageNight, stageFacade } from './showcase.js';
+import { stageDefault, stageLevels, stageNight, stageFacade, stageHouses } from './showcase.js';
 
 // buildings — procedurally generates and renders Blox-style buildings for world.buildings records, and (in the
 // full game only) grows the city: spawns starter buildings on zoned+empty+road-adjacent cells when simulation
@@ -45,7 +45,7 @@ const S = {
   ctx: null, group: null, batcher: null, studField: null, indicators: null, fireIndicators: null, fireDrones: null,
   burglaryIndicators: null, patrolCars: null, dynMats: null, rng: null, unsub: [],
   pendingDirty: false, lastEvent: 0, growthAcc: 0, growthTick: 0, growthRng: null,
-  tweens: [], variant: null, closeupTarget: null, settling: false,
+  tweens: [], variant: null, closeupTarget: null, settling: false, houseRow: null,
   levelUpQueue: [], levelUpQueued: null, // null placeholder; set() in init() (needs a real Set instance)
 };
 
@@ -98,7 +98,7 @@ function updateTweens(dt) {
 
 function levelUpBuilding(ctx, id) {
   const b = ctx.world.buildings.get(id);
-  if (!b || b.level >= 3) return;
+  if (!b || b.level >= 3 || b.landmark === true) return;
   b.level += 1;
   regenerateBuilding(ctx, b);
   // No construction flash while settling the boot/warm-up backlog: those level-ups happened "before the player
@@ -118,6 +118,10 @@ function enqueueLevelUps(ctx, ids) {
     if (S.levelUpQueued.has(id)) continue;
     const b = ctx.world.buildings.get(id);
     if (!b || b.level >= 3) continue; // already maxed or gone - nothing to do, don't bother queueing
+    // LOOP c6: `landmark: true` records (the demo's hero garden house) never densify. Simulation may keep listing
+    // them as candidates; they are skipped here, so they keep their level and their hero-house look forever.
+    // The flag is a plain record field, so serialize.js's spread copy carries it through save/load.
+    if (b.landmark === true) continue;
     S.levelUpQueued.add(id);
     S.levelUpQueue.push(id);
   }
@@ -333,17 +337,43 @@ function facadePreset() {
   };
 }
 
+// `houses` variant only: the staged row across the street, and a 3/4 of the landmark (hero) house. Outside that
+// variant both fall back to their own low views of whatever is staged (distinct from the other presets).
+function housesPreset() {
+  const r = S.houseRow;
+  if (!r) {
+    const b = S.stageBounds;
+    if (!b) return { pos: [-40, 14, 44], target: [0, 4, 0], fov: 45 };
+    return { pos: [b.cx + 30, 14, b.cz + 34], target: [b.cx + 4, 4, b.cz], fov: 45 };
+  }
+  const gy = r.groundY, midX = (r.minX + r.maxX) / 2;
+  return { pos: [r.minX - 4, gy + 15, r.streetZ + 22], target: [midX - 2, gy + 3, r.rowZ], fov: 50 };
+}
+
+function heroPreset() {
+  const h = S.houseRow?.hero;
+  if (!h) {
+    const b = S.stageBounds;
+    if (!b) return { pos: [18, 8, 24], target: [0, 4, 0], fov: 45 };
+    return { pos: [b.cx - 22, 9, b.cz + 26], target: [b.cx - 6, 4, b.cz], fov: 45 };
+  }
+  const gy = S.houseRow.groundY;
+  return { pos: [h.x - 9.5, gy + 6.5, h.z + 14], target: [h.x, gy + 4.2, h.z], fov: 45 };
+}
+
 export default {
   id: 'buildings',
   deps: ZONING_PRESENT ? ['terrain', 'roads', 'zoning'] : ['terrain', 'roads'],
   order: 40,
   api,
-  showcaseVariants: ['default', 'levels', 'night', 'facade'],
+  showcaseVariants: ['default', 'levels', 'night', 'facade', 'houses'],
   presets: {
     'buildings:default': defaultPreset,
     'buildings:closeup': closeupPreset,
     'buildings:levels': levelsPreset,
     'buildings:facade': facadePreset,
+    'buildings:houses': housesPreset,
+    'buildings:hero': heroPreset,
   },
 
   async init(ctx) {
@@ -367,7 +397,7 @@ export default {
     S.group.add(S.burglaryIndicators.group);
     S.patrolCars = new PatrolCars();
     S.group.add(S.patrolCars.group);
-    S.pendingDirty = false; S.growthAcc = 0; S.growthTick = 0; S.tweens.length = 0; S.closeupTarget = null; S.stageBounds = null; S.facadeRow = null;
+    S.pendingDirty = false; S.growthAcc = 0; S.growthTick = 0; S.tweens.length = 0; S.closeupTarget = null; S.stageBounds = null; S.facadeRow = null; S.houseRow = null;
     S.levelUpQueue.length = 0; S.levelUpQueued = new Set(); S.settling = false;
 
     S.unsub.push(ctx.events.on('building:spawned', ({ building }) => regenerateBuilding(ctx, building)));
@@ -465,8 +495,10 @@ export default {
     if (variant === 'levels') result = stageLevels(ctx.world, rng);
     else if (variant === 'night') result = stageNight(ctx.world, rng);
     else if (variant === 'facade') result = stageFacade(ctx.world, rng);
+    else if (variant === 'houses') result = stageHouses(ctx.world, rng);
     else result = stageDefault(ctx.world, rng);
     S.facadeRow = result.row || null;
+    S.houseRow = result.houses || null;
     S.batcher.flush();
     // Pick the tallest by actual generated height (not zone `level` - industrial stays low-rise at every
     // level, so a level+footprint-area heuristic here previously chose a wide shed over an actual skyscraper).
