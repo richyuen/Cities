@@ -7,6 +7,9 @@
 // plate ~1000 tiles, all of them instances of the same few meshes.
 import * as THREE from 'three';
 import { UNIT_CYL, UNIT_BOX, mat, xf, merge } from './geo.js';
+import {
+  buildPrintGeometry, headPrintMatrix, torsoPrintMatrix, TORSO_TILE0, TORSO_SETS, TORSO_ON_WHITE, FACE_PLAIN, FACE_FEM,
+} from './print.js';
 
 // ---- kinds --------------------------------------------------------------------------------------------------
 export const SP_FIGURE_KINDS = ['figure_cap', 'figure_skater', 'figure_sit', 'figure_farmer', 'figure_work', 'figure_std'];
@@ -41,9 +44,12 @@ const HAY = ['#F2A93A', '#F6B84A', '#E99A2C'];
 const LEAF = ['brightGreen', '#3E9447', 'darkGreen', '#5BB04F'];
 const SHIRTS = ['brightRed', 'brightBlue', 'brightYellow', 'brightGreen', 'brightOrange', 'white', 'mediumLilac', 'mediumAzur', 'darkRed', 'sandGreen', '#2F6FB5'];
 const LEGS = ['darkStoneGrey', 'darkAzur', 'sandBlue', 'reddishBrown', 'black', 'earthBlue', '#2F6FB5'];
-const SKIN = ['brightYellow', 'brightYellow', 'brightYellow', 'tan'];
+const SKIN = ['brightYellow', 'brightYellow', 'brightYellow', '#D9A27A']; // c6: 'tan' read as a white face
 const CAPS = ['brightBlue', 'brightRed', '#2F6FB5', 'black', 'brightYellow', 'brightGreen', 'white'];
 const HAIR = ['reddishBrown', 'black', 'brickYellow', 'darkOrange', '#3A2A1E', 'darkStoneGrey', 'brightYellow'];
+/** c6 fix 2: headgear tones that merge with a brightYellow head into one yellow block (the set-7 "blank" read). */
+const MERGES_WITH_YELLOW = new Set(['brightYellow', 'brickYellow', 'white', '#E8C77A', 'tan']);
+const gearFor = (skin, list) => (skin === 'brightYellow' ? list.filter((c) => !MERGES_WITH_YELLOW.has(c)) : list);
 const FLOWERS = ['brightPink', 'brightRed', 'brightYellow', 'white', 'mediumLilac', '#F28CB7'];
 
 /** Deck surface styles: base tile palette + plinth (side wall) colour + sparse-stud probability. */
@@ -163,23 +169,29 @@ export function buildSpRoleGeometry(ctx) {
     parts.push(xf(UNIT_BOX, mat(0, 1.75, 0, 0, 0.4, 0, 0.18, 0.2, 0.05)));
     G['sp-corn'] = merge(parts);
   }
-  // Cap: a rounded crown that fully encloses the head's hair block (x +-0.16, y 1.6-1.7, z -0.17..0.13), a
-  // button on top and a forward brim (figure space; the head tops out at y ~1.7).
+  // Cap (LOOP c6 B1): a rounded crown over the head top (bottom edge at y 1.565, just above the printed brows, so the
+  // face shows), a button and a SHORT raised brim (front edge z ~0.20, 4.5 cm past the 0.155 m face; the old brim
+  // reached z 0.31 at y 1.565 and hid everything above y ~1.43 from a 41-degree hero pitch, i.e. the eyes).
+  // Figure space; the head tops out at y ~1.70 with its stud. Rotate the part by PI about Y for a backward cap.
   {
-    const crown = xf(bb(0.38, 0.2, 0.37, 0.09), mat(0, 1.55, -0.02));
+    const crown = xf(bb(0.37, 0.16, 0.36, 0.07), mat(0, 1.556, -0.015));
     const dome = new THREE.SphereGeometry(1, 12, 5, 0, Math.PI * 2, 0, Math.PI / 2);
-    dome.applyMatrix4(mat(0, 1.7, -0.02, 0, 0, 0, 0.17, 0.07, 0.165));
-    const button = xf(UNIT_CYL, mat(0, 1.76, -0.02, 0, 0, 0, 0.035, 0.025, 0.035));
-    const brim = xf(bb(0.32, 0.035, 0.22, 0.015), mat(0, 1.565, 0.2, -0.1, 0, 0));
+    dome.applyMatrix4(mat(0, 1.712, -0.015, 0, 0, 0, 0.17, 0.06, 0.165));
+    const button = xf(UNIT_CYL, mat(0, 1.765, -0.015, 0, 0, 0, 0.035, 0.022, 0.035));
+    const brim = xf(bb(0.3, 0.03, 0.1, 0.012), mat(0, 1.558, 0.148, -0.2, 0, 0));
     G['sp-cap'] = merge([crown, dome, button, brim]);
   }
-  // Straw hat: wide brim + crown + band ring.
+  // Straw hat (c6): crown from y 1.575 (above the printed face), a narrower raised brim (r 0.27 at y 1.62: 11.5 cm past
+  // the face instead of 20 cm at 1.6, which hid the eyes from the farm hero's 32-degree pitch) + band ring.
   {
-    const brim = xf(UNIT_CYL, mat(0, 1.6, 0, 0, 0, 0, 0.36, 0.035, 0.36));
-    const crown = xf(UNIT_CYL, mat(0, 1.6, 0, 0, 0, 0, 0.19, 0.18, 0.19));
-    const top = xf(UNIT_CYL, mat(0, 1.78, 0, 0, 0, 0, 0.16, 0.03, 0.16));
-    G['sp-hat'] = merge([brim, crown, top]);
+    const brim = xf(UNIT_CYL, mat(0, 1.62, 0, 0, 0, 0, 0.27, 0.03, 0.27));
+    const crown = xf(UNIT_CYL, mat(0, 1.556, 0, 0, 0, 0, 0.18, 0.22, 0.18));
+    const band = xf(UNIT_CYL, mat(0, 1.65, 0, 0, 0, 0, 0.186, 0.045, 0.186));
+    const top = xf(UNIT_CYL, mat(0, 1.775, 0, 0, 0, 0, 0.155, 0.03, 0.155));
+    G['sp-hat'] = merge([brim, crown, band, top]);
   }
+  // Printed face / torso patch (c6 B2): see print.js. Owns its own geometry (uv + per-instance aTile).
+  G['sp-print'] = buildPrintGeometry();
   // ---- minifig roles (fix round 1): set-piece figures get their own parts so the city's 3-box pedestrians are
   // untouched. Figure space: feet at y 0, hip top 0.72, torso to 1.30, neck, head 1.34-1.64 + stud, forward +z.
   {
@@ -220,10 +232,13 @@ export function buildSpRoleGeometry(ctx) {
       st.translate(0, 1.67, 0);
       G['sp-head'] = merge([head, st]);
     }
-    // hair piece: rounded crown + back panel
+    // hair piece (c6): rounded crown whose front edge sits at y 1.57 (above the printed brows; the old crown came
+    // down to 1.48 at the front and covered the eyes), a back panel and two short side panels framing the face.
     G['sp-hair'] = merge([
-      xf(bb(0.355, 0.16, 0.35, 0.07), mat(0, 1.56, -0.02)),
-      xf(bb(0.34, 0.26, 0.1, 0.04), mat(0, 1.34, -0.13)),
+      xf(bb(0.35, 0.145, 0.35, 0.06), mat(0, 1.556, -0.02)),
+      xf(bb(0.34, 0.27, 0.12, 0.04), mat(0, 1.33, -0.12)),
+      xf(bb(0.05, 0.2, 0.17, 0.02), mat(-0.158, 1.4, -0.06)),
+      xf(bb(0.05, 0.2, 0.17, 0.02), mat(0.158, 1.4, -0.06)),
     ]);
   }
   return G;
@@ -256,14 +271,25 @@ const studRow = (out, c, x0, x1, y, z, pitch = 0.8) => {
 };
 
 // ---- figures ----------------------------------------------------------------------------------------------------
-/** Minifig parts (legs/torso/head roles from kinds.js) in a pose, plus an optional hat role. Origin = feet (stand,
- * work, skate) or the seat surface (sit). */
+const HEAD_PRINT_M = headPrintMatrix();
+const TORSO_PRINT_M = torsoPrintMatrix();
+const wrapPi = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+const BELTS = ['black', 'reddishBrown', 'darkStoneGrey', '#3A2A1E'];
+const HELMETS = ['brightRed', 'brightBlue', 'white', 'black', 'brightYellow', TEAL, 'brightGreen'];
+
+/** Minifig parts in a pose. Origin = feet (stand, work, skate) or the seat surface (sit). `hat`: 'cap' | 'capback' |
+ * 'helmet' | 'straw' | 'none' (hair). LOOP c6 (B1/B2): printed face + torso graphic (sp-print), a belt, raised
+ * headgear so the face shows, and - when the set-piece author passes `look` (the figure's local yaw) - a head
+ * turned toward the set-piece front, the side both hero cameras look from. */
 function figureParts(prng, pose, hat, opts = {}) {
   const legs = opts.legs || pick(prng, LEGS);
   const shirt = opts.shirt || pick(prng, SHIRTS);
   const skin = pick(prng, SKIN);
   const yaw = prng.range(-0.15, 0.15);
-  const headYaw = yaw + prng.range(-0.3, 0.3);
+  const jitter = prng.range(-0.3, 0.3);
+  const headYaw = Number.isFinite(opts.look)
+    ? Math.max(-0.65, Math.min(0.65, -wrapPi(opts.look))) * 0.9 + jitter * 0.3
+    : yaw + jitter;
   // 'sit' bends the knees (seat >= 0.35 m: bench, ledge, swing, tailgate, cab); 'sitflat' puts the legs straight
   // out (sitting on the ground / in the sandbox).
   let sitPose = pose === 'sit' && (opts.lift ?? 0.5) < 0.35 ? 'sitflat' : pose;
@@ -284,19 +310,19 @@ function figureParts(prng, pose, hat, opts = {}) {
     if (opts.lean) bodyM = new THREE.Matrix4().multiplyMatrices(mat(0, 0.72, 0, opts.lean, 0, 0), mat(0, -0.72, 0));
   }
   const torsoM = new THREE.Matrix4().multiplyMatrices(bodyM, mat(0, 0, 0, 0, yaw, 0));
-  const headM = new THREE.Matrix4().multiplyMatrices(bodyM, mat(0, 0, 0, 0, headYaw, 0));
+  let headM = new THREE.Matrix4().multiplyMatrices(bodyM, mat(0, 0, 0, 0, headYaw, 0));
+  // c6: a bent-over worker looks up from the work (head tipped back about the neck), so the face is not pointed at
+  // the ground from a hero camera
+  if (pose === 'work') {
+    const tip = new THREE.Matrix4().multiplyMatrices(mat(0, 1.31, 0, -0.45, 0, 0), mat(0, -1.31, 0));
+    headM = new THREE.Matrix4().multiplyMatrices(bodyM, new THREE.Matrix4().multiplyMatrices(tip, mat(0, 0, 0, 0, headYaw, 0)));
+  }
   const parts = [
     { role: legRole, local: legM, color: legs },
     { role: 'sp-torso', local: torsoM, color: shirt },
     { role: 'sp-head', local: headM, color: skin },
   ];
   const on = (m, part) => { part.local = new THREE.Matrix4().multiplyMatrices(m, part.local); parts.push(part); };
-  // printed face on the cylinder front (z = 0.155)
-  on(headM, box('black', -0.06, 1.5, 0.15, 0.04, 0.06, 0.02));
-  on(headM, box('black', 0.06, 1.5, 0.15, 0.04, 0.06, 0.02));
-  on(headM, box('black', 0, 1.425, 0.15, 0.1, 0.022, 0.02));
-  on(headM, box('black', -0.055, 1.435, 0.148, 0.022, 0.03, 0.02));
-  on(headM, box('black', 0.055, 1.435, 0.148, 0.022, 0.03, 0.02));
   // posed arms: [pitch (negative = forward), splay] per side
   let arms;
   if (pose === 'skate') arms = [[-0.2, 1.05], [0.15, 1.15]];
@@ -317,23 +343,48 @@ function figureParts(prng, pose, hat, opts = {}) {
     parts.push({ role: 'sp-arm', local: armM, color: shirt });
     on(armM, P('sp-cyl', skin, 0, -0.5, 0.02, 0, 0, 0, 0.055, 0.1, 0.055));
   }
+  // headgear: caps (forward / backward), helmets (stepped octagonal dome + stripe band), straw hat or hair
+  let longHair = false;
   if (!hat || hat === 'none') {
-    const hair = opts.hair || pick(prng, HAIR);
+    const hair = opts.hair || pick(prng, gearFor(skin, HAIR));
     on(headM, P('sp-hair', hair, 0, 0, 0));
-    if (prng.chance(0.35)) on(headM, box(hair, 0, 1.18, -0.16, 0.32, 0.24, 0.08)); // long hair down the back
+    if (prng.chance(0.35)) { longHair = true; on(headM, box(hair, 0, 1.18, -0.16, 0.32, 0.24, 0.08)); } // long hair down the back
+  } else if (hat === 'cap' || hat === 'capback') {
+    const capM = hat === 'capback' ? new THREE.Matrix4().multiplyMatrices(headM, mat(0, 0, 0, 0, Math.PI, 0)) : headM.clone();
+    parts.push({ role: 'sp-cap', local: capM, color: opts.cap || pick(prng, gearFor(skin, CAPS)) });
+  } else if (hat === 'helmet') {
+    // c6 fix 3: a shell that encloses the head's back and sides down to y 1.47 (squashed octagon pushed back, so its
+    // front face stays at z ~0.05, behind the printed eyes), a stepped octagonal dome on top, and a stripe band that is
+    // an octagon tier of the SAME radius as the bottom tier (the square band's corners read as a plate under a hat)
+    const c = pick(prng, gearFor(skin, HELMETS));
+    const band = c === 'black' ? 'white' : 'black';
+    on(headM, P('sp-oct', c, 0, 1.47, -0.07, 0, 0, 0, 0.19, 0.1, 0.13));
+    on(headM, P('sp-oct', c, 0, 1.556, -0.02, 0, 0, 0, 0.19, 0.05, 0.19));
+    on(headM, P('sp-oct', band, 0, 1.606, -0.02, 0, 0, 0, 0.19, 0.022, 0.19));
+    on(headM, P('sp-oct', c, 0, 1.628, -0.02, 0, 0, 0, 0.168, 0.045, 0.168));
+    on(headM, P('sp-oct', c, 0, 1.673, -0.02, 0, 0, 0, 0.12, 0.032, 0.12));
+  } else if (hat === 'straw') {
+    parts.push({ role: 'sp-hat', local: headM.clone(), color: pick(prng, ['brickYellow', 'tan', '#E8C77A']) });
   }
-  const print = prng.float();
-  if (print < 0.35) on(torsoM, box(pick(prng, ['white', 'brightYellow', 'black', 'mediumAzur']), 0, 0.98, 0.118, 0.15, 0.13, 0.014));
-  else if (print < 0.6) {
-    const c = pick(prng, ['white', 'darkStoneGrey', 'black']);
-    on(torsoM, box(c, 0, 0.74, 0.118, 0.06, 0.54, 0.014)); // zip / shirt placket
-  }
-  if (hat === 'cap') parts.push({ role: 'sp-cap', local: headM.clone(), color: opts.cap || pick(prng, CAPS) });
-  else if (hat === 'straw') parts.push({ role: 'sp-hat', local: headM.clone(), color: pick(prng, ['brickYellow', 'tan', '#E8C77A']) });
+  // printed face and torso graphic (one sp-print instance each; tile picked per figure)
+  const face = longHair ? pick(prng, FACE_FEM) : pick(prng, FACE_PLAIN);
+  parts.push({ role: 'sp-print', local: new THREE.Matrix4().multiplyMatrices(headM, HEAD_PRINT_M), color: skin, tile: face });
+  const set = TORSO_SETS[pose === 'skate' ? 'skate' : pose === 'farmer' ? 'farmer' : pose === 'work' ? 'work' : sitPose === 'stand' ? 'stand' : 'sit'] || TORSO_SETS.stand;
+  const torso = opts.print ?? pick(prng, shirt === 'white' ? TORSO_ON_WHITE : set);
+  parts.push({ role: 'sp-print', local: new THREE.Matrix4().multiplyMatrices(torsoM, TORSO_PRINT_M), color: shirt, tile: TORSO_TILE0 + torso });
+  // belt line around the torso's bottom edge (wraps the sides, so it reads from any angle)
+  on(torsoM, box(pick(prng, BELTS), 0, 0.715, 0, 0.452, 0.05, 0.252));
   return parts;
 }
 
-function skateboardParts(prng, color) {
+/** Skateboard along local x. `lean` (c6): stood on its tail and leaned back against a wall behind it (-z), wheels
+ * toward +z - the boards racked against the mural wall. */
+function skateboardParts(prng, color, lean = false) {
+  if (lean) {
+    const m = new THREE.Matrix4().multiplyMatrices(mat(0, 0.47, 0, -0.2, 0, 0),
+      new THREE.Matrix4().multiplyMatrices(mat(0, 0, 0, 0, -Math.PI / 2, 0), mat(0, 0, 0, 0, 0, Math.PI / 2)));
+    return under(m, skateboardParts(prng, color, false));
+  }
   const c = color || pick(prng, ['brightOrange', 'brightRed', 'mediumAzur', 'black', 'brightYellow', 'brightPurple', TEAL]);
   const parts = [box(c, 0, 0.075, 0, 0.82, 0.045, 0.24)];
   parts.push(box('darkStoneGrey', 0.28, 0.06, 0, 0.08, 0.03, 0.2), box('darkStoneGrey', -0.28, 0.06, 0, 0.08, 0.03, 0.2));
@@ -404,28 +455,55 @@ function deckParts(prng, prop) {
 }
 
 // ---- skate ------------------------------------------------------------------------------------------------------
-/** Plate bands over a wedge's slope (wedge-local: rises from z=+D/2, y=0 to z=-D/2, y=H, width W), alternating two
- * tones with hairline gaps, so a bank reads as stacked slope plates instead of one flat colour. */
-function slopeBands(W, H, D, c1, c2, n = 4) {
+/** LOOP c6 (C4): slope tiles. Each band along the slope is split across the width into ~0.8 m tiles with 4.5 cm
+ * gaps, coloured from a three-tone palette (two shades + the checker colour) by a fixed pattern, over a darker
+ * underlay (the wedge/quarter body), so the seams read as a built-up slope of plates instead of one flat colour. */
+const ORANGE_TILES = ['#E2661B', '#D2581A', '#F39A3E'];
+const YELLOW_TILES = ['brightYellow', '#F2B926', '#FFE066'];
+const ORANGE_UNDER = '#8E3A10';
+const YELLOW_UNDER = '#A87412';
+const tileTone = (pal, k, i) => pal[(k * 2 + i * 3 + ((k * i) % 2)) % pal.length];
+/** Tiles over a wedge's slope (wedge-local: rises from z=+D/2, y=0 to z=-D/2, y=H, width W). */
+function slopeBands(W, H, D, pal, n = 4) {
   const parts = [];
   const len = Math.hypot(D, H) / n, th = Math.atan2(H, D);
+  const m = Math.max(1, Math.round(W / 0.8)), tw = W / m;
   for (let k = 0; k < n; k++) {
     const t = (k + 0.5) / n;
-    parts.push(P('sp-box', k % 2 ? c2 : c1, 0, H * (1 - t) + 0.004, -D / 2 + D * t, th, 0, 0, W - 0.04, 0.03, len - 0.04));
+    for (let i = 0; i < m; i++) {
+      parts.push(P('sp-box', tileTone(pal, k, i), -W / 2 + (i + 0.5) * tw, H * (1 - t) + 0.004, -D / 2 + D * t, th, 0, 0, tw - 0.045, 0.03, len - 0.045));
+    }
   }
   return parts;
 }
-/** Facet plates over a quarter-pipe face (same unit profile as sp-qpipe, scaled W x H x R). */
-function qpipeBands(W, H, R, c1, c2, N = 8) {
+/** Tiles over a quarter-pipe face (same unit profile as sp-qpipe, scaled W x H x R): every facet split across the
+ * width into ~0.8 m tiles. */
+function qpipeBands(W, H, R, pal, N = 8) {
   const parts = [];
   const pt = (k) => { const t = (k / N) * Math.PI / 2; return [R * (0.5 - Math.sin(t)), H * (1 - Math.cos(t))]; };
+  const m = Math.max(1, Math.round(W / 0.8)), tw = W / m;
   for (let k = 0; k < N; k++) {
     const [z1, y1] = pt(k + 1), [z0, y0] = pt(k);
     const dz = z0 - z1, dy = y0 - y1, len = Math.hypot(dz, dy);
     const th = Math.atan2(-dy, dz);
-    parts.push(P('sp-box', k % 2 ? c2 : c1, 0, (y0 + y1) / 2 + 0.004, (z0 + z1) / 2, th, 0, 0, W - 0.04, 0.03, len - 0.03));
+    for (let i = 0; i < m; i++) {
+      parts.push(P('sp-box', tileTone(pal, k, i), -W / 2 + (i + 0.5) * tw, (y0 + y1) / 2 + 0.004, (z0 + z1) / 2, th, 0, 0, tw - 0.045, 0.03, len - 0.04));
+    }
   }
   return parts;
+}
+/** Full stud grid (pitch 0.4 m, half-size studs like the 0.4 m deck) over a rectangle, skipping `skip(x, z)`. */
+function studGrid(out, colorAt, x0, x1, z0, z1, y, skip = null) {
+  const pitch = 0.4, k = 0.5;
+  const nx = Math.max(1, Math.floor((x1 - x0) / pitch)), nz = Math.max(1, Math.floor((z1 - z0) / pitch));
+  const ox = x0 + (x1 - x0 - (nx - 1) * pitch) / 2, oz = z0 + (z1 - z0 - (nz - 1) * pitch) / 2;
+  for (let i = 0; i < nx; i++) {
+    for (let j = 0; j < nz; j++) {
+      const x = ox + i * pitch, z = oz + j * pitch;
+      if (skip && skip(x, z)) continue;
+      out.push(P('sp-stud', colorAt(x, z, i, j), x, y, z, 0, 0, 0, k, k, k));
+    }
+  }
 }
 
 /** Quarter pipe + its deck: curve (orange) facing +z, side cheeks (blue), deck platform behind with railing and
@@ -438,15 +516,15 @@ function skateQuarter(prng, prop) {
   const cOr = prop.color || pick(prng, ORANGE);
   const side = prop.side || pick(prng, ['#2F6FB5', 'mediumAzur', TEAL]);
   const parts = [];
-  parts.push(P('sp-qpipe', cOr, 0, 0, curveZ, 0, 0, 0, w, h, r));
+  parts.push(P('sp-qpipe', ORANGE_UNDER, 0, 0, curveZ, 0, 0, 0, w, h, r));
   // side cheeks follow the curve (thin quarter-pipe slabs), with studs along the top lip
   for (const sx of [-1, 1]) {
     parts.push(P('sp-qpipe', side, sx * (w / 2 + 0.07), 0, curveZ, 0, 0, 0, 0.14, h + 0.06, r + 0.02));
     parts.push(brick(side, sx * (w / 2 + 0.07), 0, z0 + dp / 2, 0.14, h + 0.06, dp));
     for (let k = 0; k < 3; k++) parts.push(stud(side, sx * (w / 2 + 0.07), h * (0.25 + k * 0.22), z0 + dp * 0.3));
   }
-  // two-tone facet plates on the riding face (reads as stacked curved slope bricks)
-  parts.push(...under(mat(0, 0, curveZ), qpipeBands(w, h, r, cOr, '#F39A3E')));
+  // tiled facet plates on the riding face (reads as stacked curved slope bricks; c6: per-facet ~0.8 m tiles)
+  parts.push(...under(mat(0, 0, curveZ), qpipeBands(w, h, r, cOr === '#E2661B' ? ORANGE_TILES : [cOr, ...ORANGE_TILES.slice(1)])));
   // deck support (checker grey) + deck plate + coping + railing
   const nseg = Math.max(2, Math.round(w / 1.2));
   for (let k = 0; k < nseg; k++) {
@@ -456,7 +534,8 @@ function skateQuarter(prng, prop) {
     }
   }
   parts.push(brick('darkStoneGrey', 0, h, z0 + dp / 2, w + 0.3, 0.1, dp + 0.05));
-  studRow(parts, 'darkStoneGrey', -w / 2 + 0.3, w / 2 - 0.3, h + 0.1, z0 + 0.35);
+  // c6: full stud grid on the deck (clear of the railing line and the coping)
+  studGrid(parts, () => 'darkStoneGrey', -w / 2, w / 2, z0 + 0.2, z0 + dp - 0.12, h + 0.1);
   parts.push(cylX(prop.coping || TEAL, 0, h + 0.02, z0 + dp - 0.02, 0.085, w + 0.2));
   // railing on the deck's back edge and sides
   const railC = 'darkStoneGrey';
@@ -484,17 +563,25 @@ function skateBank(prng, prop) {
       parts.push(brick(c, -L / 2 + (k + 0.5) * (L / nseg), t * (H / 2), 0, L / nseg - 0.02, H / 2 - 0.01, D - 0.02));
     }
   }
-  // orange top with a tan centre strip and studs
+  // orange top with tan strips and (c6) a full stud grid, clear of the copings and the mini quarter at the back
   parts.push(brick('#E2661B', 0, H, 0, L, 0.12, D));
-  for (let k = 0; k < 3; k++) parts.push(box('#F08A2E', -L / 2 + 0.6 + k * (L - 1.2) / 2, H + 0.12, 0, 0.5, 0.012, D - 0.5));
-  for (let k = 0; k < 7; k++) parts.push(stud(k % 2 ? '#F08A2E' : '#E2661B', -L / 2 + 0.5 + k * (L - 1) / 6, H + 0.12, D * 0.18 * (k % 3 - 1)));
+  const stripX = [];
+  for (let k = 0; k < 3; k++) {
+    const x = -L / 2 + 0.6 + k * (L - 1.2) / 2;
+    stripX.push(x);
+    parts.push(box('#F08A2E', x, H + 0.12, 0, 0.8, 0.012, D - 0.5));
+  }
+  const onStrip = (x) => stripX.some((sx) => Math.abs(x - sx) < 0.4);
+  const mqX0 = -L * 0.18 - L * 0.25 - 0.1, mqX1 = -L * 0.18 + L * 0.25 + 0.1, mqZ1 = -D / 2 + 1.1;
+  studGrid(parts, (x) => (onStrip(x) ? '#F08A2E' : '#E2661B'), -L / 2 + 0.05, L / 2 - 0.05, -D / 2 + 0.3, D / 2 - 0.3, H + 0.12,
+    (x, z) => x > mqX0 && x < mqX1 && z < mqZ1);
   // teal coping along front and back
   parts.push(brick(TEAL, 0, H, D / 2 - 0.12, L + 0.04, 0.2, 0.26));
   parts.push(brick(TEAL, 0, H, -D / 2 + 0.12, L + 0.04, 0.2, 0.26));
   // front wedge bank (orange), sloping down toward +z
   const bw = L * 0.42;
-  parts.push(P('sp-wedge', '#E2661B', -L * 0.12, 0, D / 2 + 1.0, 0, 0, 0, bw, H, 2.0));
-  parts.push(...under(mat(-L * 0.12, 0, D / 2 + 1.0), slopeBands(bw, H, 2.0, '#E2661B', '#F39A3E')));
+  parts.push(P('sp-wedge', ORANGE_UNDER, -L * 0.12, 0, D / 2 + 1.0, 0, 0, 0, bw, H, 2.0));
+  parts.push(...under(mat(-L * 0.12, 0, D / 2 + 1.0), slopeBands(bw, H, 2.0, ORANGE_TILES)));
   parts.push(P('sp-wedge', TEAL, -L * 0.12 - bw / 2 - 0.25, 0, D / 2 + 1.0, 0, 0, 0, 0.5, H + 0.12, 2.0));
   // left stairs: 4 steps down along -x
   for (let k = 0; k < 4; k++) {
@@ -508,8 +595,8 @@ function skateBank(prng, prop) {
   parts.push(P('sp-box', TEAL, -L / 2 - 1.0, H * 0.5 + 0.75, 0.2 + D * 0.31 + 0.05, 0, 0, Math.atan2(H, 2.0), sl, 0.07, 0.07));
   for (let k = 0; k < 3; k++) parts.push(box(TEAL, -L / 2 - 0.2 - k * 0.8, H * (1 - (k * 0.8 + 0.2) / 2.4) - 0.1, 0.2 + D * 0.31 + 0.05, 0.06, 0.95, 0.06));
   // right end: curved bank down to the ground, concave face toward +x
-  parts.push(P('sp-qpipe', '#E2661B', L / 2 + H * 0.65, 0, 0, 0, Math.PI / 2, 0, D, H, H * 1.3));
-  parts.push(...under(mat(L / 2 + H * 0.65, 0, 0, 0, Math.PI / 2, 0), qpipeBands(D, H, H * 1.3, '#E2661B', '#F39A3E', 6)));
+  parts.push(P('sp-qpipe', ORANGE_UNDER, L / 2 + H * 0.65, 0, 0, 0, Math.PI / 2, 0, D, H, H * 1.3));
+  parts.push(...under(mat(L / 2 + H * 0.65, 0, 0, 0, Math.PI / 2, 0), qpipeBands(D, H, H * 1.3, ORANGE_TILES, 6)));
   parts.push(P('sp-qpipe', TEAL, L / 2 + H * 0.65, 0, D / 2 + 0.06, 0, Math.PI / 2, 0, 0.12, H + 0.04, H * 1.3));
   parts.push(P('sp-qpipe', TEAL, L / 2 + H * 0.65, 0, -D / 2 - 0.06, 0, Math.PI / 2, 0, 0.12, H + 0.04, H * 1.3));
   // mini quarter on the back of the top (grey), with a coping bar
@@ -526,10 +613,12 @@ function skateFunbox(prng, prop) {
   parts.push(brick('#E2661B', 0, H, 0, L, 0.1, D));
   parts.push(brick('darkStoneGrey', 0, H + 0.1, D / 2 - 0.1, L, 0.12, 0.2));
   // slopes at both ends (yellow-orange like the reference's fun-box)
-  parts.push(P('sp-wedge', 'brightYellow', -L / 2 - 0.7, 0, 0, 0, -Math.PI / 2, 0, D, H + 0.1, 1.4));
-  parts.push(P('sp-wedge', 'brightYellow', L / 2 + 0.7, 0, 0, 0, Math.PI / 2, 0, D, H + 0.1, 1.4));
-  parts.push(...under(mat(-L / 2 - 0.7, 0, 0, 0, -Math.PI / 2, 0), slopeBands(D, H + 0.1, 1.4, 'brightYellow', '#F7B52E', 3)));
-  parts.push(...under(mat(L / 2 + 0.7, 0, 0, 0, Math.PI / 2, 0), slopeBands(D, H + 0.1, 1.4, 'brightYellow', '#F7B52E', 3)));
+  parts.push(P('sp-wedge', YELLOW_UNDER, -L / 2 - 0.7, 0, 0, 0, -Math.PI / 2, 0, D, H + 0.1, 1.4));
+  parts.push(P('sp-wedge', YELLOW_UNDER, L / 2 + 0.7, 0, 0, 0, Math.PI / 2, 0, D, H + 0.1, 1.4));
+  parts.push(...under(mat(-L / 2 - 0.7, 0, 0, 0, -Math.PI / 2, 0), slopeBands(D, H + 0.1, 1.4, YELLOW_TILES, 3)));
+  parts.push(...under(mat(L / 2 + 0.7, 0, 0, 0, Math.PI / 2, 0), slopeBands(D, H + 0.1, 1.4, YELLOW_TILES, 3)));
+  // c6: stud grid on the deck top (around the planter)
+  studGrid(parts, () => '#E2661B', -L / 2 + 0.1, L / 2 - 0.1, -D / 2 + 0.15, D / 2 - 0.3, H + 0.1, (x, z) => x > -0.65 && x < 1.05 && z < 0.3);
   // planter on top: wood box + big-leaf plant
   parts.push(brick('#B5835A', 0.2, H + 0.1, -0.15, 1.4, 0.32, 0.7));
   parts.push(box('reddishBrown', 0.2, H + 0.42, -0.15, 1.25, 0.03, 0.55));
@@ -907,6 +996,7 @@ function scarecrow(prng) {
     { role: 'sp-head', local: mat(0, 0, 0), color: pick(prng, ['brickYellow', 'tan']) },
     { role: 'sp-hat', local: mat(0, 0, 0), color: pick(prng, ['brickYellow', '#E8C77A']) },
   ]));
+  parts.push({ role: 'sp-print', local: new THREE.Matrix4().multiplyMatrices(mat(0, lift, 0), HEAD_PRINT_M), color: parts[parts.length - 2].color, tile: 0 });
   return parts;
 }
 
@@ -1147,12 +1237,20 @@ function waterTrough() {
 }
 
 // ---- extra dressing (density pass) ------------------------------------------------------------------------------
+/** Kicker / launch ramp (c6): toe at +z on the ground, high edge at -z (height H), coping bar ON the high edge (the
+ * c5 version rotated the wedge by PI but left the bar at -z: it sat over the toe, floating 0.46 m up), tiled slope
+ * and side rails. Fields: color, W, H, L. Place it with its high edge flush against a bank / ledge. */
 function kicker(prng, prop) {
   const c = prop.color || pick(prng, ['#E2661B', TEAL, 'brightYellow']);
+  const W = prop.W || 1.3, H = prop.H || 0.5, L = prop.L || 1.5;
+  const GREY = '#9A9F9C';
+  const pal = c === '#E2661B' ? ORANGE_TILES : c === TEAL ? [TEAL, '#13A396', '#0B7A72'] : c === GREY ? [GREY, '#8E9391', '#A9AEAB'] : YELLOW_TILES;
+  const underC = c === '#E2661B' ? ORANGE_UNDER : c === TEAL ? '#075E58' : c === GREY ? '#5F6466' : YELLOW_UNDER;
   return [
-    P('sp-wedge', c, 0, 0, 0, 0, Math.PI, 0, 1.3, 0.5, 1.5),
-    box('darkStoneGrey', 0, 0.48, -0.74, 1.3, 0.04, 0.06),
-    box('darkStoneGrey', -0.62, 0, 0, 0.06, 0.06, 1.5), box('darkStoneGrey', 0.62, 0, 0, 0.06, 0.06, 1.5),
+    P('sp-wedge', underC, 0, 0, 0, 0, 0, 0, W, H, L),
+    ...slopeBands(W, H, L, pal, 2),
+    cylX('lightStoneGrey', 0, H - 0.02, -L / 2 + 0.03, 0.045, W),
+    box('darkStoneGrey', -W / 2 + 0.03, 0, 0, 0.06, 0.06, L), box('darkStoneGrey', W / 2 - 0.03, 0, 0, 0.06, 0.06, L),
   ];
 }
 
@@ -1179,9 +1277,12 @@ function muralWall(prng, prop) {
   const sx = prng.range(-L / 4, L / 4);
   parts.push(P('sp-cyl', 'brightYellow', sx, H * 0.58, zf + 0.02, Math.PI / 2, 0, 0, 0.55, 0.03, 0.55));
   parts.push(P('sp-cyl', '#E2661B', sx, H * 0.58, zf + 0.04, Math.PI / 2, 0, 0, 0.32, 0.03, 0.32));
+  // c6 fix 1: the wave band is six level strokes laid INSIDE the panel (x within +-(L - 0.7) / 2); the c5 strokes
+  // were rotated 0.35 rad and 1.78 m long, so the end ones overhung the wall and read as loose planks
+  const waveW = (L - 0.7) / 6;
   for (let k = 0; k < 6; k++) {
-    const x = -L / 2 + 0.6 + k * (L - 1.2) / 5;
-    parts.push(P('sp-box', k % 2 ? 'white' : 'mediumAzur', x, 0.32 + (k % 2) * 0.12, zf + 0.03, 0, 0, 0.35, (L - 1.2) / 5 + 0.1, 0.18, 0.03));
+    const x = -(L - 0.7) / 2 + (k + 0.5) * waveW;
+    parts.push(box(k % 2 ? 'white' : 'mediumAzur', x, 0.32 + (k % 2) * 0.1, zf + 0.03, waveW - 0.06, 0.16, 0.03));
   }
   const letters = ['brightRed', 'brightYellow', 'white', 'brightPink', 'lime'];
   for (let k = 0; k < 5; k++) {
@@ -1272,7 +1373,7 @@ export function buildSpKindParts(kind, prng, prop = {}) {
     case 'skate_quarter': return skateQuarter(prng, prop);
     case 'skate_funbox': return skateFunbox(prng, prop);
     case 'skate_rail': return skateRail(prng, prop);
-    case 'skateboard': return skateboardParts(prng, prop.color);
+    case 'skateboard': return skateboardParts(prng, prop.color, !!prop.lean);
     case 'pallet': return pallet(prng, prop);
     case 'planter_box': return planterBox(prng, prop);
     case 'barrier_hoop': return barrierHoop(prng);
@@ -1312,15 +1413,18 @@ export function buildSpKindParts(kind, prng, prop = {}) {
     case 'bush': return bush(prng, prop);
     case 'bird_bath': return birdBath();
     // posed figures (FIGURE_CAP counts these together with plain 'figure')
-    case 'figure_cap': return figureParts(prng, 'stand', 'cap', prop);
-    case 'figure_std': return figureParts(prng, 'stand', 'none', prop);
-    case 'figure_farmer': return figureParts(prng, 'farmer', 'straw', prop);
+    // c6: 'figure_cap' is the casual-crowd kind - half caps, half hair (the set-pieces had 13/22 caps, which hid faces)
+    case 'figure_cap': return figureParts(prng, 'stand', prop.hat || (prng.chance(0.5) ? 'cap' : 'none'), prop);
+    case 'figure_std': return figureParts(prng, 'stand', prop.hat || 'none', prop);
+    case 'figure_farmer': return figureParts(prng, 'farmer', prop.hat || 'straw', prop);
     case 'figure_work': return figureParts(prng, 'work', prop.hat || (prng.chance(0.6) ? 'straw' : 'none'), prop);
     case 'figure_sit': return figureParts(prng, 'sit', prop.hat || (prng.chance(0.5) ? 'cap' : 'none'), prop);
     case 'figure_skater': {
       const parts = skateboardParts(prng, prop.color);
-      // rider faces +z, side-on to a board that rolls along x (regular stance)
-      parts.push(...under(mat(0, 0.1, 0), figureParts(prng, 'skate', 'cap', { ...prop, lean: prng.range(-0.15, 0.15) })));
+      // rider faces +z, side-on to a board that rolls along x (regular stance); c6: helmets / backward caps / hair
+      const r = prng.float();
+      const hat = prop.hat || (r < 0.4 ? 'helmet' : r < 0.75 ? 'capback' : 'none');
+      parts.push(...under(mat(0, 0.1, 0), figureParts(prng, 'skate', hat, { ...prop, lean: prng.range(-0.15, 0.15) })));
       return parts;
     }
     default: return [];

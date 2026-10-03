@@ -1,3 +1,5 @@
+import { makePrintAtlas, printMaterial } from './print.js';
+
 // Role -> material table. Opaque/instance-coloured roles use the shared cached `ctx.materials.plastic()`
 // (safe to share globally). Emissive roles that this module animates over time (lamp bulbs, traffic lenses)
 // are cloned once so mutating their emissiveIntensity never touches another module's cached material.
@@ -42,6 +44,8 @@ const FOLIAGE_INSTANCE_ROLES = new Set(['tree-leaves', 'hedge-block', 'tree-top'
 // Fix round 1: crops and small plants receive shadows but do not cast them - the dense wheat/corn rows shadowed
 // themselves into dark rust fuzz, and their shadow-pass triangles were most of the set-pieces' scene cost.
 const NO_CAST_ROLES = new Set(['sp-tile', 'sp-stud', 'sp-wheat', 'sp-corn', 'sp-leaf']);
+// LOOP cycle 6: one atlas per page (re-inits reuse it, so plastic()'s map-keyed cache never grows).
+let PRINT_ATLAS = null;
 
 // role -> { name, dayIntensity, nightIntensity } for the dynamic emissive roles we animate ourselves.
 const EMISSIVE_ROLES = {
@@ -90,6 +94,14 @@ export function buildRoleMaterials(ctx) {
   // LOOP cycle 5 set-pieces: pond/trough water (the fountain's shared glass) and dark window glazing.
   roles.set('sp-water', { material: M.glass('mediumAzur', { roughness: 0.1, opacity: 0.75 }), instanceColor: false, castShadow: false, receiveShadow: true });
   roles.set('sp-glass', { material: M.glass('#35556E', { roughness: 0.08, opacity: 0.78 }), instanceColor: false, castShadow: false, receiveShadow: true });
+  // LOOP cycle 6 (B2): printed faces / torso graphics on the set-piece minifigs. Same plastic parameters as the
+  // head/torso roles plus the path-drawn atlas; per-instance tile via `aTile` (see print.js). Receives shadows,
+  // casts none (a 3 mm decal), so it costs exactly one draw.
+  if (!PRINT_ATLAS) PRINT_ATLAS = makePrintAtlas(ctx.renderer);
+  roles.set('sp-print', {
+    material: printMaterial(M.plastic('white', { instanceColor: true, roughness: 0.4, clearcoat: 0.5, map: PRINT_ATLAS })),
+    instanceColor: true, castShadow: false, receiveShadow: true, tiled: !!PRINT_ATLAS,
+  });
   roles.set('busstop-panel', { material: M.glass('mediumAzur', { roughness: 0.12, opacity: 0.42, transmission: 0.5 }), instanceColor: false, castShadow: false, receiveShadow: true });
 
   return { roles, EMISSIVE_ROLES };

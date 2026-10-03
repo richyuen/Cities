@@ -1011,7 +1011,9 @@ function rebuild() {
       const world4 = part.local ? new THREE.Matrix4().multiplyMatrices(base, part.local) : base.clone();
       const pos = new THREE.Vector3().setFromMatrixPosition(world4);
       const color = part.color ? ctx.materials.color(part.color) : null;
-      list.push(noFade ? { pos, base: world4, color, noFade } : { pos, base: world4, color });
+      const inst = noFade ? { pos, base: world4, color, noFade } : { pos, base: world4, color };
+      if (part.tile !== undefined) inst.tile = part.tile; // LOOP c6: print-atlas tile (sp-print role)
+      list.push(inst);
     }
     if (prop.kind === 'flower_bed') addFlowerHeads(base, prng, buckets, ctx);
     if (prop.kind === 'fountain') addFountainFx(prop);
@@ -1034,6 +1036,7 @@ function rebuild() {
     }
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    if (def.tiled) setTileAttribute(def.geometry, list);
     S.group.add(mesh);
     def.mesh = mesh;
   }
@@ -1043,6 +1046,22 @@ function rebuild() {
   applyLod(true);
   updateLightPool(true);
   ctx.log(`[props] rebuilt ${world.props.size} props across ${S.roleTable.size} roles`);
+}
+
+/** LOOP c6: per-instance atlas tile for the sp-print role. The geometry is shared by every rebuild's mesh, so the
+ * attribute is kept and grown by doubling (never re-created per rebuild: a replaced attribute's GPU buffer is only
+ * freed with the geometry). */
+function setTileAttribute(geometry, list) {
+  let attr = geometry.getAttribute('aTile');
+  if (!attr || attr.count < list.length) {
+    let cap = attr ? attr.count : 256;
+    while (cap < list.length) cap *= 2;
+    attr = new THREE.InstancedBufferAttribute(new Float32Array(cap), 1);
+    attr.setUsage(THREE.DynamicDrawUsage);
+    geometry.setAttribute('aTile', attr);
+  }
+  for (let k = 0; k < list.length; k++) attr.array[k] = list[k].tile || 0;
+  attr.needsUpdate = true;
 }
 
 const _scaleM = new THREE.Matrix4();

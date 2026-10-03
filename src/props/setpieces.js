@@ -92,12 +92,13 @@ function authorSkate(w, d, prng) {
   ];
   // focal group: the bank (centre-back) and the vert quarter (right), fun-box and rail in the mid-ground
   add('skate_bank', U(-2.0), V(-2.6), 0, { L: 6.4, D: 3.6, H: 1.2 });
-  add('skate_quarter', U(8.2), V(-1.6), -Math.PI / 2 + 0.3, { qw: 5.0, qh: 2.4, deck: 1.6 });
-  add('skate_funbox', U(1.8), V(4.4), 0.22, { L: 3.6 });
-  add('skate_rail', U(-5.4), V(5.4), 0.12, { len: 3.4 });
-  add('barrier_hoop', U(-1.6), V(7.6), 0.3);
-  add('barrier_hoop', U(0.4), V(8.2), 0.15);
-  add('pallet', U(6.8), V(5.8), 0.45, { count: 2 });
+  // c6 (C2): all skate furniture on the deck grid (0 / +-PI/2 / PI); the c5 off-grid yaws read as scattered pieces
+  add('skate_quarter', U(8.2), V(-1.6), -Math.PI / 2, { qw: 5.0, qh: 2.4, deck: 1.6 });
+  add('skate_funbox', U(1.8), V(4.4), 0, { L: 3.6 });
+  add('skate_rail', U(-5.4), V(5.4), 0, { len: 3.4 });
+  add('barrier_hoop', U(-2.4), V(7.6), 0);
+  add('barrier_hoop', U(-0.8), V(7.6), 0);
+  add('pallet', U(6.8), V(5.8), 0, { count: 2 });
   add('trash_bin', U(5.6), V(7.2), 0);
   add('trash_bin', U(-10.2), V(-8.0), 0);
   // planters + plants (low layer), tree planter + trees (tall layer)
@@ -114,21 +115,23 @@ function authorSkate(w, d, prng) {
   // boundary hedges along the back (skip where trees/planters stand)
   add('mural_wall', U(1.6), -hd + 0.75, 0, { len: 9.6, H: 2.0 });
   run(add, 'hedge', -hw + 1.2, -hd + 0.45, hw - 1.2, -hd + 0.45, 2.0, {}, (u) => Math.abs(u - U(-5.4)) < 1.2 || Math.abs(u - U(10.4)) < 1.2 || Math.abs(u - U(1.6)) < 5.2);
-  add('kicker', U(-6.4), V(-0.6), -0.35, { color: '#E2661B' });
-  add('kicker', U(5.0), V(1.0), 2.6, { color: '#0E8F86' });
+  // c6 (C1/C3): kickers are launch pads flush against structures, high edge touching: the orange one against the
+  // bank platform's front wall (right of the wedge bank), the grey one against the ledge's left end (ledge height, ledge colour).
+  // Bank front wall: v = V(-2.6) + 1.8; kicker length 1.5 -> centre 0.75 in front of it.
+  add('kicker', U(-2.0) + 1.55, V(-2.6) + 1.8 + 0.75, 0, { color: '#E2661B' });
+  add('kicker', U(3.6) - 1.7 - 0.75, V(8.4), -Math.PI / 2, { color: '#9A9F9C', W: 0.8, H: 0.45 }); // c6 fix 4: ledge grey
   add('figure_sit', U(-8.0), V(-6.55), 0, { lift: 0.6 });
   add('figure_cap', U(-4.2), V(-6.8), 0.3);
   add('figure_cap', U(6.6), V(-6.6), -0.4);
-  add('figure_skater', U(-6.2), V(1.4), 2.9);
+  add('figure_skater', U(-6.2), V(1.4), 0.3);
   // density pass: a ledge and a crowd on the open pavers, flowers along the front edge
-  add('skate_ledge', U(3.6), V(8.4), 0.05, { len: 3.4 });
-  add('figure_sit', U(3.0), V(8.62), 0.05, { lift: 0.45, hat: 'cap' });
-  add('figure_std', U(4.6), V(7.0), 2.6);
+  add('skate_ledge', U(3.6), V(8.4), 0, { len: 3.4 });
+  add('figure_sit', U(3.0), V(8.62), 0, { lift: 0.45, hat: 'cap' });
+  add('figure_std', U(4.6), V(7.0), 0.35);
   add('figure_cap', U(-3.4), V(4.0), 0.4);
-  add('figure_std', U(-1.9), V(5.2), -2.4);
-  add('skateboard', U(-3.4), V(4.9), 2.0);
-  add('figure_cap', U(4.4), V(3.0), -1.0);
-  add('figure_skater', U(-1.4), V(6.2), 1.4);
+  add('figure_std', U(-1.9), V(5.2), -0.45);
+  add('figure_cap', U(4.4), V(3.0), -0.4);
+  add('figure_skater', U(-1.4), V(6.2), 0.45);
   add('trash_bin', U(-4.6), V(8.9), 0);
   for (const [u, v] of [[-10.0, 9.0], [-5.0, 9.2], [0.8, 9.3], [6.6, 9.1], [10.6, 5.6], [-0.4, -5.4]]) {
     add('flower_clump', U(u) + prng.range(-0.3, 0.3), V(v) + prng.range(-0.2, 0.2), prng.range(0, 6));
@@ -140,24 +143,25 @@ function authorSkate(w, d, prng) {
   for (const [u, v] of [[-8.2, 7.6], [-6.8, 8.5], [-3.6, 8.8], [3.2, 8.7], [8.0, 3.8], [-4.4, -5.2], [6.0, -6.0], [2.4, -5.4]]) {
     add('flower_clump', U(u) + prng.range(-0.3, 0.3), V(v) + prng.range(-0.3, 0.3), prng.range(0, 6));
   }
-  add('skateboard', U(3.6), V(-4.0), 1.2);
-  add('skateboard', U(-7.2), V(3.6), 0.5);
-  add('bike', U(-9.0), V(8.4), 1.25);
+  // c6 (C3): no loose boards on the paving - two are racked against the mural wall (front face v = -hd + 0.95)
+  add('skateboard', U(1.0), -hd + 0.95 + 0.2, 0, { lean: true });
+  add('skateboard', U(1.55), -hd + 0.95 + 0.2, 0, { lean: true });
+  add('bike', U(-9.0), V(8.4), Math.PI / 2);
   // figures in context
   add('figure_skater', U(-3.8), V(-2.5), 0.25, { lift: 1.32 });              // riding the bank top
   add('figure_sit', U(0.2), V(-0.85), 0.1, { lift: 1.32 });                  // sat on the bank's front coping
-  add('figure_cap', U(9.4), V(-0.4), -1.9, { lift: 2.5 });                   // on the vert deck
-  add('skateboard', U(9.0), V(-2.0), 0.4, { lift: 2.5 });
-  add('figure_skater', U(2.2), V(1.6), -0.5);                                 // rolling across the plaza
-  add('figure_skater', U(0.6), V(4.7), 0.22, { lift: 0.65 });                 // on the fun-box
-  add('figure_cap', U(-1.0), V(2.4), 2.7);                                    // watching the bank
-  add('figure_cap', U(-6.2), V(2.2), 0.6);
-  add('figure_std', U(-7.6), V(6.6), -0.7);
-  add('figure_sit', U(6.8), V(5.8), 0.45, { lift: 0.41 });                    // on the pallets
+  add('figure_cap', U(9.4), V(-0.4), -0.35, { lift: 2.5 });                  // on the vert deck
+  add('skateboard', U(9.3), V(-2.2), Math.PI / 2, { lift: 2.5 });             // parked on the deck, along it
+  add('figure_skater', U(2.2), V(1.6), -0.4);                                 // rolling across the plaza
+  add('figure_skater', U(0.6), V(4.7), 0, { lift: 0.65 });                    // on the fun-box
+  add('figure_cap', U(-1.0), V(2.4), 0.5);                                    // by the bank
+  add('figure_cap', U(-6.2), V(2.2), 0.4);
+  add('figure_std', U(-7.6), V(6.6), -0.4);
+  add('figure_sit', U(6.8), V(5.8), 0, { lift: 0.41 });                       // on the pallets
   add('figure_sit', U(-1.0), V(-8.15), 0, { lift: 0.49 });                    // on the bench
-  add('figure_cap', U(-9.0), V(-5.0), 0.9);
-  add('figure_cap', U(4.0), V(6.4), 2.9);
-  add('figure_std', U(6.6), V(3.8), -2.2);
+  add('figure_cap', U(-9.0), V(-5.0), 0.45);
+  add('figure_cap', U(4.0), V(6.4), 0.2);
+  add('figure_std', U(6.6), V(3.8), -0.45);
   return { style: 'pavers', pitch: 0.4, zones, items };
 }
 
@@ -178,9 +182,11 @@ function authorGarden(w, d, prng) {
   for (const [u, v] of [[-9.8, -4.2], [-3.8, -4.0], [-3.6, -8.8], [-1.6, -9.0], [1.6, -9.2], [2.8, -8.0]]) add('potted_plant', U(u), V(v), prng.range(0, 6));
   add('swing_set', U(-8.2), V(-1.4), 0);
   add('figure_sit', U(-8.95), V(-1.45), 0, { lift: 0.5, hat: 'none' });
-  add('parasol_table', U(2.6), V(-4.6), 0.3);
-  add('figure_sit', U(2.6) + 0.8 * Math.sin(2.0), V(-4.6) + 0.8 * Math.cos(2.0), 2.0 + Math.PI, { lift: 0.45 });
-  add('figure_sit', U(2.6) + 0.8 * Math.sin(5.2), V(-4.6) + 0.8 * Math.cos(5.2), 5.2 + Math.PI, { lift: 0.45 });
+  // c6: the table is turned so its two occupied chairs are on the far side, the sitters facing the front (+v)
+  // within +-75 degrees (chair angles a = 2.0 / 3.6 in the table frame -> local 1.84 / 3.44 with the -0.16 turn)
+  const tR = -0.16;
+  for (const a of [2.0 + tR, 3.6 + tR]) add('figure_sit', U(2.6) + 0.8 * Math.sin(a), V(-4.6) + 0.8 * Math.cos(a), a + Math.PI, { lift: 0.45 });
+  add('parasol_table', U(2.6), V(-4.6), tR);
   for (const [u, v, sc] of [[-10.3, -6.0, 1.0], [10.3, -5.4, 1.1], [-4.0, 6.8, 0.8], [9.9, 8.4, 0.9], [-3.4, -9.3, 0.8], [3.8, 8.0, 0.7]]) add('bush', U(u), V(v), 0, { s: sc });
   add('bird_bath', U(2.8), V(2.4), 0);
   for (const [u, v] of [[-10.2, 1.0], [-10.2, 4.6], [10.2, -1.6], [10.0, 5.6], [-2.2, -8.8], [2.2, -8.8], [-1.8, 7.4], [1.8, 7.4]]) {
@@ -201,7 +207,7 @@ function authorGarden(w, d, prng) {
   add('raised_bed', U(6.3), V(-3.4), 0, { len: 3.2, plant: 'flowers' });
   add('raised_bed', U(6.3), V(-0.8), 0, { len: 3.2, plant: 'veg' });
   add('garden_bed', U(9.4), V(-4.6), Math.PI / 2);
-  add('figure_work', U(8.4), V(-2.1), -Math.PI / 2 + 0.2, { hat: 'straw' });
+  add('figure_work', U(7.0), V(-4.75), 0, { hat: 'straw' });                  // behind the middle bed, facing it
   add('wheelbarrow', U(8.8), V(-0.4), 2.4, { load: 'soil' });
   add('chicken', U(9.6), V(1.2), 0.6);
   add('chicken', U(10.2), V(0.6), 2.4);
@@ -211,11 +217,11 @@ function authorGarden(w, d, prng) {
   // sandbox (front-left) with kids
   add('sandbox', U(-6.6), V(3.0), 0.0, { S: 3.2 });
   add('figure_sit', U(-5.8), V(3.6), 0.4, { lift: 0.3, hat: 'none' });
-  add('figure_std', U(-8.9), V(5.2), 1.1);
+  add('figure_std', U(-8.9), V(5.2), 0.45);
   // pond (front-right) with a watcher
   add('pond', U(5.4), V(5.0), 0.2, { R: 1.9 });
-  add('figure_std', U(2.8), V(6.4), 1.3);
-  add('figure_sit', U(7.9), V(7.0), -1.9, { hat: 'cap' });
+  add('figure_std', U(2.8), V(6.4), 0.5);
+  add('figure_sit', U(7.9), V(7.0), -0.5, { hat: 'cap' });
   // trees (back-right, front-left framing, side) + laundry
   add('tree_large', U(9.8), V(-8.6), 0.7);
   add('tree_medium', U(-10.4), V(7.8), 2.2);
@@ -223,7 +229,7 @@ function authorGarden(w, d, prng) {
   add('tree_medium', U(-10.6), V(-2.2), 0.3);
   add('laundry_line', U(6.0), V(-9.0), 0);
   add('bike', U(-3.0), V(8.2), 1.3);
-  add('figure_std', U(0.1), V(2.4), Math.PI + 0.1);
+  add('figure_std', U(0.1), V(2.4), 0.1);
   for (const [u, v] of [[-4.0, 0.6], [-3.4, 6.6], [3.6, 2.6], [9.6, 5.8], [-9.6, -0.2], [2.6, -2.6]]) add('flower_clump', U(u), V(v), prng.range(0, 6));
   return { style: 'grass', pitch: 0.4, zones, items };
 }
@@ -284,35 +290,36 @@ function authorFarm(w, d, prng) {
   for (const [u, v] of [[-7.6, 7.2], [-5.2, 7.2], [-8.2, 5.0], [-4.6, 5.0]]) add('produce_crate', U(u), V(v), prng.range(-0.3, 0.3));
   add('crate_stack', U(-3.6), V(4.6), 0.2);
   add('figure_farmer', U(-6.4), V(5.0), 0);
-  add('figure_std', U(-5.6), V(8.0), Math.PI + 0.3);
-  add('figure_std', U(-7.4), V(8.3), Math.PI - 0.4);
+  add('figure_std', U(-4.2), V(7.6), -0.5);                                    // customers either side of the stand
+  add('figure_std', U(-8.6), V(7.6), 0.5);
   // vehicles: pickup with hay on the cross lane, tractor in the farmyard
   add('pickup', U(-13.0), (laneV0 + laneV1) / 2, Math.PI / 2, { cargo: 'hay', color: 'brightYellow' });
-  add('figure_sit', U(-13.0) - 2.0, (laneV0 + laneV1) / 2 + 0.3, -Math.PI / 2, { lift: 1.4, hat: 'straw' }); // on the tailgate
-  add('tractor', U(5.0), V(-4.6), -0.7);
+  add('figure_sit', U(-13.0) - 2.0, (laneV0 + laneV1) / 2 + 0.3, -1.0, { lift: 1.4, hat: 'straw' });       // on the tailgate, turned to the front
+  const trR = -0.45;
+  add('tractor', U(5.0), V(-4.6), trR);
   // driver: the seat is 0.6 m behind the tractor origin, rotated with it
-  add('figure_sit', U(5.0) - 0.6 * Math.sin(-0.7), V(-4.6) - 0.6 * Math.cos(-0.7), -0.7, { lift: 1.42, hat: 'straw' });
-  add('figure_farmer', U(6.8), V(-3.0), -2.2);
+  add('figure_sit', U(5.0) - 0.6 * Math.sin(trR), V(-4.6) - 0.6 * Math.cos(trR), trR, { lift: 1.42, hat: 'straw' });
+  add('figure_farmer', U(6.8), V(-3.0), -0.4);
   // scarecrows in the fields
   add('scarecrow', U(9.4), V(8.2), 0.2);
   add('scarecrow', U(-14.0), V(-8.0), -0.3);
   add('scarecrow', U(-14.0), V(5.6), 0.4);
   // farm work: figures in the rows
-  for (const [u, v, r] of [[-16.0, -4.6, 0.6], [-11.4, -10.2, -0.4], [-6.0, -11.6, 2.4]]) add('figure_work', U(u), V(v), r, { hat: 'straw' });
-  for (const [u, v, r] of [[4.6, 5.6, -1.2], [13.4, 11.0, 2.0], [16.2, 4.8, 0.4]]) add('figure_work', U(u), V(v), r);
-  for (const [u, v, r] of [[-16.4, 4.2, 0.3], [-12.2, 7.1, -2.4]]) add('figure_work', U(u), V(v), r);
+  for (const [u, v, r] of [[-16.0, -4.6, 0.5], [-11.4, -10.2, -0.4], [-6.0, -11.6, 0.3]]) add('figure_work', U(u), V(v), r, { hat: 'straw' });
+  for (const [u, v, r] of [[4.6, 5.6, -0.4], [13.4, 11.0, 0.3], [16.2, 4.8, 0.4]]) add('figure_work', U(u), V(v), r);
+  for (const [u, v, r] of [[-16.4, 4.2, 0.3], [-12.2, 7.1, -0.4]]) add('figure_work', U(u), V(v), r);
   add('wheelbarrow', U(-12.0), V(3.4), 1.0, { load: 'hay' });
   add('wheelbarrow', U(3.2), V(4.0), -0.6, { load: 'soil' });
   // chickens in the farmyard + a kid
   for (let k = 0; k < 9; k++) add('chicken', U(10.0 + (k % 5) * 1.4) + prng.range(-0.5, 0.5), V(-3.0 - Math.floor(k / 5) * 1.2) + prng.range(-0.4, 0.4), prng.range(0, 6));
   add('figure_std', U(13.2), V(-2.0), 0.4);
-  add('figure_farmer', U(15.6), V(-5.2), -0.9);
+  add('figure_farmer', U(15.6), V(-5.2), -0.45);
   add('water_trough', U(16.6), V(-2.2), Math.PI / 2);
   // people on the lanes
-  add('figure_std', U(-1.3), V(10.6), Math.PI);
+  add('figure_std', U(-1.3), V(10.6), 0);
   add('figure_farmer', U(-0.9), V(-6.8), 0.1);
-  add('figure_std', U(2.4), V(0.2), -Math.PI / 2);
-  add('figure_cap', U(-17.2), V(12.4), 1.2);
+  add('figure_std', U(2.4), V(0.2), -0.4);
+  add('figure_cap', U(-17.2), V(12.4), 0.45);
   // trees: back corners, by the farmyard and lane ends
   add('tree_large', U(-18.6), V(13.9), 0.4);
   add('tree_medium', U(1.6), V(-13.6), 2.0);
@@ -323,9 +330,10 @@ function authorFarm(w, d, prng) {
   return { style: 'grass', pitch: 0.8, zones, items };
 }
 
-/** Author one set-piece. Returns { style, zones, items } in local metres. */
+/** Author one set-piece. Returns { style, zones, items } in local metres. LOOP c6 (B1): every figure carries `look`
+ * (its local yaw), so its head turns toward the set-piece front - the side both hero cameras look from. */
 export function authorSetPiece(type, w, d, prng) {
-  if (type === 'skate') return authorSkate(w, d, prng);
-  if (type === 'garden') return authorGarden(w, d, prng);
-  return authorFarm(w, d, prng);
+  const plan = type === 'skate' ? authorSkate(w, d, prng) : type === 'garden' ? authorGarden(w, d, prng) : authorFarm(w, d, prng);
+  for (const it of plan.items) if (it.kind.startsWith('figure_')) it.look = Math.round(Math.atan2(Math.sin(it.r), Math.cos(it.r)) * 1000) / 1000;
+  return plan;
 }
