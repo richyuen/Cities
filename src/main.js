@@ -87,6 +87,9 @@ async function boot() {
   // Main loop
   let last = performance.now();
   app.tick = (forcedDt, once = false) => {
+    // Tooling hold (__city.holdAfter / release): the loop keeps scheduling but renders nothing, so a screenshot shows
+    // exactly the frame the hold was set on, independent of fps (LOOP c6 zoning critic issue 2).
+    if (app.frozen && !once) { requestAnimationFrame(() => app.tick()); return; }
     const now = performance.now();
     let dt = forcedDt ?? Math.min(0.1, (now - last) / 1000);
     last = now;

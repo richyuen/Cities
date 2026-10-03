@@ -95,14 +95,24 @@ export async function openApp(opts = {}) {
   }
 
   async function capture(out, { settle = 45, sampleMs = 1000 } = {}) {
-    await page.evaluate((n) => window.__city.frames(n), settle);
+    // Screenshot first, on an exact held frame (settle frames after staging), THEN sample fps/gpu stats. Sampling
+    // first let the number of rendered frames scale with fps, which moved the sky/cloud/traffic/signal phase whenever
+    // performance changed (LOOP c6 zoning critic issue 2). Falls back to the old order on builds without holdAfter.
+    const canHold = await page.evaluate(() => typeof window.__city.holdAfter === 'function');
+    if (canHold) await page.evaluate((n) => window.__city.holdAfter(n), settle);
+    else await page.evaluate((n) => window.__city.frames(n), settle);
+    fs.mkdirSync(path.dirname(out), { recursive: true });
+    const heldFrame = await page.evaluate(() => window.__city.stats().frame);
+    if (canHold) await page.screenshot({ path: out, type: 'png' });
+    // FrameStats.fps spans the last 90 frame timestamps, so the held gap must roll out before sampling.
+    if (canHold) await page.evaluate(() => { window.__city.release(); return window.__city.frames(100); });
     const f0 = await page.evaluate(() => window.__city.stats().frame);
     const s0 = Date.now();
     await new Promise((r) => setTimeout(r, sampleMs));
     const stats = await page.evaluate(() => window.__city.stats());
     const wallFps = ((stats.frame - f0) * 1000) / (Date.now() - s0);
-    fs.mkdirSync(path.dirname(out), { recursive: true });
-    await page.screenshot({ path: out, type: 'png' });
+    if (!canHold) await page.screenshot({ path: out, type: 'png' });
+    stats.frame = canHold ? heldFrame : stats.frame;
     const errors = [...new Set([...stats.errors, ...pageErrors, ...consoleErrors])];
     const log = {
       out, url: page.url(), capturedAt: new Date().toISOString(), readyMs, gpu,

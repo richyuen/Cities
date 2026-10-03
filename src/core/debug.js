@@ -39,6 +39,10 @@ export function installDebugApi(ctx, registry, app) {
     clearErrors() { captured.errors.length = 0; captured.warnings.length = 0; },
     async showcase(id, variant = 'default') { return app.stageShowcase(id, variant); },
     renderOnce() { app.tick(1 / 60, true); },
+    /** Tooling: render n more frames, then hold the loop on that exact frame (resolves with the frame number). */
+    holdAfter(n = 1) { return new Promise((res) => { app.after(n, () => { app.frozen = true; res(app.frame); }); }); },
+    /** Tooling: resume the render loop after holdAfter(). */
+    release() { app.frozen = false; },
     /** wait n frames; returns a promise */
     frames(n = 1) { return new Promise((res) => { app.after(n, res); }); },
     modules: registry.records,

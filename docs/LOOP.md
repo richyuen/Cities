@@ -147,6 +147,13 @@ flower blooms; roads UV steps; environment rig terrain; terrain closeup framing.
   loads. That explains intermittent 0.2–0.3 meanAbs in road corners of shot-list frames (e.g. set7 vs c5crit3 02) and
   about 0.03 batch means. Cars are outside the judged subjects. Owner: traffic (debounce on frames under `fixeddt`);
   until it is fixed, attribute road-corner-only diffs to this, never to the module under test.
+- **Capture order fixed (c6, zoning critic issue 2):** `capture()` now holds the render loop on the exact settle
+  frame (`__city.holdAfter(n)` / `release()`, an `app.frozen` flag in src/main.js), screenshots it, then lets 100 frames
+  roll the held gap out of FrameStats' 90-frame window before sampling fps/gpuMs. Previously the free-running sample
+  window rendered a number of frames proportional to fps before the screenshot, so any perf change moved the sky,
+  cloud, traffic and signal phase. Verified: night skyline, two loads plus a 3x sample window → identical (frame 51,
+  0.0000). Game batch repeat 0.0047 (c6h3 vs c6h4), minFps 121–126. **New baseline: `shots/game/c6h3`** (default, plates hidden).
+  Pre-c6h batches are not pixel-comparable (different captured frame).
 - `--param k=v` (repeatable) on `tools/shot.mjs`/`tools/critic.mjs` forwards URL flags (e.g. `--param nosp=1`).
 - Baseline: `shots/game/r30` (game batch) + `shots/beauty/<ver>` (hero shots). Pre-r28 whole-game batches
   are pixel-incomparable after the V5 preset change.
