@@ -309,3 +309,37 @@ export const PRESETS = {
     return { pos: [0, y + 9, 12], target: [40, y + 1.4, -14], fov: 48 };
   },
 };
+
+// ---- LOOP cycle 5: 'setpieces' variant -------------------------------------------------------------------------
+// One of each authored set-piece side by side on a flattened plot (all facing +z, so the noon sun front-lights
+// them and the 17.5 sun rakes in from -x), plus a level-1 house abutting the garden's back edge so the garden hero
+// frames "house + garden" the way the demo city will. Camera presets `props:sp-<type>` (index.js) pick the
+// sun-side mirrored hero of each set-piece's registry entry.
+export const SP_SHOWCASE = [
+  { type: 'skate', id: 'show-skate', x: -36, z: 2, rot: 0, w: 24, d: 20 },
+  { type: 'garden', id: 'show-garden', x: -4, z: 2, rot: 0, w: 24, d: 20 },
+  { type: 'farm', id: 'show-farm', x: 36, z: 2, rot: 0, w: 40, d: 30 },
+];
+
+export const SHOW_HOUSES = [[-4, -12, 7, 'sp-show-house-a'], [-20, -20, 5, 'sp-show-house-b']];
+
+export function stageSetPieces(ctx, api) {
+  ctx.world.clearContent();
+  stagedScene = 'setpieces';
+  const world = ctx.world;
+  const cs = world.cellSize;
+  const terrainApi = ctx.modules.get('terrain')?.status === 'ok' ? ctx.modules.get('terrain').api : null;
+  if (terrainApi?.flatten) {
+    const i0 = Math.floor((-72 - world.minX) / cs), i1 = Math.ceil((80 - world.minX) / cs) - 1;
+    const j0 = Math.floor((-40 - world.minZ) / cs), j1 = Math.ceil((40 - world.minZ) / cs) - 1;
+    terrainApi.flatten(i0, j0, i1, j1);
+  }
+  // house behind the garden (cell x in [-8, 0], z in [-16, -8]) + a neighbour, both real building records
+  // Explicit ids: the buildings module seeds each lot's look from `${seed}:${id}`, so a fixed id keeps the house
+  // identical whatever was staged before (fix round 1: the auto id `b<n>` depended on stage order).
+  for (const [x, z, seed, id] of SHOW_HOUSES) {
+    const i = Math.round((x - world.minX) / cs - 0.5), j = Math.round((z - world.minZ) / cs - 0.5);
+    world.addBuilding({ id, i, j, w: 1, d: 1, zone: 'r', level: 1, kind: 'house', seed });
+  }
+  for (const spec of SP_SHOWCASE) api.placeSetPiece(spec);
+}

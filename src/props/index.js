@@ -18,7 +18,9 @@ import {
   populateAlongRoad, populateIntersectionNode, populatePark, forgetEdge,
   populateYard, populateCivicEntrance, populateServiceBack, populatePedestrians, FIGURE_CAP,
 } from './populate.js';
-import { stageStreet, stagePark, stageYards, PRESETS } from './showcase.js';
+import { stageStreet, stagePark, stageYards, stageSetPieces, PRESETS } from './showcase.js';
+import { SP_FIGURE_KINDS, SP_NOFADE_KINDS } from './spkinds.js';
+import { SP_TYPES, clampSize, heroCamera, authorSetPiece } from './setpieces.js';
 
 const KIND_SET = new Set(KIND_NAMES);
 const LOD_NEAR = 170, LOD_FAR = 220, LOD_MOVE = 6;
@@ -39,6 +41,10 @@ const SERVICE_KINDS = new Set(['power_plant', 'water_tower', 'plant', 'warehouse
 const PLACE_SEP = {
   fence_picket: 1.2, garden_bed: 1.5, laundry_line: 2.2, picnic_table: 2.0, crate_stack: 1.1,
   bike: 0.8, figure: 0.7, bench: 1.2, flower_bed: 1.2, trash_bin: 0.7,
+  // LOOP cycle 5 set-piece kinds (only ever consulted when a C2 prop lands next to a set-piece edge; the rect
+  // itself is rejected outright by placementFree)
+  windmill: 3.2, barn: 4.8, silo: 2.0, pergola: 2.8, skate_bank: 4.2, skate_quarter: 3.2, mural_wall: 2.0,
+  pickup: 2.4, tractor: 2.0, sandbox: 2.0, pond: 2.4, swing_set: 2.4, parasol_table: 1.6, hay_stack: 1.4,
 };
 const PLACE_SEP_DEFAULT = 1.2;
 // Fix round issue 3: two fence panels must never interpenetrate (a panel spans 2.0 m) — the separation test
@@ -50,11 +56,22 @@ const FENCE_SEP = 2.02;
 // therefore their exact per-instance variation).
 const C2_ID_PREFIX = 'c2p:';
 function isC2Prop(p) { return typeof p.id === 'string' && p.id.startsWith(C2_ID_PREFIX); }
+// LOOP cycle 5 set-pieces own their props through a second content-derived prefix (`sp:<setPieceId>:...`): they
+// never consume world._ids.prop either, and they are settled/swept per set-piece (deck Y, never terrain snap).
+const SP_ID_PREFIX = 'sp:';
+function isSpProp(p) { return typeof p.id === 'string' && p.id.startsWith(SP_ID_PREFIX); }
+const FIGURE_KINDS = new Set(['figure', ...SP_FIGURE_KINDS]);
+function isFigureKind(kind) { return FIGURE_KINDS.has(kind); }
 /** Variation seed key for rebuild(): C2 props use kind + rounded position (stable under id churn and across
- * restages); everything else keeps the id it had pre-C2 (also stable, because C2 props never consume ids). */
+ * restages); set-piece props use their content-derived id; everything else keeps the id it had pre-C2 (also
+ * stable, because neither C2 nor set-piece props consume ids). */
 function variationKey(p) {
-  return isC2Prop(p) ? `${p.kind}:${p.x.toFixed(2)}:${p.z.toFixed(2)}` : String(p.id);
+  if (isC2Prop(p)) return `${p.kind}:${p.x.toFixed(2)}:${p.z.toFixed(2)}`;
+  return String(p.id);
 }
+/** Deck surface height above the highest terrain sample under a set-piece: the tile layer's top. 0.26 m buries
+ * the 0.17 m terrain studs inside the plinth with margin. */
+const SP_DECK_RAISE = 0.26;
 
 const S = {
   ctx: null, group: null, rng: null, unsub: [],
@@ -83,6 +100,13 @@ const S = {
   detailSettle: null,     // { fixed, removed } of the last settleDetail()
   detailSettledOnce: false, // set by the first settleDetail(): live road edits re-settle afterwards
   roadSnap: null, roadSnapDirty: true, // local road centreline snapshot for the carriageway test
+  // LOOP cycle 5 set-pieces
+  spOff: false,           // ?nosp=1: verification flag - placeSetPiece() becomes a no-op
+  setPieces: new Map(),   // id -> entry { type, id, x, z, rot, w, d, deckY, fixedDeck, props:[ids], hero, heroAlt, counts }
+  spEvict: [],            // non-set-piece props that landed inside a set-piece rect (removed in update())
+  spSettle: null,         // { pieces, fixed } of the last set-piece settle
+  spPlacing: false,       // true while placeSetPiece() adds its own props (the adopt hook stays out of the way)
+  spResettle: false,      // terrain changed under the world: re-settle the set-piece decks on the next update
 };
 
 function idxKey(ix, iz) { return `${ix}:${iz}`; }
@@ -145,6 +169,7 @@ function unindexBuilding(b) {
  * lookup used to cost most of the boot: 3709 roads.api.snapToRoad calls, each rebuilding the lane network after
  * a terrain mark). `settleDetail()` re-resolves every C2 height once against the finished roads/terrain. */
 function placementFree(kind, x, z) {
+  if (S.setPieces.size && setPieceAt(x, z, 0.5)) return false; // never dress onto an authored set-piece deck
   const bList = S.bIdx.get(idxOf(x, z));
   if (bList) {
     for (const bb of bList) {
@@ -430,6 +455,7 @@ function addDetailForBuilding(b) {
  * and `showcase()` calls it after staging. */
 function settleDetail() {
   const world = S.ctx.world;
+  settleSetPieces();
   if (S.c2Off) return 0;
   const t0 = performance.now();
   const seaLevel = Number.isFinite(world.seaLevel) ? world.seaLevel : 0;
@@ -509,6 +535,7 @@ function buriedUnderRoadDeck(x, z) {
 }
 
 function onBuildingSpawned({ building }) {
+  if (S.setPieces.size) sweepSetPiecesForBuilding(building); // a lot claimed over a set-piece demolishes it
   indexBuilding(building);
   sweepDetailInFootprint(building); // a later lot row can claim a former neighbour's yard band
   addDetailForBuilding(building);
@@ -541,7 +568,7 @@ function rebuildIndexes() {
   S.figureCount = 0;
   for (const p of S.ctx.world.props.values()) {
     indexProp(p);
-    if (p.kind === 'figure') S.figureCount++;
+    if (isFigureKind(p.kind)) S.figureCount++;
   }
   for (const b of S.ctx.world.buildings.values()) indexBuilding(b);
 }
@@ -624,6 +651,293 @@ function skirtCovers(lateral, fp, plate, ground) {
 
 function markDirty() { S.dirty = true; S.lastEvent = performance.now(); }
 
+// ---- LOOP cycle 5: authored hero set-pieces ------------------------------------------------------------------
+/** World -> set-piece-local (u right, v front). */
+function spLocal(e, x, z) {
+  const dx = x - e.x, dz = z - e.z, c = Math.cos(e.rot), s = Math.sin(e.rot);
+  return { u: dx * c - dz * s, v: dx * s + dz * c };
+}
+function spWorld(e, u, v) {
+  const c = Math.cos(e.rot), s = Math.sin(e.rot);
+  return { x: e.x + u * c + v * s, z: e.z - u * s + v * c };
+}
+/** The set-piece whose (margin-expanded) rect contains (x,z), or null. */
+function setPieceAt(x, z, margin = 0) {
+  for (const e of S.setPieces.values()) {
+    const { u, v } = spLocal(e, x, z);
+    if (Math.abs(u) <= e.w / 2 + margin && Math.abs(v) <= e.d / 2 + margin) return e;
+  }
+  return null;
+}
+/** Terrain range under a rect (2 m sample grid incl. the edges): { min, max }. */
+function spGroundRange(e) {
+  let min = Infinity, max = -Infinity;
+  const nu = Math.max(2, Math.ceil(e.w / 2)), nv = Math.max(2, Math.ceil(e.d / 2));
+  for (let j = 0; j <= nv; j++) {
+    for (let i = 0; i <= nu; i++) {
+      const p = spWorld(e, -e.w / 2 + (i / nu) * e.w, -e.d / 2 + (j / nv) * e.d);
+      const g = groundY(p.x, p.z);
+      if (!Number.isFinite(g)) continue;
+      if (g < min) min = g;
+      if (g > max) max = g;
+    }
+  }
+  return { min: Number.isFinite(min) ? min : 0, max: Number.isFinite(max) ? max : 0 };
+}
+function spCorners(e) {
+  return [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => spWorld(e, (a * e.w) / 2, (b * e.d) / 2));
+}
+/** Separating-axis overlap of the set-piece rect and an axis-aligned box (building footprint). */
+function spOverlapsAabb(e, bb, margin = 0) {
+  const A = spCorners(e);
+  const B = [{ x: bb.minX - margin, z: bb.minZ - margin }, { x: bb.maxX + margin, z: bb.minZ - margin },
+    { x: bb.maxX + margin, z: bb.maxZ + margin }, { x: bb.minX - margin, z: bb.maxZ + margin }];
+  const c = Math.cos(e.rot), s = Math.sin(e.rot);
+  for (const [ax, az] of [[1, 0], [0, 1], [c, -s], [s, c]]) {
+    let a0 = Infinity, a1 = -Infinity, b0 = Infinity, b1 = -Infinity;
+    for (const p of A) { const t = p.x * ax + p.z * az; a0 = Math.min(a0, t); a1 = Math.max(a1, t); }
+    for (const p of B) { const t = p.x * ax + p.z * az; b0 = Math.min(b0, t); b1 = Math.max(b1, t); }
+    if (a1 <= b0 || b1 <= a0) return false;
+  }
+  return true;
+}
+/** Does a road edge's rendered footprint touch the set-piece rect? (1 m samples along the centreline.) */
+function spTouchesEdge(e, edge) {
+  const world = S.ctx.world;
+  const na = world.roads.nodes.get(edge.a), nb = world.roads.nodes.get(edge.b);
+  if (!na || !nb) return false;
+  const snap = edgeSnapshot(edge, na, nb);
+  const len = Math.hypot(nb.x - na.x, nb.z - na.z);
+  const n = Math.max(1, Math.ceil(len));
+  for (let k = 0; k <= n; k++) {
+    const t = k / n;
+    const { u, v } = spLocal(e, na.x + (nb.x - na.x) * t, na.z + (nb.z - na.z) * t);
+    const du = Math.max(0, Math.abs(u) - e.w / 2), dv = Math.max(0, Math.abs(v) - e.d / 2);
+    if (Math.hypot(du, dv) < snap.fp) return true;
+  }
+  return false;
+}
+/** Why a set-piece cannot sit at this rect: building footprints, road footprints, water. [] = free. */
+/** Cells whose 8 m square overlaps the (margin-expanded) set-piece rect: [{ i, j, cell }]. */
+function spCells(e, margin = 0) {
+  const world = S.ctx.world, cs = world.cellSize;
+  const ex = { ...e, w: e.w + 2 * margin, d: e.d + 2 * margin };
+  let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+  for (const p of spCorners(ex)) { x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); z0 = Math.min(z0, p.z); z1 = Math.max(z1, p.z); }
+  const out = [];
+  const i0 = Math.floor((x0 - world.minX) / cs), i1 = Math.floor((x1 - world.minX) / cs);
+  const j0 = Math.floor((z0 - world.minZ) / cs), j1 = Math.floor((z1 - world.minZ) / cs);
+  for (let j = j0; j <= j1; j++) {
+    for (let i = i0; i <= i1; i++) {
+      const cell = world.cellAt(i, j);
+      if (!cell) continue;
+      const bb = { minX: world.minX + i * cs, maxX: world.minX + (i + 1) * cs, minZ: world.minZ + j * cs, maxZ: world.minZ + (j + 1) * cs };
+      if (spOverlapsAabb(ex, bb)) out.push({ i, j, cell });
+    }
+  }
+  return out;
+}
+/** Why a set-piece cannot sit at this rect. [] = free. Reported (fix round 1):
+ *  - `zone:i,j`      any zoned cell (cell.zone set): its zoning-overlay plate would render through the deck, and a
+ *                    building grown there would demolish the set-piece;
+ *  - `cell:<type>:i,j` road (verge/sidewalk), water or building cells;
+ *  - `building:<id>`, `road:<edgeId>` footprint overlaps, and `water` for below-sea-level ground.
+ *  `margin` (metres) grows the rect for every test, so a caller can demand e.g. a 1-cell (8 m) clearance. */
+function setPieceBlockers(e, margin = 0) {
+  const world = S.ctx.world;
+  const ex = margin > 0 ? { ...e, w: e.w + 2 * margin, d: e.d + 2 * margin } : e;
+  const out = [];
+  for (const { i, j, cell } of spCells(e, margin)) {
+    if (cell.zone) out.push(`zone:${i},${j}`);
+    if (cell.type === 'road' || cell.type === 'water' || cell.type === 'building') out.push(`cell:${cell.type}:${i},${j}`);
+  }
+  for (const b of world.buildings.values()) if (spOverlapsAabb(ex, buildingBounds(b))) out.push(`building:${b.id}`);
+  for (const edge of world.roads.edges.values()) if (spTouchesEdge(ex, edge)) out.push(`road:${edge.id}`);
+  const nu = Math.max(2, Math.ceil(ex.w / 4)), nv = Math.max(2, Math.ceil(ex.d / 4));
+  const seaLevel = Number.isFinite(world.seaLevel) ? world.seaLevel : 0;
+  let water = false;
+  for (let j = 0; j <= nv && !water; j++) {
+    for (let i = 0; i <= nu && !water; i++) {
+      const p = spWorld(ex, -ex.w / 2 + (i / nu) * ex.w, -ex.d / 2 + (j / nv) * ex.d);
+      if (groundY(p.x, p.z) < seaLevel - 0.05) water = true;
+    }
+  }
+  if (water) out.push('water');
+  return out;
+}
+/** A cell zoned after placement (a player painting zones over the lot) would put its overlay plate through the
+ * deck and later grow a building there: treat it like a road/building claim and demolish the set-piece. */
+function sweepSetPiecesForZone(i, j) {
+  const world = S.ctx.world, cs = world.cellSize;
+  const bb = { minX: world.minX + i * cs, maxX: world.minX + (i + 1) * cs, minZ: world.minZ + j * cs, maxZ: world.minZ + (j + 1) * cs };
+  for (const e of [...S.setPieces.values()]) if (spOverlapsAabb(e, bb)) removeSetPiece(e.id, `demolished by zoning cell ${i},${j}`);
+}
+function spPublic(e) {
+  return {
+    type: e.type, id: e.id, x: e.x, z: e.z, rot: e.rot, w: e.w, d: e.d, deckY: e.deckY,
+    hero: e.hero, heroAlt: e.heroAlt, counts: e.counts ? { ...e.counts, kinds: { ...e.counts.kinds } } : null,
+  };
+}
+
+function placeSetPiece(spec = {}) {
+  if (S.spOff || !spec) return null;
+  const world = S.ctx.world;
+  const type = spec.type;
+  if (!SP_TYPES.includes(type)) { S.ctx.error(`[props] placeSetPiece: unknown type "${type}"`); return null; }
+  const id = String(spec.id ?? `${type}-${S.setPieces.size}`);
+  if (S.setPieces.has(id)) return spPublic(S.setPieces.get(id)); // idempotent per id
+  const x = Number(spec.x), z = Number(spec.z);
+  if (!Number.isFinite(x) || !Number.isFinite(z)) { S.ctx.error(`[props] placeSetPiece "${id}": x/z required`); return null; }
+  const { w, d } = clampSize(type, Number(spec.w), Number(spec.d));
+  const e = {
+    type, id, x, z, rot: Number(spec.rot) || 0, w, d, deckY: 0, drop: 0.4,
+    fixedDeck: Number.isFinite(spec.deckY), props: [], hero: null, heroAlt: null, counts: null,
+  };
+  const blockers = spec.force ? [] : setPieceBlockers(e, Math.max(0, Number(spec.margin) || 0));
+  if (blockers.length) {
+    S.ctx.log(`[props] placeSetPiece "${id}" refused: ${blockers.slice(0, 6).join(', ')}${blockers.length > 6 ? ' ...' : ''}`);
+    return null;
+  }
+  const g = spGroundRange(e);
+  e.deckY = e.fixedDeck ? Number(spec.deckY) : g.max + SP_DECK_RAISE;
+  e.drop = Math.max(0.3, e.deckY - g.min + 0.15);
+  // Clear whatever already stands on the rect (park scatter, yard dressing): it would poke through the deck.
+  let cleared = 0;
+  for (const p of [...world.props.values()]) {
+    if (isSpProp(p)) continue;
+    const { u, v } = spLocal(e, p.x, p.z);
+    if (Math.abs(u) <= w / 2 + 0.3 && Math.abs(v) <= d / 2 + 0.3) { world.removeProp(p.id); cleared++; }
+  }
+  // Register before adding props so the prop:added evict hook and the C2 placer already see the rect.
+  S.setPieces.set(id, e);
+  const prng = S.rng.fork(`sp:${id}`);
+  const plan = authorSetPiece(type, w, d, prng);
+  const used = new Set();
+  const addSp = (rec) => {
+    const base = `${SP_ID_PREFIX}${id}:${rec.kind}:${rec.x.toFixed(2)}:${rec.z.toFixed(2)}`;
+    let pid = base;
+    for (let n = 2; used.has(pid) || world.props.has(pid); n++) pid = `${base}:${n}`;
+    used.add(pid);
+    world.addProp({ ...rec, id: pid });
+    e.props.push(pid);
+    return pid;
+  };
+  S.spPlacing = true;
+  addSp({
+    kind: 'sp_deck', x, y: e.deckY, z, rot: e.rot, sp: id, lift: 0, w, d, style: plan.style, pitch: plan.pitch,
+    zones: plan.zones, drop: e.drop, spType: type, spFixed: e.fixedDeck, // spType/spFixed: registry rebuild on load
+  });
+  const counts = { props: 1, figures: 0, skippedFigures: 0, cleared, kinds: { sp_deck: 1 } };
+  for (const it of plan.items) {
+    if (!KIND_SET.has(it.kind)) continue;
+    if (isFigureKind(it.kind)) {
+      if (S.figureCount >= FIGURE_CAP) { counts.skippedFigures++; continue; }
+      counts.figures++;
+    }
+    const { kind, u, v, r, lift, ...fields } = it;
+    const p = spWorld(e, u, v);
+    // (prop:added -> indexProp does not count figures; the cap counter is kept here and in prop:removed)
+    if (isFigureKind(kind)) S.figureCount++;
+    addSp({ ...fields, kind, x: p.x, y: e.deckY + (lift || 0), z: p.z, rot: e.rot + (r || 0), sp: id, lift: lift || 0 });
+    counts.props++;
+    counts.kinds[kind] = (counts.kinds[kind] || 0) + 1;
+  }
+  S.spPlacing = false;
+  e.counts = counts;
+  e.hero = heroCamera(e, 1);
+  e.heroAlt = heroCamera(e, -1);
+  markDirty();
+  return spPublic(e);
+}
+
+/** A set-piece prop arriving from outside placeSetPiece() (a save file being applied): rebuild the registry entry
+ * from its deck record (kind 'sp_deck' carries type/rect/fixed-deck) and adopt the props that follow it. */
+function spAdopt(p) {
+  let e = S.setPieces.get(p.sp);
+  if (!e) {
+    if (p.kind !== 'sp_deck' || !SP_TYPES.includes(p.spType) || !(p.w > 0) || !(p.d > 0)) return;
+    e = {
+      type: p.spType, id: p.sp, x: p.x, z: p.z, rot: p.rot || 0, w: p.w, d: p.d, deckY: p.y, drop: p.drop || 0.4,
+      fixedDeck: !!p.spFixed, props: [], hero: null, heroAlt: null,
+      counts: { props: 0, figures: 0, skippedFigures: 0, cleared: 0, kinds: {} },
+    };
+    S.setPieces.set(e.id, e);
+    e.hero = heroCamera(e, 1);
+    e.heroAlt = heroCamera(e, -1);
+  }
+  if (e.props.includes(p.id)) return;
+  e.props.push(p.id);
+  e.counts.props++;
+  e.counts.kinds[p.kind] = (e.counts.kinds[p.kind] || 0) + 1;
+  if (isFigureKind(p.kind)) { e.counts.figures++; S.figureCount++; }
+}
+
+function removeSetPiece(id, why = 'removed') {
+  const e = S.setPieces.get(id);
+  if (!e) return false;
+  S.setPieces.delete(id);
+  for (const pid of e.props) S.ctx.world.removeProp(pid);
+  S.ctx.log(`[props] set-piece "${id}" ${why}`);
+  markDirty();
+  return true;
+}
+
+/** Deck Y for every set-piece (auto decks follow the finished terrain) and every sp: prop at deckY + lift -
+ * never snapped to the terrain/road surface. Runs inside settleDetail() (also with ?noc2=1). */
+function settleSetPieces() {
+  if (!S.setPieces.size) { S.spSettle = { pieces: 0, fixed: 0 }; return 0; }
+  const world = S.ctx.world;
+  let fixed = 0;
+  for (const e of S.setPieces.values()) {
+    const g = spGroundRange(e);
+    if (!e.fixedDeck) e.deckY = g.max + SP_DECK_RAISE;
+    e.drop = Math.max(0.3, e.deckY - g.min + 0.15);
+    for (const pid of e.props) {
+      const p = world.props.get(pid);
+      if (!p) continue;
+      const y = e.deckY + (p.lift || 0);
+      if (Math.abs(p.y - y) > 1e-4) { p.y = y; fixed++; }
+      if (p.kind === 'sp_deck' && Math.abs((p.drop || 0) - e.drop) > 1e-4) { p.drop = e.drop; fixed++; }
+    }
+    e.hero = heroCamera(e, 1);
+    e.heroAlt = heroCamera(e, -1);
+  }
+  if (fixed) markDirty();
+  S.spSettle = { pieces: S.setPieces.size, fixed };
+  return fixed;
+}
+
+function sweepSetPiecesForBuilding(b) {
+  const bb = buildingBounds(b);
+  for (const e of [...S.setPieces.values()]) if (spOverlapsAabb(e, bb)) removeSetPiece(e.id, `demolished by building ${b.id}`);
+}
+function sweepSetPiecesForEdge(edge) {
+  for (const e of [...S.setPieces.values()]) if (spTouchesEdge(e, edge)) removeSetPiece(e.id, `demolished by road ${edge.id}`);
+}
+
+/** Sun-side hero for a set-piece: of the two mirrored 3/4 heroes, the one whose camera sits more toward the sun. */
+function sunSideHero(e, clock) {
+  const sun = clock?.sunDir;
+  if (!sun) return e.hero;
+  const score = (h) => {
+    const dx = h.pos[0] - h.target[0], dz = h.pos[2] - h.target[2];
+    const l = Math.hypot(dx, dz) || 1;
+    return (dx * sun.x + dz * sun.z) / l;
+  };
+  return score(e.heroAlt) > score(e.hero) + 1e-3 ? e.heroAlt : e.hero;
+}
+const SP_PRESETS = {};
+for (const type of SP_TYPES) {
+  SP_PRESETS[`props:sp-${type}`] = (world, clock) => {
+    const e = [...S.setPieces.values()].find((p) => p.type === type);
+    if (!e) {
+      const y = world.getHeight(0, 0);
+      return { pos: [30, y + 20, 30], target: [0, y, 0], fov: 50 };
+    }
+    return sunSideHero(e, clock);
+  };
+}
+
 // Flower heads are per-instance-scattered stem+bloom props (kinds.js 'flowerbed-flower' role), pushed straight
 // into the same role buckets as every other part so they render as a real InstancedMesh, not flat stud chips.
 function addFlowerHeads(base, prng, buckets, ctx) {
@@ -688,14 +1002,16 @@ function rebuild() {
     // the prop id for everything else (which C2 props never shift — see variationKey(), fix round issue 2).
     const prng = S.rng.fork(variationKey(prop));
     const base = mat(prop.x, prop.y, prop.z, 0, prop.rot || 0, 0);
-    const parts = buildKindParts(prop.kind, prng);
+    const parts = buildKindParts(prop.kind, prng, prop);
+    // Tall set-piece landmarks (windmill/barn/silo) and the deck plates are exempt from the distance fade.
+    const noFade = SP_NOFADE_KINDS.has(prop.kind);
     for (const part of parts) {
       const list = buckets.get(part.role);
       if (!list) continue;
       const world4 = part.local ? new THREE.Matrix4().multiplyMatrices(base, part.local) : base.clone();
       const pos = new THREE.Vector3().setFromMatrixPosition(world4);
       const color = part.color ? ctx.materials.color(part.color) : null;
-      list.push({ pos, base: world4, color });
+      list.push(noFade ? { pos, base: world4, color, noFade } : { pos, base: world4, color });
     }
     if (prop.kind === 'flower_bed') addFlowerHeads(base, prng, buckets, ctx);
     if (prop.kind === 'fountain') addFountainFx(prop);
@@ -743,7 +1059,7 @@ function applyLod(force) {
     let changed = false;
     for (let k = 0; k < list.length; k++) {
       const inst = list[k];
-      const f = exempt ? 1 : fadeFactor(inst.pos.distanceTo(camPos));
+      const f = exempt || inst.noFade ? 1 : fadeFactor(inst.pos.distanceTo(camPos));
       if (f >= 0.999) { def.mesh.setMatrixAt(k, inst.base); } else {
         _outM.copy(inst.base).multiply(_scaleM.makeScale(f, f, f));
         def.mesh.setMatrixAt(k, _outM);
@@ -786,6 +1102,9 @@ function updateLightPool(force) {
 function applyNightMaterials(isNight) {
   const bulb = S.roleTable.get('lamp-bulb');
   if (bulb) bulb.material.emissiveIntensity = isNight ? bulb.dynamic.night : bulb.dynamic.day;
+  // set-piece wheat: its warm emissive floor is a daylight colour fix only (materials.js) - dark at night
+  const wheat = S.roleTable.get('sp-wheat');
+  if (wheat) wheat.material.emissiveIntensity = isNight ? 0.0 : 0.55;
   S.trafficPhaseName = null; // re-apply the traffic lenses for the new day/night state
   // The lens state is applied here (not only on phase change): captures pause the clock, so props.update()
   // may never run between setTime() and the capture — boot/paused shots otherwise keep the boot lens state.
@@ -863,6 +1182,7 @@ function onRoadChanged({ edgeId, edge, prev }) {
   forgetEdge(edgeId);
   populateAlongRoad(S.ctx, api.addProp, S.rng, edgeId);
   sweepDetailNearEdge(edge); // C2: the widened cross-section may now cover yard props
+  if (S.setPieces.size) sweepSetPiecesForEdge(edge);
   respawnSignals([edge.a, edge.b]);
   if (S.detailSettledOnce) settleDetail(); // an in-place upgrade can also move the surface under C2 props
 }
@@ -880,6 +1200,7 @@ function onRoadAdded({ edgeId, edge, reason }) {
   // C2: a road added after the dressing may have paved through a yard (alleys/parks/connectors are added in
   // later citygen phases than some districts' lots). Sweep only the C2-owned props that now sit on a carriageway.
   if (e) sweepDetailNearEdge(e);
+  if (e && S.setPieces.size) sweepSetPiecesForEdge(e); // a road paved through a set-piece demolishes it
   if (kind === 'path') return;
   // A split/merge event is the core stitching an existing road into a junction: props already exist along that
   // line, so repopulating the halves would duplicate lamps near the new junction. Signals still need the new
@@ -981,12 +1302,33 @@ const api = {
     }
     return out;
   },
+  /** LOOP cycle 5: author one hero set-piece inside the rect { type: 'skate'|'garden'|'farm', id, x, z, rot, w, d,
+   * deckY?, margin?, force? } (w/d are clamped to the type's minimum; margin = required clearance in metres). Deterministic (`rng.fork('sp:'+id)`), idempotent per
+   * id, content-derived `sp:` prop ids (never world._ids.prop). Refuses (returns null, logs why) when the rect
+   * touches a building footprint, a road footprint or water, unless `force`. Returns the registry entry. */
+  placeSetPiece(spec) { return placeSetPiece(spec); },
+  /** Registry of placed set-pieces: [{ type, id, x, z, rot, w, d, deckY, hero: {pos, target, fov}, heroAlt, counts }]. */
+  setPieces() { return [...S.setPieces.values()].map(spPublic); },
+  /** Remove a set-piece and all its props. */
+  removeSetPiece(id) { return removeSetPiece(String(id)); },
+  /** Why a set-piece spec cannot be placed ([] = free). Read-only. */
+  setPieceBlockers(spec = {}) {
+    if (!SP_TYPES.includes(spec.type)) return ['type'];
+    const { w, d } = clampSize(spec.type, Number(spec.w), Number(spec.d));
+    return setPieceBlockers({ x: Number(spec.x), z: Number(spec.z), rot: Number(spec.rot) || 0, w, d }, Math.max(0, Number(spec.margin) || 0));
+  },
+  /** Sun-side hero camera for a placed set-piece at the current time of day. */
+  setPieceHero(id) {
+    const e = S.setPieces.get(String(id));
+    return e ? sunSideHero(e, S.ctx.clock) : null;
+  },
   stats() {
     const byKind = {};
-    let c2 = 0;
+    let c2 = 0, sp = 0, spFigures = 0;
     for (const p of S.ctx.world.props.values()) {
       byKind[p.kind] = (byKind[p.kind] || 0) + 1;
       if (isC2Prop(p)) c2++;
+      if (isSpProp(p)) { sp++; if (isFigureKind(p.kind)) spFigures++; }
     }
     let drawCalls = 0;
     for (const def of S.roleTable.values()) if (def.mesh?.count) drawCalls++;
@@ -1002,6 +1344,8 @@ const api = {
       figures: byKind.figure || 0, yardProps, detailedBuildings: S.yardByBuilding.size,
       figureCap: FIGURE_CAP, detailMs: Math.round((S.detailMs || 0) * 10) / 10,
       detailSettle: S.detailSettle || null,
+      // LOOP cycle 5 set-pieces (all zero in a world without set-pieces)
+      setPieces: S.setPieces.size, spProps: sp, spFigures, spOff: !!S.spOff, spSettle: S.spSettle || null,
     };
   },
 };
@@ -1013,13 +1357,15 @@ export default {
   deps: ['terrain', 'roads', 'buildings'],
   order: 45,
   api,
-  showcaseVariants: ['default', 'park', 'yards', 'night'],
-  presets: PRESETS,
+  showcaseVariants: ['default', 'park', 'yards', 'night', 'setpieces'],
+  presets: { ...PRESETS, ...SP_PRESETS },
 
   async init(ctx) {
     S.ctx = ctx;
     S.rng = ctx.rng.fork('props');
     S.c2Off = ctx.params?.get('noc2') === '1'; // verification flag: full game without the C2 layer
+    S.spOff = ctx.params?.get('nosp') === '1'; // verification flag: placeSetPiece() disabled (A/B attribution)
+    S.setPieces.clear(); S.spEvict.length = 0; S.spSettle = null; S.spPlacing = false; S.spResettle = false;
     S.detailMs = 0; S.detailSettle = null; S.detailSettledOnce = false;
     S.roadSnap = null; S.roadSnapDirty = true;
     S.roadsApi = ctx.modules.get('roads')?.status === 'ok' ? ctx.modules.get('roads').api : null;
@@ -1053,10 +1399,20 @@ export default {
     S.trafficPhaseName = null;
 
     // C2: keep the detail-layer spatial index in sync with the world; dress every building as it spawns.
-    S.unsub.push(ctx.events.on('prop:added', ({ prop }) => { indexProp(prop); markDirty(); }));
+    S.unsub.push(ctx.events.on('prop:added', ({ prop }) => {
+      indexProp(prop);
+      // Anything another system drops onto a set-piece rect later (park scatter, street furniture) is evicted on
+      // the next update - never inside this emit, so the emitter's own bookkeeping stays consistent.
+      if (S.setPieces.size && !isSpProp(prop) && setPieceAt(prop.x, prop.z, 0)) S.spEvict.push(prop.id);
+      else if (!S.spPlacing && prop.sp && isSpProp(prop)) spAdopt(prop);
+      markDirty();
+    }));
     S.unsub.push(ctx.events.on('prop:removed', ({ prop }) => {
       unindexProp(prop);
-      if (prop.kind === 'figure' && S.figureCount > 0) S.figureCount--;
+      if (isFigureKind(prop.kind) && S.figureCount > 0) S.figureCount--;
+      // The deck is the set-piece: once it is gone (clearContent on a new city / a save being applied, or an
+      // explicit removal) the whole set-piece and its registry entry go with it, so no stale rect survives.
+      if (prop.kind === 'sp_deck' && prop.sp && S.setPieces.get(prop.sp)?.props[0] === prop.id) removeSetPiece(prop.sp, 'deck removed');
       markDirty();
     }));
     S.unsub.push(ctx.events.on('building:spawned', onBuildingSpawned));
@@ -1067,6 +1423,7 @@ export default {
     S.unsub.push(ctx.events.on('road:removed', markRoadSnapshotDirty));
     S.unsub.push(ctx.events.on('road:changed', markRoadSnapshotDirty));
     S.unsub.push(ctx.events.on('terrain:changed', markRoadSnapshotDirty));
+    S.unsub.push(ctx.events.on('terrain:changed', () => { if (S.setPieces.size) S.spResettle = true; }));
     S.unsub.push(ctx.events.on('time:changed', ({ isNight }) => {
       if (isNight !== S.wasNight) { S.wasNight = isNight; applyNightMaterials(isNight); }
     }));
@@ -1075,9 +1432,10 @@ export default {
       S.unsub.push(ctx.events.on('road:added', onRoadAdded));
       S.unsub.push(ctx.events.on('road:changed', onRoadChanged));
       S.unsub.push(ctx.events.on('world:cell', ({ i, j, cell }) => onParkCell(i, j, cell)));
-      S.unsub.push(ctx.events.on('zone:changed', ({ i, j }) => {
+      S.unsub.push(ctx.events.on('zone:changed', ({ i, j, zone }) => {
         const c = ctx.world.cellAt(i, j);
         if (c) onParkCell(i, j, c);
+        if (zone && S.setPieces.size) sweepSetPiecesForZone(i, j);
       }));
       // pick up any roads/parks that already exist (e.g. a demo city built before props initialised)
       for (const edgeId of ctx.world.roads.edges.keys()) onRoadAdded({ edgeId });
@@ -1092,6 +1450,10 @@ export default {
   },
 
   update(dt, ctx) {
+    if (S.spEvict.length) {
+      for (const id of S.spEvict.splice(0)) ctx.world.removeProp(id);
+    }
+    if (S.spResettle) { S.spResettle = false; settleSetPieces(); }
     if (S.dirty && performance.now() - S.lastEvent > 30) rebuild();
     if (S.parkDirty.size && performance.now() > S.parkFlushAt) flushParkClusters();
     applyLod(false);
@@ -1104,11 +1466,13 @@ export default {
   async showcase(ctx, variant = 'default') {
     // clearContent() (main.js) has already emptied the world; re-derive the detail index from it so a restage
     // never dresses against stale prop positions.
+    S.setPieces.clear(); S.spEvict.length = 0; // clearContent() removed their props
     rebuildIndexes();
     S.yardByBuilding.clear();
     S.pedEdges.clear();
     if (variant === 'park') stagePark(ctx, api);
     else if (variant === 'yards') stageYards(ctx, api);
+    else if (variant === 'setpieces') stageSetPieces(ctx, api);
     else stageStreet(ctx, api);
     // Staged terrain/roads are final now: settle the C2 heights once (same hook demo calls in the full game).
     settleDetail();
@@ -1134,5 +1498,6 @@ export default {
     S.signaledNodes.clear(); S.nodeSignalProps.clear(); S.parkClusters.clear(); S.parkDirty.clear();
     S.pIdx.clear(); S.bIdx.clear(); S.yardByBuilding.clear(); S.pedEdges.clear(); S.figureCount = 0;
     S.roadSnap = null; S.roadSnapDirty = true; S.detailSettle = null; S.detailSettledOnce = false;
+    S.setPieces.clear(); S.spEvict.length = 0; S.spSettle = null; S.spPlacing = false; S.spResettle = false;
   },
 };

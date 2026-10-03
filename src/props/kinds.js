@@ -4,12 +4,16 @@
 // a plain Y rotation that turns +Z into the world facing direction — see geo.dirToRot).
 import * as THREE from 'three';
 import { UNIT_CYL, UNIT_ICO, UNIT_SPHERE, UNIT_BOX, UNIT_WHEEL, mat, xf, merge } from './geo.js';
+import { SP_KIND_NAMES, buildSpRoleGeometry, buildSpKindParts } from './spkinds.js';
 
 export const KIND_NAMES = [
   'streetlamp', 'bench', 'tree_small', 'tree_medium', 'tree_large', 'hedge', 'hydrant', 'trash_bin',
   'bus_stop', 'traffic_light', 'road_sign', 'fountain', 'park_bench', 'flower_bed',
   // LOOP cycle 2 (L2 diorama detail layer): yard dressing + pedestrians.
   'fence_picket', 'garden_bed', 'laundry_line', 'picnic_table', 'crate_stack', 'bike', 'figure',
+  // LOOP cycle 5 (W1 authored hero set-pieces): deck plates, skate/garden/farm vocabulary, posed figures.
+  // Appended (never interleaved) so no pre-existing kind changes position; see spkinds.js.
+  ...SP_KIND_NAMES,
 ];
 
 export const FLOWER_COLORS = ['brightRed', 'brightYellow', 'mediumLilac', 'brightPink', 'mediumAzur', 'brightOrange'];
@@ -265,6 +269,10 @@ export function buildRoleGeometry(ctx) {
     ]);
   }
 
+  // LOOP cycle 5: the set-piece roles (generic instance-coloured box/brick/tile/stud/cylinder/wedge/quarter-pipe,
+  // plant shapes, water, glass, hats) — see spkinds.js.
+  Object.assign(G, buildSpRoleGeometry(ctx));
+
   return G;
 }
 
@@ -276,7 +284,7 @@ export const SHARED_GEOMETRY_ROLES = new Set(['tree-trunk']);
 // ---- per-kind part lists: role names an instance places its transform on (local = identity unless noted) --
 const IDENT = new THREE.Matrix4();
 
-export function buildKindParts(kind, prng) {
+export function buildKindParts(kind, prng, prop) {
   switch (kind) {
     case 'streetlamp': return [{ role: 'lamp-pole' }, { role: 'lamp-head' }, { role: 'lamp-bulb' }];
     case 'bench': return [{ role: 'bench-frame' }, { role: 'bench-planks' }];
@@ -339,7 +347,8 @@ export function buildKindParts(kind, prng) {
         { role: 'figure-head', local: mat(0, 0, 0, 0, yaw + prng.range(-0.2, 0.2), 0), color: prng.pick(FIGURE_SKIN_COLORS) },
       ];
     }
-    default: return [];
+    // LOOP cycle 5 set-piece kinds (deck/skate/garden/farm/posed figures); [] for anything unknown.
+    default: return buildSpKindParts(kind, prng, prop);
   }
 }
 
