@@ -14,6 +14,7 @@
 //      total includes buildings/terrain/CSM and is not the props gate).
 // Part 2 — `?noc2=1` (C2 pass disabled): the pre-existing (non-C2) prop census must be byte-identical to the
 //   C2-on boot's, which proves the detail layer never reseeds existing trees/signs/flower beds (fix round issue 2).
+// Part 2b — `?nosp=1` (LOOP c5): the census hash equals the pre-cycle-5 city's (set-pieces fully toggleable).
 // Part 3 — `?showcase=props&variant=yards`: the props module's own draws stay <= 300 there too, C2 dressing is
 //   present, no C2 placement violations, and every capture is error-free.
 // Writes shots/props/c2/{summary.json,yard-house.png,civic-entrance.png,street-figures.png,yards-showcase.png}.
@@ -98,7 +99,9 @@ try {
     const world = c.world;
     const cs = world.cellSize;
     const isYard = new Set(yardKinds);
-    const lots = [...world.buildings.values()].filter((b) => b.kind === 'house' || b.kind === 'apartment' || b.kind === 'shop');
+    // LOOP c5: demo-placed set-piece houses (ids 'demo-sp-*') are excluded so the every-Nth sample stays on the grown
+    // lots it sampled before cycle 5 (adding 26 records shifted the stride onto a pre-existing undressed lot, b392).
+    const lots = [...world.buildings.values()].filter((b) => (b.kind === 'house' || b.kind === 'apartment' || b.kind === 'shop') && !String(b.id).startsWith('demo-sp-'));
     const stride = Math.max(1, Math.floor(lots.length / 20));
     const sample = lots.filter((_, i) => i % stride === 0).slice(0, 20);
     const rows = [];
@@ -423,7 +426,32 @@ try {
   const civicPick = civic.find((r) => r.kind === 'school') || civic[0];
   await shotAt('civic-entrance.png', civicPick.x, civicPick.z, [10, 5.0, 14], [0, 2.0, 0]);
 
-  // ---- 1. cross-boot determinism --------------------------------------------------------------------------
+  // ---- 2c (LOOP c5). every demo-placed set-piece/infill house carries yard dressing (they are excluded from the
+// stride sample above, so they are checked explicitly here) -----------------------------------------------------
+  {
+    const sp = await page.evaluate((yardKinds) => {
+      const world = window.__city.world, cs = world.cellSize, isYard = new Set(yardKinds);
+      const rows = [];
+      for (const b of world.buildings.values()) {
+        if (!String(b.id).startsWith('demo-sp-')) continue;
+        const cx = world.minX + (b.i + b.w / 2) * cs, cz = world.minZ + (b.j + b.d / 2) * cs;
+        const halfW = b.w * cs / 2, halfD = b.d * cs / 2;
+        let n = 0;
+        for (const p of world.props.values()) {
+          if (!isYard.has(p.kind)) continue;
+          const dx = Math.max(Math.abs(p.x - cx) - halfW, 0), dz = Math.max(Math.abs(p.z - cz) - halfD, 0);
+          const band = Math.max(dx, dz);
+          if (band >= 0.5 && band <= 7.0 && Math.hypot(p.x - cx, p.z - cz) < 14) n++;
+        }
+        rows.push({ id: b.id, items: n });
+      }
+      return rows;
+    }, YARD_KINDS);
+    const bare = sp.filter((r) => r.items < 1);
+    check(sp.length > 0 && bare.length === 0, `every demo-sp-* house has >= 1 yard item (${sp.length} houses, ${bare.length} bare${bare.length ? ': ' + bare.slice(0, 5).map((r) => r.id).join(',') : ''})`);
+  }
+
+// ---- 1. cross-boot determinism --------------------------------------------------------------------------
   await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForFunction(() => window.__city && window.__city.ready === true, { timeout: 90000, polling: 100 });
   await page.evaluate(() => window.__city.frames(90));
@@ -455,6 +483,22 @@ try {
     check(censusOff.stats.errors.length === 0, `no console errors on the ?noc2=1 boot (${censusOff.stats.errors.length})`);
   } finally {
     await app2.close();
+  }
+}
+
+// ---- Part 2b (LOOP c5): `?nosp=1` (set-pieces, their lot reservation and frame infill off) is the pre-cycle city --
+const PRE_C5_CENSUS_HASH = 'e0f35033'; // check-detail census hash at 1876d3b (before cycle 5)
+let nospHash = null;
+{
+  const app2b = await openApp({ seed: 1, tod: 12, hud: 0, extra: { nosp: '1' } });
+  try {
+    await app2b.page.evaluate(() => window.__city.frames(90));
+    const censusNosp = await app2b.page.evaluate(censusInPage());
+    nospHash = censusHash(censusNosp);
+    check(nospHash === PRE_C5_CENSUS_HASH, `?nosp=1 census hash equals the pre-cycle-5 city (${nospHash} == ${PRE_C5_CENSUS_HASH})`);
+    check(censusNosp.stats.errors.length === 0, `no console errors on the ?nosp=1 boot (${censusNosp.stats.errors.length})`);
+  } finally {
+    await app2b.close();
   }
 }
 
@@ -492,7 +536,7 @@ try {
 
 const summary = {
   ok: failed === 0, failed, checks: results.length, results,
-  census: bootA, censusReload: bootB, censusHash: bootA ? censusHash(bootA) : null,
+  census: bootA, censusReload: bootB, censusHash: bootA ? censusHash(bootA) : null, nospCensusHash: nospHash,
   preC2: { withC2: preOn, withoutC2: preOff },
   captureErrors,
   gate: 'props module OWN draw calls <= 300 (full city and yards scene); batch scene totals include other modules',

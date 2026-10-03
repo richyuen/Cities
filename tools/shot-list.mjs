@@ -11,6 +11,14 @@
 //   03-skyline-golden vs the downtown pair        — the shipped skyline preset (the sunset avenue)
 //   04-civic-golden   vs the farm pair            — the shipped closeup preset (civic hero + street life)
 //   05-avenue-noon    vs the signage-street pair  — the shipped street preset (busiest avenue, storefronts)
+//
+// LOOP cycle 5 (default, `--list c5`): 01/02/04 frame the demo's authored set-pieces through the demo's
+// occlusion-checked presets (demo:sp-garden / demo:sp-skate / demo:sp-farm); 03/05 are unchanged:
+//   01-house-golden   — pergola garden around the demo's hero house          (demo:sp-garden, tod 17.7)
+//   02-park-noon      — skate plaza                                          (demo:sp-skate,  tod 12)
+//   04-farm-golden    — community farm (still sorts 4th, so it pairs with the same farm reference)
+//                                                                            (demo:sp-farm,   tod 17.7)
+// `--list set6` reproduces the cycle-4 compositions (finders + closeup) for comparison.
 import fs from 'node:fs';
 import path from 'node:path';
 import { openApp, parseArgs } from './shot.mjs';
@@ -19,10 +27,13 @@ const a = parseArgs(process.argv.slice(2));
 const OUT = a.out || 'shots/beauty/set6';
 const SEED = Number(a.seed || 1);
 const DOF = a.dof !== undefined ? Number(a.dof) : undefined;
+// --param k=v passes URL flags (shot.mjs parseArgs). --list set6 runs the pre-cycle-5 city (nosp=1) so it reproduces
+// set 6's compositions: with set-pieces on, the 01 finder picks a set-piece house and 02 sees the skate plaza.
+const EXTRA = { ...(a.extra || {}), ...(a.list === 'set6' ? { nosp: '1' } : {}), ...(DOF !== undefined ? { dof: DOF } : {}) };
 fs.rmSync(OUT, { recursive: true, force: true });
 fs.mkdirSync(OUT, { recursive: true });
 
-const app = await openApp({ seed: SEED, tod: 12, hud: 0, ...(DOF !== undefined ? { extra: { dof: DOF } } : {}) });
+const app = await openApp({ seed: SEED, tod: 12, hud: 0, extra: EXTRA });
 const captureErrors = [];
 const results = [];
 try {
@@ -107,20 +118,37 @@ try {
     ctx.clock.set(12);
     out.street = ctx.cameraPresets.get('street');
     for (const name of ['skyline', 'closeup', 'street']) if (out[name]) out[name] = { pos: out[name].pos, target: out[name].target, fov: out[name].fov || 50 };
+    // cycle 5: the demo's set-piece hero cameras (fetched at each shot's tod, like closeup)
+    for (const [t, tod] of [['garden', 17.7], ['skate', 12], ['farm', 17.7]]) {
+      ctx.clock.set(tod);
+      let p = null;
+      try { p = ctx.cameraPresets.get('demo:sp-' + t); } catch { p = null; }
+      if (p) out['sp_' + t] = { pos: p.pos, target: p.target, fov: p.fov || 45 };
+    }
     return out;
   });
 
   if (!found.house) console.error('[shot-list] WARN: no dressed level-2 house found; skipping 01');
   if (!found.park) console.error('[shot-list] WARN: no fountain found; skipping 02');
 
+  const LIST = a.list || 'c5';
   const shots = [];
-  if (found.house) shots.push(['01-house-golden', found.house, 17.7]);
-  if (found.park) shots.push(['02-park-noon', found.park, 12]);
-  shots.push(['03-skyline-golden', found.skyline, 17.7]);
-  shots.push(['04-civic-golden', found.closeup, 17.7]);
-  shots.push(['05-avenue-noon', found.street, 12]);
+  if (LIST === 'set6') {
+    if (found.house) shots.push(['01-house-golden', found.house, 17.7]);
+    if (found.park) shots.push(['02-park-noon', found.park, 12]);
+    shots.push(['03-skyline-golden', found.skyline, 17.7]);
+    shots.push(['04-civic-golden', found.closeup, 17.7]);
+    shots.push(['05-avenue-noon', found.street, 12]);
+  } else {
+    // a missing set-piece preset is a FAIL (no silent fallback to the old finders)
+    shots.push(['01-house-golden', found.sp_garden, 17.7]);
+    shots.push(['02-park-noon', found.sp_skate, 12]);
+    shots.push(['03-skyline-golden', found.skyline, 17.7]);
+    shots.push(['04-farm-golden', found.sp_farm, 17.7]);
+    shots.push(['05-avenue-noon', found.street, 12]);
+  }
 
-  if (found.house) {
+  if (LIST === 'set6' && found.house) {
     if (!found.house.unoccluded) console.error(`[shot-list] WARN: house ${found.house.b} is occluded from its chosen 3/4`);
     if (found.house.yard < 2) console.error(`[shot-list] WARN: house ${found.house.b} has only ${found.house.yard} yard props`);
   }
@@ -138,7 +166,7 @@ try {
     console.log(`${name.padEnd(18)} tod=${tod} gpu=${log.gpuMs}ms calls=${log.drawCalls} errors=${log.errors.length}`);
   }
 
-  fs.writeFileSync(path.join(OUT, 'summary.json'), JSON.stringify({ seed: SEED, found, results, captureErrors }, null, 2));
+  fs.writeFileSync(path.join(OUT, 'summary.json'), JSON.stringify({ seed: SEED, list: LIST, found, results, captureErrors }, null, 2));
 } finally {
   await app.close();
 }

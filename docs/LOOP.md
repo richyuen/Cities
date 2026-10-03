@@ -131,6 +131,16 @@ flower blooms; roads UV steps; environment rig terrain; terrain closeup framing.
 
 ## 7. Tooling notes
 
+- **Baseline re-based in cycle 5:** `shots/game/c5o-nosp` (`--param nosp=1`, census-identical to the pre-cycle city)
+  replaces r49. `resetPresentation()` now also rewinds the zoning pulse and runs environment's CSM material sweep,
+  so captures no longer depend on boot event history or session length: same-code repeat 0.004 mean (was ~0.07);
+  r49 vs c5o-nosp is 10/20 over 0.30. **Correction (critic r3 falsified the first attribution):** this is NOT caused by
+  the reset change. With the new lines disabled in-page the nosp city is still 8/20 over r49 (overview-12 1.79). The
+  cause is a pre-existing boot-time race in the old harness: zoning plates get CSM only when environment's sweep fires
+  (absent at frame 125, present by frame 727 in an unpaused boot), and r49 landed on the other side of it. The reset
+  makes it deterministic (always swept = the look players get within ~12 s of play); the r49 state is not
+  reproducible. Compare pre-c5 batches only against pre-c5 batches.
+- `--param k=v` (repeatable) on `tools/shot.mjs`/`tools/critic.mjs` forwards URL flags (e.g. `--param nosp=1`).
 - Baseline: `shots/game/r30` (game batch) + `shots/beauty/<ver>` (hero shots). Pre-r28 whole-game batches
   are pixel-incomparable after the V5 preset change.
 - `node tools/critic.mjs --game --round N --dir shots/game/rN` — 20 shots.

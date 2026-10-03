@@ -19,6 +19,8 @@ export function parseArgs(argv) {
       const key = k.slice(2);
       const v = argv[i + 1];
       if (v === undefined || v.startsWith('--')) a[key] = true; else { a[key] = v; i++; }
+      // --param k=v (repeatable) -> extra URL query params, e.g. --param nosp=1
+      if (key === 'param' && typeof a.param === 'string') { const [pk, pv = '1'] = a.param.split('='); (a.extra ||= {})[pk] = pv; delete a.param; }
     }
   }
   return a;
@@ -130,7 +132,7 @@ const isMain = process.argv[1] && path.resolve(process.argv[1]) === path.resolve
 if (isMain) {
   const a = parseArgs(process.argv.slice(2));
   const out = a.out || `shots/${a.showcase || 'game'}/${a.preset || 'overview'}-${a.tod ?? 'default'}.png`;
-  const opts = { ...a, out, tod: a.tod !== undefined ? Number(a.tod) : undefined, seed: a.seed || 1 };
+  const opts = { ...a, out, tod: a.tod !== undefined ? Number(a.tod) : undefined, seed: a.seed || 1, extra: a.extra || {} };
   shot(opts).then((log) => {
     const short = { out: log.out, fps: log.fps, gpuMs: log.gpuMs, gpuFps: log.gpuFps, drawCalls: log.drawCalls, triangles: log.triangles, gpu: log.gpu, modules: log.modules, errors: log.errors };
     console.log(JSON.stringify(short, null, 2));

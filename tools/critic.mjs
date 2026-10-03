@@ -17,7 +17,7 @@ const variant = a.variant || 'default';
 const dir = a.dir || path.join('shots', isGame ? 'game' : mod, `r${round}`);
 fs.mkdirSync(dir, { recursive: true });
 
-const app = await openApp({ showcase: isGame ? undefined : mod, variant, seed: a.seed || 1, tod: tods[0], software: !!a.software });
+const app = await openApp({ showcase: isGame ? undefined : mod, variant, seed: a.seed || 1, tod: tods[0], software: !!a.software, extra: a.extra || {} });
 let presets;
 if (a.presets) presets = String(a.presets).split(',');
 else {

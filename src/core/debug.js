@@ -9,10 +9,15 @@ export function installDebugApi(ctx, registry, app) {
     setCamera(nameOrObj) { return ctx.cameraApi.apply(nameOrObj); },
     presets() { return ctx.cameraPresets.list(); },
     setTime(h) { ctx.clock.paused = true; ctx.clock.set(h); },
-    /** Tooling: reset the animated sky/cloud phase (environment) so same-tod captures are comparable. */
+    /** Tooling: make same-tod captures comparable regardless of session length and boot event history:
+     *  reset the animated sky/cloud phase (environment), rewind the presentation clock (only zoning's plate pulse
+     *  reads clock.elapsed), and run the cascaded-shadow material sweep now (otherwise whether zoning's plates got
+     *  CSM depended on whether anything spawned after boot - LOOP c5 core request demo-c5 #6/#7). */
     resetPresentation() {
       const rec = ctx.modules.get('environment');
       if (rec?.status === 'ok' && typeof rec.api?.resetPresentation === 'function') rec.api.resetPresentation();
+      ctx.clock.elapsed = 0;
+      if (rec?.status === 'ok' && typeof rec.api?.refreshMaterials === 'function') rec.api.refreshMaterials();
     },
     setTimeScale(s) { ctx.clock.timeScale = s; ctx.clock.paused = s === 0; },
     pause() { ctx.clock.paused = true; },

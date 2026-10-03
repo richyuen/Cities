@@ -8,6 +8,7 @@
 // one pair per block — see placeUtilities(). Density and per-block variety are deterministic rng forks.
 
 import { WATER_RADIUS, POWER_RADIUS } from '../simulation/model.js';
+import { reserveSetPieces } from './setpieces.js';
 
 // ---------------------------------------------------------------------------------------------------------------
 // District layout (world meters, origin = map centre). The map is 256x256 cells @ 8 m = 2048x2048 m
@@ -38,6 +39,30 @@ export const HIGHWAY_X = [-820, -600, -480, -400, -200, 0, 200, 400, 600, 650];
 
 /** Industrial avenue: highway ↔ suburb ↔ industrial pad, all on one continuous spine (r1 fix 4). */
 export const INDUSTRIAL_SPINE_X = -480;
+
+// ---------------------------------------------------------------------------------------------------------------
+// LOOP cycle 5: set-piece lot reservation. Cell indices (j*W+i) claimed by a set-piece lot (demo/setpieces.js) while
+// buildCity() runs; every helper below that paves, zones, sites or parks land skips them. Empty (the ?nosp=1 city and
+// the downtown-only showcase), so each guard is a no-op there and the layout is the pre-cycle one exactly.
+const RESERVED = new Set();
+function isReserved(world, i, j) { return RESERVED.size > 0 && RESERVED.has(j * world.size.w + i); }
+
+/** zoningApi.setZoneRect over r, minus reserved cells (row runs). One plain call when r holds no reserved cell. */
+function zoneRectSkippingReserved(world, zoningApi, r, zone, level) {
+  let any = false;
+  for (let j = r.j0; j <= r.j1 && !any; j++) for (let i = r.i0; i <= r.i1 && !any; i++) any = isReserved(world, i, j);
+  if (!any) return zoningApi.setZoneRect(r.i0, r.j0, r.i1, r.j1, zone, level);
+  let cells = 0, cost = 0;
+  for (let j = r.j0; j <= r.j1; j++) {
+    let run = -1;
+    for (let i = r.i0; i <= r.i1 + 1; i++) {
+      const free = i <= r.i1 && !isReserved(world, i, j);
+      if (free && run < 0) run = i;
+      if (!free && run >= 0) { const z = zoningApi.setZoneRect(run, j, i - 1, j, zone, level); cells += z.cells; cost += z.cost; run = -1; }
+    }
+  }
+  return { cells, cost };
+}
 
 // ---------------------------------------------------------------------------------------------------------------
 // Generic helpers
@@ -130,7 +155,7 @@ function paveAlleyRow(world, i0, i1, j) {
   let runStart = -1;
   for (let i = i0; i <= i1; i++) {
     const c = world.cellAt(i, j);
-    const free = !!c && c.type === 'none';
+    const free = !!c && c.type === 'none' && !isReserved(world, i, j);
     if (free && runStart < 0) runStart = i;
     if (!free && runStart >= 0) { addAlleySegment(world, runStart, i - 1, j); runStart = -1; }
   }
@@ -173,7 +198,7 @@ function fillBlock(ctx, rng, rect, zone, level, opts = {}) {
     if (farJ <= r.j1) paveAlleyRow(world, r.i0, r.i1, farJ);
   }
 
-  const zres = zoningApi.setZoneRect(r.i0, r.j0, r.i1, r.j1, zone, level);
+  const zres = zoneRectSkippingReserved(world, zoningApi, r, zone, level);
   const fillChance = opts.fillChance ?? 1;
   let count = 0;
   let row = 0;
@@ -216,7 +241,7 @@ function fillStrip(ctx, rng, rect, zone, level, opts = {}) {
   const fillChance = opts.fillChance ?? 0.8;
   const vertical = opts.vertical ?? ((r.j1 - r.j0) > (r.i1 - r.i0));
   const isCovered = opts.isCovered;
-  zoningApi.setZoneRect(r.i0, r.j0, r.i1, r.j1, zone, level);
+  zoneRectSkippingReserved(world, zoningApi, r, zone, level);
   let count = 0;
   const tryLot = (i, j) => {
     if (isCovered && !isCovered(i, j)) return;
@@ -252,7 +277,7 @@ function setParkRect(world, x0, z0, x1, z1) {
   for (let j = r.j0; j <= r.j1; j++) {
     for (let i = r.i0; i <= r.i1; i++) {
       const c = world.cellAt(i, j);
-      if (c && c.type === 'none') { world.setCell(i, j, { type: 'park' }); n++; }
+      if (c && c.type === 'none' && !isReserved(world, i, j)) { world.setCell(i, j, { type: 'park' }); n++; }
     }
   }
   return { rect: r, cells: n };
@@ -284,7 +309,7 @@ function siteBuildable(ctx, i0, j0, w, d) {
   for (let j = j0; j < j0 + d; j++) {
     for (let i = i0; i < i0 + w; i++) {
       const c = world.cellAt(i, j);
-      if (!c || c.type !== 'none') return false;
+      if (!c || c.type !== 'none' || isReserved(world, i, j)) return false;
       if (terrainApi && !terrainApi.isBuildable(i, j)) return false;
     }
   }
@@ -579,10 +604,38 @@ function buildWaterfront(ctx, rng) {
   return { buildings, parkCells, ...u, fire, police, school, hospital, coastXs, xLines: WATERFRONT_X, zLines: WATERFRONT_Z };
 }
 
-function buildSuburb(ctx, rng) {
+/** Read-only twin of the block loop's placeServiceBuilding() calls: where each suburb civic WILL land ({x, z, kind}).
+ * Same starts and findUtilitySite search on the same (not yet zoned) cells, so it matches the real placement; the
+ * set-piece search uses it to stay clear of civic lots. */
+function predictServiceSites(ctx, svc, nx, nz, isPark, margin) {
+  const world = ctx.world;
+  const out = [];
+  for (let a = 0; a < nx; a++) {
+    for (let b = 0; b < nz; b++) {
+      if (isPark(a, b)) continue;
+      const key = `${a},${b}`;
+      const kind = svc.fire.has(key) ? 'fire_department' : svc.police.has(key) ? 'police_station'
+        : svc.school.has(key) ? 'school' : svc.hospital.has(key) ? 'hospital' : null;
+      if (!kind) continue;
+      const rect = blockRect(SUBURB_X, SUBURB_Z, a, b, margin);
+      const rc = cellRectFromWorld(world, rect.x0, rect.z0, rect.x1, rect.z1);
+      const starts = [[rc.i0 + 1, rc.j0 + 1], [rc.i1 - 1, rc.j1 - 1], [Math.floor((rc.i0 + rc.i1) / 2), Math.floor((rc.j0 + rc.j1) / 2)]];
+      for (const [ci, cj] of starts) {
+        const site = findUtilitySite(ctx, ci, cj, 2, 2, 3);
+        if (!site) continue;
+        const c = world.cellToWorld(site.i + 0.5, site.j + 0.5);
+        out.push({ x: c.x, z: c.z, kind });
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+function buildSuburb(ctx, rng, spRng = null) {
   const world = ctx.world;
   const gridRng = rng.fork('suburbJitter');
-  buildGrid(world, SUBURB_X, SUBURB_Z, spineKind, {
+  const grid = buildGrid(world, SUBURB_X, SUBURB_Z, spineKind, {
     jitter: 22, rng: gridRng, fixedRows: new Set([0, SUBURB_Z.length - 1]), fixedCols: new Set(),
   });
 
@@ -607,6 +660,13 @@ function buildSuburb(ctx, rng) {
 
   const u = placeUtilities(ctx, { xLines: SUBURB_X, zLines: SUBURB_Z, x0: SUBURB_X[0], x1: SUBURB_X[SUBURB_X.length - 1], z0: SUBURB_Z[0], z1: SUBURB_Z[SUBURB_Z.length - 1] });
   const svc = pickServiceBlocks(nx, nz, isPark);
+  // LOOP cycle 5: reserve the set-piece lots now — after the park/plaza stamps and the utilities (so neither moves),
+  // before any suburb block is zoned, paved with alleys or filled (so nothing grows or tints under them). The suburb's
+  // civic services are sited later in the block loop; their sites are predicted here (same read-only search) so the
+  // lots keep clear of every civic building (core/composition.js ranks closeup subjects by nearby buildings/props).
+  const setPieces = spRng
+    ? reserveSetPieces(ctx, spRng, grid, new Set([...PARK_BLOCKS, PLAZA_BLOCK]), RESERVED, predictServiceSites(ctx, svc, nx, nz, isPark, MARGIN))
+    : null;
 
   // Per-block deterministic variety (r1 fix 6): lot gap, fill chance, row stagger and level mix vary per block
   // from one dedicated fork, so no two blocks tile identically while the whole city stays a function of the seed.
@@ -626,7 +686,7 @@ function buildSuburb(ctx, rng) {
       buildings += fillBlock(ctx, rng, rect, 'r', level, { gap, fillChance, stagger }).buildings;
     }
   }
-  return { buildings, parkCells, ...u, fire, police, school, hospital };
+  return { buildings, parkCells, ...u, fire, police, school, hospital, setPieces };
 }
 
 /** World-centre cell of every placed building of `kind` (coverage-aware fringe placement). */
@@ -685,15 +745,20 @@ function connectDistricts(ctx) {
 /** Build the whole demo city once. Deterministic: every random choice comes from `rng` (already forked by the
  * caller), and every layout coordinate is a fixed constant or a runtime terrain/coastline query — never Math.random
  * or wall-clock. Returns a stats summary for the builder report. */
-export function buildCity(ctx, rng) {
+export function buildCity(ctx, rng, opts = {}) {
+  RESERVED.clear();
+  // LOOP cycle 5: a dedicated, parent-stateless fork (rng.js fork) — consuming it never shifts any other stream.
+  const spRng = opts.setPieces ? rng.fork('setpieces') : null;
   const highway = buildHighway(ctx);
   const interchange = buildInterchange(ctx);
   const downtown = buildDowntown(ctx, rng.fork('downtown'));
   const industrial = buildIndustrial(ctx, rng.fork('industrial'));
   const waterfront = buildWaterfront(ctx, rng.fork('waterfront'));
-  const suburb = buildSuburb(ctx, rng.fork('suburb'));
+  const suburb = buildSuburb(ctx, rng.fork('suburb'), spRng);
   connectDistricts(ctx);
   const fringe = buildFringeBelts(ctx, rng.fork('fringe'));
+  const reservedCells = RESERVED.size;
+  RESERVED.clear();
 
   const roadEdges = ctx.world.roads.edges.size;
   const totalBuildings = ctx.world.buildings.size;
@@ -712,6 +777,7 @@ export function buildCity(ctx, rng) {
     interchangeRamps: interchange.ramps,
     downtown, industrial, waterfront, suburb, utilities, fringeBuildings: fringe,
     roadEdges, totalBuildings, totalParkCells,
+    setPiecePlan: suburb.setPieces ? { ...suburb.setPieces, reservedCells } : null,
   };
 }
 
