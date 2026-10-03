@@ -29,6 +29,17 @@ const NIGHT_GLOW = 0.55;     // emissiveIntensity at full night (isNight); 0 in 
 const NIGHT_OPACITY_BOOST = 0.08;
 const NIGHT_TRANSMISSION_BOOST = 0.1;
 const DIRTY_DEBOUNCE = 0.12; // seconds; batches bursts of world:cell/zone:changed into one rebuild
+// LOOP c6 owner decision (2026-10-03): the plates are a tool overlay, like Cities: Skylines - drawn only while a
+// tool that edits zoning is active. Zones stay discoverable elsewhere (minimap tint, the hover/preview ghost).
+// `zone:none` is the Dezone tool. Owner ruling (c6): zone tools ONLY - bulldoze, roads, parks etc. keep the plates hidden.
+// `?zones=always` restores the old always-on overlay (A/B baseline); the zoning showcase forces it on as well.
+const OVERLAY_TOOLS = new Set(['zone:r', 'zone:c', 'zone:i', 'zone:none']);
+// Hidden plates are never rendered, so their program would otherwise only be linked by the driver on the first
+// zone-tool click (measured: a ~410 ms frame). While hidden we pre-link it off the main thread with
+// renderer.compileAsync on a permanent, never-visible proxy (one 1-instance InstancedMesh per zone material),
+// re-run whenever a material's version changes (e.g. environment's CSM sweep). The proxy also keeps the 3 materials
+// in the scene graph while no plate mesh exists, so environment's CSM sweep keeps treating them exactly as before.
+const WARM_AFTER_FRAMES = 30; // update() calls before the first warm-up (frame count, not wall time)
 
 /** Injected once per zone material: multiplies the emissive term by vColor.rgb, the same combined
  *  vertex-colour x instance-colour factor the standard shader already uses for the diffuse rim/density cue
@@ -100,7 +111,9 @@ const _col = new THREE.Color();
 function buildInstancedForZone(zone, cells) {
   const world = S.ctx.world;
   const old = S.meshes[zone];
-  if (old) S.group.remove(old); // geometry/material are shared - only the InstancedMesh itself goes away
+  // geometry/material are shared - only the InstancedMesh itself goes away; dispose() frees its instance buffers
+  // (before LOOP c6 the old mesh was only removed, so every debounced rescan leaked its GPU instance attributes)
+  if (old) { S.group.remove(old); old.dispose(); }
   if (!cells.length) { S.meshes[zone] = null; return; }
   const mesh = new THREE.InstancedMesh(S.plateGeo, S.materials[zone], cells.length);
   mesh.name = `zoning-${zone}`;
@@ -121,9 +134,86 @@ function buildInstancedForZone(zone, cells) {
   }
   mesh.instanceMatrix.needsUpdate = true;
   if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-  mesh.visible = S.overlayVisible !== false;
+  mesh.visible = platesShown(); // a rescan must never resurrect plates the overlay rules currently hide
   S.group.add(mesh);
   S.meshes[zone] = mesh;
+}
+
+/** Plate visibility = !viewHidden && (always || toolShows). Two independent flags: a data view can hide the plates
+ *  while a zone tool is active, and views' setOverlayVisible(true) (on view close / dispose) cannot re-show them
+ *  while no zoning tool is active. */
+function platesShown() { return !!S && !S.viewHidden && (S.always || S.toolShows); }
+
+/** Apply the plate visibility to the live InstancedMeshes. Toggling never rebuilds geometry: hidden meshes keep
+ *  their instance buffers and cost no draw calls (and, as the only transmissive surfaces in the city, hiding them
+ *  also lets three skip its transmission pre-pass). The only rebuild is a pending, deferred rescan. The hover
+ *  preview is separate and untouched. */
+function applyOverlayVisibility() {
+  if (!S) return;
+  const v = platesShown();
+  // rescans are deferred while the plates are hidden (see update); catch up now, before the next render
+  if (v && S.dirty) { rescan(); S.dirty = false; }
+  for (const zone of ZONES) if (S.meshes[zone]) S.meshes[zone].visible = v;
+  // the pulse/night material state is skipped while nothing uses it (see update); bring it current right away so
+  // a plate shown mid-frame (e.g. by views after zoning's update ran) never renders one stale frame
+  if (v) applyMaterialState(S.ctx);
+}
+
+/** Pulse + night tweak on the 3 shared zone materials. Pure function of clock.elapsed/daylight (no wall time). */
+function applyMaterialState(ctx) {
+  const t = ctx.clock.elapsed; // real seconds, scaled by timeScale, frozen while paused -> deterministic shots
+  const night = clamp(1 - ctx.clock.daylight, 0, 1);
+  for (let k = 0; k < ZONES.length; k++) {
+    const mat = S.materials[ZONES[k]];
+    // a touch more opacity/transmission at night keeps the plates reading as translucent "ghost" glass
+    // instead of a solid poured pad once the emissive term (below) lights them up.
+    mat.opacity = mat.userData.baseOpacity + Math.sin(t * PULSE_SPEED + k * 2.09) * PULSE_AMP + night * NIGHT_OPACITY_BOOST;
+    mat.transmission = mat.userData.baseTransmission + night * NIGHT_TRANSMISSION_BOOST;
+    mat.emissiveIntensity = night * NIGHT_GLOW;
+  }
+}
+
+function buildWarmProxy() {
+  const g = new THREE.Group();
+  g.name = 'zoning-warmup';
+  g.visible = false; // never drawn: compile() traverses invisible objects, the render and the raycasts do not
+  for (const zone of ZONES) {
+    const m = new THREE.InstancedMesh(S.plateGeo, S.materials[zone], 1);
+    m.name = `zoning-warmup-${zone}`;
+    m.setMatrixAt(0, new THREE.Matrix4());
+    m.setColorAt(0, new THREE.Color(1, 1, 1)); // instanceColor -> same program variant as the real plates
+    m.castShadow = false; m.receiveShadow = false; m.frustumCulled = false;
+    g.add(m);
+  }
+  return g;
+}
+
+const warmSig = () => ZONES.map((z) => S.materials[z].version).join(',');
+
+/** Pre-link the plate program while the plates are hidden (see WARM_AFTER_FRAMES). The program key depends on
+ *  the render target only through output colour space / tone mapping: the shipped game renders the scene into
+ *  effects' composer target, so compile against a render target when effects is up, else against the screen. */
+function warmPrograms(ctx) {
+  const R = ctx.renderer;
+  if (typeof R?.compileAsync !== 'function') { S.warmSig = warmSig(); return; }
+  const sig = warmSig();
+  const fx = ctx.modules.get('effects');
+  const useRT = fx?.status === 'ok';
+  if (useRT && !S.warmRT) S.warmRT = new THREE.WebGLRenderTarget(1, 1);
+  const prev = R.getRenderTarget();
+  S.warming = true;
+  let p;
+  try {
+    R.setRenderTarget(useRT ? S.warmRT : null);
+    p = R.compileAsync(S.warmProxy, ctx.camera, ctx.scene);
+  } catch (e) {
+    S.warming = false; S.warmSig = sig; ctx.log('[zoning] plate warm-up skipped:', e?.message || e); return;
+  } finally {
+    R.setRenderTarget(prev);
+  }
+  const mine = S;
+  p.then(() => { if (S === mine) { S.warming = false; S.warmSig = sig; } },
+    () => { if (S === mine) { S.warming = false; S.warmSig = sig; } });
 }
 
 function onToolSelected({ tool } = {}) {
@@ -132,6 +222,8 @@ function onToolSelected({ tool } = {}) {
   const z = isZoneTool ? tool.slice(5) : null;
   S.activeZoneTool = z && z !== 'none' ? z : null;
   if (!S.activeZoneTool) api.hidePreview();
+  const shows = typeof tool === 'string' && OVERLAY_TOOLS.has(tool);
+  if (shows !== S.toolShows) { S.toolShows = shows; applyOverlayVisibility(); }
 }
 
 function ensurePreviewMesh() {
@@ -218,12 +310,20 @@ const api = {
     return { cells, cost: cells * perCell };
   },
 
-  /** Show/hide the zone plates without touching the hover preview (the `views` overlay hides them while a data
-   *  view is active so the two translucent layers don't blend into each other). */
+  /** Allow/forbid the zone plates without touching the hover preview (the `views` overlay hides them while a data
+   *  view is active so the two translucent layers don't blend into each other). Since LOOP c6 this is only the
+   *  view veto: `setOverlayVisible(true)` lifts the veto but does NOT force the plates on - they are drawn only
+   *  while a zone tool (zone:r/c/i, zone:none) is selected, or always under `?zones=always`. */
   setOverlayVisible(v) {
     if (!S) return;
-    S.overlayVisible = v !== false;
-    for (const zone of ZONES) if (S.meshes[zone]) S.meshes[zone].visible = S.overlayVisible;
+    S.viewHidden = v === false;
+    applyOverlayVisibility();
+  },
+
+  /** { shown, viewHidden, toolShows, always } - the overlay state, for tooling/tests and other modules. */
+  getOverlayState() {
+    if (!S) return { shown: false, viewHidden: false, toolShows: false, always: false };
+    return { shown: platesShown(), viewHidden: S.viewHidden, toolShows: S.toolShows, always: S.always };
   },
 
   /** { r: {cells, cellsBuilt}, c: {...}, i: {...} } - cells = total zoned cells (built or not) per zone type.
@@ -276,7 +376,8 @@ export default {
     S = {
       ctx, rng: ctx.rng.fork('zoning'), unsub: [], meshes: { r: null, c: null, i: null },
       dirty: false, dirtyTimer: 0, activeZoneTool: null, preview: null, demoGroup: null, demoMeshes: [],
-      overlayVisible: true,
+      viewHidden: false, toolShows: false, warmProxy: null, warmRT: null, warmSig: '', warming: false, frames: 0,
+      always: String(ctx.params?.get?.('zones') || '') === 'always',
       focus: { x: 0, z: 0, r: 110 }, hot: { x: 12, z: 14 },
     };
     S.group = new THREE.Group();
@@ -301,6 +402,8 @@ export default {
       ctx.materials.cache.set(`zoning:${zone}`, mat); // so environment.setEnvIntensity() reaches these too
       S.materials[zone] = mat;
     }
+    S.warmProxy = buildWarmProxy();
+    S.group.add(S.warmProxy);
 
     S.unsub.push(ctx.events.on('zone:changed', markDirty));
     S.unsub.push(ctx.events.on('world:cell', markDirty));
@@ -317,29 +420,28 @@ export default {
     if (!S) return;
     if (S.dirty) {
       S.dirtyTimer -= dt;
-      if (S.dirtyTimer <= 0) { rescan(); S.dirty = false; }
+      // while hidden, keep the change pending instead of rebuilding instance buffers nobody draws (growth fires
+      // building:spawned continuously); applyOverlayVisibility() rescans the moment the plates are shown again
+      if (S.dirtyTimer <= 0 && platesShown()) { rescan(); S.dirty = false; }
     }
-    const t = ctx.clock.elapsed; // real seconds, scaled by timeScale, frozen while paused -> deterministic shots
-    const night = clamp(1 - ctx.clock.daylight, 0, 1);
-    for (let k = 0; k < ZONES.length; k++) {
-      const mat = S.materials[ZONES[k]];
-      // a touch more opacity/transmission at night keeps the plates reading as translucent "ghost" glass
-      // instead of a solid poured pad once the emissive term (below) lights them up.
-      mat.opacity = mat.userData.baseOpacity + Math.sin(t * PULSE_SPEED + k * 2.09) * PULSE_AMP + night * NIGHT_OPACITY_BOOST;
-      mat.transmission = mat.userData.baseTransmission + night * NIGHT_TRANSMISSION_BOOST;
-      mat.emissiveIntensity = night * NIGHT_GLOW;
-    }
+    // the materials are shared by the plates and the hover preview: skip the pulse while neither is drawn
+    const shown = platesShown();
+    if (shown || S.preview?.visible) applyMaterialState(ctx);
+    S.frames++;
+    if (!shown && !S.warming && S.frames >= WARM_AFTER_FRAMES && S.warmSig !== warmSig()) warmPrograms(ctx);
   },
 
   dispose(ctx) {
     if (!S) return;
     for (const u of S.unsub) { try { u(); } catch (_) { /* ignore */ } }
     for (const zone of ZONES) {
-      if (S.meshes[zone]) S.group.remove(S.meshes[zone]);
+      if (S.meshes[zone]) { S.group.remove(S.meshes[zone]); S.meshes[zone].dispose(); }
       ctx.materials.cache.delete(`zoning:${zone}`);
       S.materials[zone].dispose();
     }
     if (S.preview) { S.group.remove(S.preview); S.preview.geometry.dispose(); }
+    if (S.warmProxy) { S.group.remove(S.warmProxy); for (const m of S.warmProxy.children) m.dispose(); }
+    if (S.warmRT) S.warmRT.dispose();
     // demoMeshes' geometry comes from ctx.materials.bevelBox() - a shared core cache we must not dispose (other
     // modules/showcases reuse the same cached geometry by dims); only the meshes themselves go away with S.group.
     S.plateGeo.dispose();
@@ -349,6 +451,8 @@ export default {
 
   async showcase(ctx, variant = 'default') {
     if (!S) return;
+    // the module's own showcase demonstrates the overlay itself, so it keeps the always-on behaviour
+    S.always = true;
     if (variant === 'density') stageDensity(ctx, S); else stageDefault(ctx, S);
     rescan();
   },
