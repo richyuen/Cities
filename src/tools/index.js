@@ -268,7 +268,43 @@ function cellBuildable(ctx, i, j) {
 /** A fixed-footprint civic structure needs every cell free of an existing building — bare 'none' land or
  * zoned-but-unbuilt 'zone' land are both fine (placing here uses up any prior zoning, see World.addBuilding),
  * matching how RCI auto-growth treats zoned-empty cells as available. Road/park/building cells still block. */
-function stampBuildable(ctx, i0, j0, w, d) { return !stampBlockReason(ctx, i0, j0, w, d); }
+function stampBuildable(ctx, i0, j0, w, d) { return !stampSite(ctx, i0, j0, w, d).reason; }
+
+const GRADE_MAX_SPREAD = 1.2;     // metres across the whole footprint that a placement may level out
+const GRADE_COST_PER_CELL = 150;
+
+/** Can gently uneven ground under a footprint be levelled for it? Only when the whole footprint's height spread
+ * is small, the levelled pad stays above the water, and nothing stands in the one-cell ring around it: flattening
+ * moves the footprint's edge vertices, which the neighbouring cells share, and buildings do not follow the
+ * terrain after they are built. */
+function stampGradable(ctx, i0, j0, w, d) {
+  const world = ctx.world;
+  const terr = ctx.modules.get('terrain');
+  if (terr?.status !== 'ok' || typeof terr.api?.flatten !== 'function') return false;
+  let lo = Infinity, hi = -Infinity, sum = 0, n = 0;
+  for (let j = j0; j <= j0 + d; j++) for (let i = i0; i <= i0 + w; i++) {
+    const h = world.getVertexHeight(i, j);
+    if (!Number.isFinite(h)) return false;
+    lo = Math.min(lo, h); hi = Math.max(hi, h); sum += h; n++;
+  }
+  if (hi - lo > GRADE_MAX_SPREAD) return false;
+  const sea = Number.isFinite(world.seaLevel) ? world.seaLevel : 0;
+  if (sum / n < sea + 0.4) return false;
+  for (let j = j0 - 1; j <= j0 + d; j++) for (let i = i0 - 1; i <= i0 + w; i++) {
+    if (i >= i0 && i < i0 + w && j >= j0 && j < j0 + d) continue;
+    const c = world.cellAt(i, j);
+    if (!c || c.buildingId || c.type === 'building' || c.type === 'road' || c.type === 'water') return false;
+  }
+  return true;
+}
+
+/** Placement verdict for a footprint: { reason, gradeCost }. reason null = can build; gradeCost > 0 means the
+ * ground is levelled first (and charged). */
+function stampSite(ctx, i0, j0, w, d) {
+  const reason = stampBlockReason(ctx, i0, j0, w, d);
+  if (reason === 'uneven' && stampGradable(ctx, i0, j0, w, d)) return { reason: null, gradeCost: GRADE_COST_PER_CELL * w * d };
+  return { reason, gradeCost: 0 };
+}
 
 // Worst blocker first, so the message names the thing the player has to deal with.
 const STAMP_BLOCK_ORDER = ['edge', 'building', 'road', 'water', 'park', 'uneven'];
@@ -408,6 +444,12 @@ function ghostMat(ctx, colorName) {
   });
 }
 
+/** The coverage plate spans a whole district, so it is a faint tint, not a ghost: low opacity, rough (no sun
+ * glint off a 300 m mirror) and barely emissive, so at night it reads as a wash instead of a lit yellow slab. */
+function coverageMat(ctx, colorName) {
+  return ctx.materials.glass(colorName, { opacity: 0.26, roughness: 0.7, emissive: colorName, emissiveIntensity: ctx.clock?.isNight ? 0.12 : 0.05 });
+}
+
 // Ghost/decorative materials are cached-by-key (see ghostMat/addDecorativeRect), so day<->night just means
 // picking a different cached material — cheap, no allocation. But a mesh only gets a *fresh* material when
 // something re-applies one of those functions to it; an in-progress drag (or the showcase's deliberately-frozen
@@ -422,7 +464,8 @@ function refreshGhostEmissiveForTime() {
   S.group.traverse((obj) => {
     const mat = obj.material;
     if (!mat || !mat.name || !mat.name.startsWith('glass:')) return;
-    obj.material = ghostMat(S.ctx, mat.name.slice(6));
+    const name = mat.name.slice(6);
+    obj.material = obj === S.ghosts?.coverage ? coverageMat(S.ctx, name) : ghostMat(S.ctx, name);
   });
 }
 
@@ -512,10 +555,11 @@ function updateGhostsForDrag() {
   }
   if (d.group === 'stamp') {
     const def = UTILITY_DEF[d.utilKind];
-    const blocked = stampBlockReason(ctx, d.i0, d.j0, def.w, def.d);
+    const { reason: blocked, gradeCost } = stampSite(ctx, d.i0, d.j0, def.w, def.d);
     applyRect(rectBounds(ctx, d.i0, d.j0, d.i1, d.j1), blocked ? 'transRed' : 'lime');
-    const afford = currentMoney(ctx) >= def.cost;
-    const txt = blocked ? `Blocked — ${STAMP_BLOCK_TEXT[blocked]}` : afford ? `$${def.cost.toLocaleString()}` : 'Insufficient funds';
+    const afford = currentMoney(ctx) >= def.cost + gradeCost;
+    const price = `$${def.cost.toLocaleString()}${gradeCost ? ` + $${gradeCost.toLocaleString()} grading` : ''}`;
+    const txt = blocked ? `Blocked — ${STAMP_BLOCK_TEXT[blocked]}` : afford ? price : 'Insufficient funds';
     uiApi(ctx)?.setStatus?.(`${def.label}: ${txt}`);
     return;
   }
@@ -710,13 +754,16 @@ function finishStamp(d) {
   const ctx = S.ctx;
   const def = UTILITY_DEF[d.utilKind];
   if (!def) return;
-  const blocked = stampBlockReason(ctx, d.i0, d.j0, def.w, def.d);
+  const { reason: blocked, gradeCost } = stampSite(ctx, d.i0, d.j0, def.w, def.d);
   if (blocked) { fail(`Cannot build here — ${STAMP_BLOCK_TEXT[blocked]}`); return; }
   const sim = ctx.modules.get('simulation');
   const hasLedger = sim?.status === 'ok' && typeof sim.api?.spend === 'function';
-  if (hasLedger && !sim.api.spend(def.cost)) { fail(`Insufficient funds — need $${def.cost.toLocaleString()}`); return; }
+  const total = def.cost + gradeCost;
+  if (hasLedger && !sim.api.spend(total)) { fail(`Insufficient funds — need $${total.toLocaleString()}`); return; }
+  // Level the pad before the building exists, so it is generated on the finished ground.
+  if (gradeCost) ctx.modules.get('terrain').api.flatten(d.i0, d.j0, d.i0 + def.w - 1, d.j0 + def.d - 1);
   ctx.world.addBuilding({ i: d.i0, j: d.j0, w: def.w, d: def.d, zone: null, kind: def.kind, level: 1 });
-  notify(`${def.label} built${hasLedger ? `, $${def.cost.toLocaleString()}` : ''}`, 'success');
+  notify(`${def.label} built${hasLedger ? `, $${total.toLocaleString()}` : ''}${gradeCost ? ' (site graded)' : ''}`, 'success');
   const audio = ctx.modules.get('audio');
   if (audio?.status === 'ok') { try { audio.api?.play?.('zone'); } catch (_) { /* ignore */ } }
 }
@@ -979,7 +1026,7 @@ function showCoverageRing(ctx, b) {
   const bounds = rectBounds(ctx, ci - cellsR, cj - cellsR, ci + cellsR, cj + cellsR);
   mesh.position.set(bounds.cx, bounds.y + 0.15, bounds.cz);
   mesh.scale.set(bounds.w, 0.15, bounds.d);
-  mesh.material = ghostMat(ctx, UTILITY_GHOST_COLOR[b.kind] || 'brightBlue');
+  mesh.material = coverageMat(ctx, UTILITY_GHOST_COLOR[b.kind] || 'brightBlue');
   mesh.visible = true;
 }
 

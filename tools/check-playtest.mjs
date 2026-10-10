@@ -9,6 +9,10 @@
 //   D  the utility stamp is centred on the cursor and a refusal names its reason
 //   E  Options -> Show HUD reads the player's setting and sticks
 //   F  one city name (sim stats == HUD), `?city=` propagates
+// Tier 2:
+//   G  land zoned during play grows in the mature demo city (whose demand idles under the 0.3 gate), other land does not
+//   H  a utility on gently uneven ground levels its site (charged), and the neighbours are left alone
+//   J  V / Shift+V cycle through "off"; the coverage plate is a faint tint; Continue starts from an overview
 // Exit 1 on any failed check.
 import { openApp, BASE_URL } from './shot.mjs';
 
@@ -354,6 +358,171 @@ let before = null;
     check(r.buildings === before.buildings && r.edges === before.edges, `real load: buildings and road edges match (${r.buildings}, ${r.edges})`);
     check(r.name === 'Foo Town' && r.hud === 'Foo Town', `real load F: one city name (${r.name} / ${r.hud})`);
     check(r.errors.length === 0 && errors.length === 0, `real load: no errors (${r.errors.length + errors.length})`);
+  } finally { await app.close(); }
+}
+
+// ---- page 4: Tier 2 (G growth, H grading, J views / coverage tint) ---------------------------------------------
+{
+  const app = await boot({});
+  const { page } = app;
+  try {
+    // J: view cycling
+    const v = await page.evaluate(() => {
+      const views = window.__city.ctx.modules.get('views').api;
+      const ids = views.list().map((x) => x.id);
+      views.setView(null);
+      const back = views.cycle(-1);                 // off -> last
+      const off1 = views.cycle(1);                  // last -> off
+      const first = views.cycle(1);                 // off -> first
+      const off2 = views.cycle(-1);                 // first -> off
+      views.setView(null);
+      return { ids: ids.length, back: back === ids[ids.length - 1], off1: off1 === null, first: first === ids[0], off2: off2 === null };
+    });
+    check(v.back && v.off1 && v.first && v.off2, `J: view cycling passes through "off" in both directions (${JSON.stringify(v)})`);
+
+    // H: a 3x3 site that is uneven but gradable
+    const h = await page.evaluate(async () => {
+      const c = window.__city, w = c.world, H = window.__pt;
+      const terr = c.ctx.modules.get('terrain').api;
+      const free = (i, j) => { const cc = w.cellAt(i, j); return !!cc && cc.type === 'none' && !cc.buildingId; };
+      let site = null;
+      for (let j = 6; j < w.size.h - 8 && !site; j++) for (let i = 6; i < w.size.w - 8 && !site; i++) {
+        let ok = true, uneven = 0;
+        for (let dj = -2; dj <= 4 && ok; dj++) for (let di = -2; di <= 4 && ok; di++) ok = free(i + di, j + dj);
+        if (!ok) continue;
+        let lo = Infinity, hi = -Infinity;
+        for (let dj = 0; dj <= 3; dj++) for (let di = 0; di <= 3; di++) { const y = w.getVertexHeight(i + di, j + dj); lo = Math.min(lo, y); hi = Math.max(hi, y); }
+        for (let dj = 0; dj < 3; dj++) for (let di = 0; di < 3; di++) if (!terr.isBuildable(i + di, j + dj)) uneven++;
+        if (uneven > 0 && hi - lo > 0.5 && hi - lo <= 1.2 && lo > (w.seaLevel || 0) + 1) site = { i, j, uneven, spread: +(hi - lo).toFixed(2) };
+      }
+      if (!site) return { err: 'no gradable site' };
+      const p = w.cellToWorld(site.i + 1, site.j + 1);
+      const y = w.getHeight(p.x, p.z);
+      c.ctx.camera.position.set(p.x, y + 90, p.z + 0.5);
+      c.ctx.controls.target.set(p.x, y, p.z);
+      c.ctx.controls.update();
+      await H.frames(6);
+      const v3 = new c.THREE.Vector3(p.x, y, p.z).project(c.ctx.camera);
+      const r = c.ctx.renderer.domElement.getBoundingClientRect();
+      // heights just outside the ring must not move
+      const outside = [];
+      for (let dj = -2; dj <= 5; dj++) for (let di = -2; di <= 5; di++) if (di < -1 || di > 4 || dj < -1 || dj > 4) outside.push(w.getVertexHeight(site.i + di, site.j + dj));
+      window.__h = { site, outside };
+      return { site, sx: r.left + (v3.x + 1) / 2 * r.width, sy: r.top + (1 - v3.y) / 2 * r.height, money: c.ctx.modules.get('simulation').api.getStats().money };
+    });
+    if (h.err) check(false, `H: ${h.err}`);
+    else {
+      await page.evaluate(() => window.__city.ctx.modules.get('ui').api.setTool('utility:power'));
+      await page.mouse.move(h.sx, h.sy);
+      await page.mouse.down();
+      await page.evaluate(() => window.__pt.frames(2));
+      const pre = await page.evaluate(() => ({ drag: window.__city.ctx.modules.get('tools').api.getGhostState().drag, status: document.querySelector('.lc-status')?.textContent }));
+      await page.mouse.up();
+      await page.evaluate(() => window.__pt.frames(6));
+      const post = await page.evaluate(() => {
+        window.__city.ctx.modules.get('simulation').api.tick(true); // stats.money is a per-tick snapshot
+        const c = window.__city, w = c.world, { site, outside } = window.__h;
+        const terr = c.ctx.modules.get('terrain').api;
+        let flat = 0, lo = Infinity, hi = -Infinity;
+        for (let dj = 0; dj < 3; dj++) for (let di = 0; di < 3; di++) if (terr.isBuildable(site.i + di, site.j + dj)) flat++;
+        for (let dj = 0; dj <= 3; dj++) for (let di = 0; di <= 3; di++) { const y = w.getVertexHeight(site.i + di, site.j + dj); lo = Math.min(lo, y); hi = Math.max(hi, y); }
+        const now = [];
+        for (let dj = -2; dj <= 5; dj++) for (let di = -2; di <= 5; di++) if (di < -1 || di > 4 || dj < -1 || dj > 4) now.push(w.getVertexHeight(site.i + di, site.j + dj));
+        const b = w.buildings.get(w.cellAt(site.i + 1, site.j + 1).buildingId);
+        // click-inspect the new plant: the coverage plate
+        return { flat, spread: +(hi - lo).toFixed(3), moved: now.filter((y, k) => Math.abs(y - outside[k]) > 1e-6).length, kind: b?.kind, at: b ? [b.i, b.j] : null,
+          money: c.ctx.modules.get('simulation').api.getStats().money, errors: c.stats().errors };
+      });
+      check(/\$8,000 \+ \$1,350 grading/.test(pre.status || ''), `H: the status shows the grading cost on a ${h.site.spread} m uneven site ("${pre.status}")`);
+      check(post.kind === 'power_plant' && post.at[0] === h.site.i && post.at[1] === h.site.j, `H: the plant is built on the site that used to be refused (${h.site.uneven} uneven cells)`);
+      check(post.flat === 9 && post.spread === 0, `H: its pad is level (${post.flat}/9 cells, spread ${post.spread} m)`);
+      check(post.moved === 0, `H: no vertex beyond the one-cell ring moved (${post.moved})`);
+      check(Math.abs((h.money - post.money) - 9350) < 1500, `H: charged build + grading ($${h.money - post.money})`);
+      // J: coverage plate tint
+      await page.evaluate(() => window.__city.ctx.modules.get('ui').api.setTool('select'));
+      await page.mouse.click(h.sx, h.sy);
+      await page.evaluate(() => window.__pt.frames(3));
+      const cov = await page.evaluate(() => { const m = window.__city.ctx.scene.getObjectByName('tools-ghost-coverage'); return { visible: m?.visible, opacity: m?.material?.opacity, emissive: m?.material?.emissiveIntensity, depthWrite: m?.material?.depthWrite }; });
+      check(cov.visible && cov.opacity <= 0.3 && cov.emissive <= 0.15 && cov.depthWrite === false, `J: the coverage plate is a faint tint (${JSON.stringify(cov)})`);
+      await page.evaluate(() => window.__city.setTime(22));
+      await page.evaluate(() => window.__pt.frames(3));
+      const covN = await page.evaluate(() => { const m = window.__city.ctx.scene.getObjectByName('tools-ghost-coverage'); return { opacity: m?.material?.opacity, emissive: m?.material?.emissiveIntensity }; });
+      check(covN.opacity <= 0.3 && covN.emissive <= 0.15, `J: and stays one at night (${JSON.stringify(covN)})`);
+      await page.evaluate(() => { window.__city.setTime(14); window.__city.ctx.modules.get('ui').api.setTool(null); });
+    }
+
+    // G: zone 6 road-adjacent cells in the mature city
+    const g = await page.evaluate(async () => {
+      const c = window.__city, w = c.world, H = window.__pt;
+      const sim = c.ctx.modules.get('simulation').api;
+      const W = w.size.w;
+      const roadAdj = (i, j) => [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([a, b]) => w.cellAt(i + a, j + b)?.type === 'road');
+      const terr = c.ctx.modules.get('terrain').api;
+      const cells = [];
+      for (let j = 4; j < w.size.h - 4 && cells.length < 6; j++) for (let i = 4; i < W - 4 && cells.length < 6; i++) {
+        const cc = w.cellAt(i, j);
+        if (cc.type === 'none' && !cc.zone && !cc.buildingId && roadAdj(i, j) && terr.isBuildable(i, j)) cells.push({ i, j });
+      }
+      const emptyZoned = () => { let n = 0; for (const cc of w.cells) if (cc.zone && !cc.buildingId && cc.type === 'zone') n++; return n; };
+      // A mature city's demand idles under the 0.3 gate (0.04-0.25 in the playtest at 38k population). The freshly
+      // booted demo is not there yet, so hold demand at 0.1 for the test: the buildings module reads it per pass.
+      const realDemand = sim.getDemand;
+      sim.getDemand = () => ({ r: 0.1, c: 0.1, i: 0.1 });
+      const demand = sim.getDemand();
+      const b0 = w.buildings.size, e0 = emptyZoned();
+      // control: with nothing zoned by the player, the mature city does not grow on its old empty lots
+      c.setTimeScale(4);
+      await H.frames(400);
+      const control = { buildings: w.buildings.size - b0, emptyZoned: e0 - emptyZoned() };
+      for (const p of cells) w.setZone(p.i, p.j, 'r', 1);
+      const b1 = w.buildings.size;
+      let frames = 0, filled = 0;
+      while (frames < 750 && filled < cells.length) { // 750 frames at 4x = 50 game-seconds = 2 game-hours
+        await H.frames(30); frames += 30;
+        filled = cells.filter((p) => w.cellAt(p.i, p.j).buildingId).length;
+      }
+      c.setTimeScale(1);
+      sim.getDemand = realDemand;
+      return { demand, cells: cells.length, filled, frames, control, others: w.buildings.size - b1 - filled, demandAfter: sim.getDemand(), errors: c.stats().errors };
+    });
+    check(g.demand.r <= 0.3, `G setup: demand held under the old gate, as in a mature city (${g.demand.r})`);
+    check(g.control.buildings === 0, `G: untouched, the mature city spawns nothing on its old empty lots (${g.control.buildings} in 400 frames at 4x)`);
+    check(g.cells === 6 && g.filled === 6, `G: 6 newly zoned cells fill within 2 game-hours at 4x (${g.filled}/6 after ${g.frames} frames)`);
+    check(g.others === 0, `G: nothing else was spawned meanwhile (${g.others})`);
+    check(g.errors.length === 0, `Tier 2 page: no console errors (${g.errors.length})`);
+  } finally { await app.close(); }
+}
+
+// ---- page 5: Continue from the title screen (no fixeddt) --------------------------------------------------------
+{
+  const app = await boot({});
+  const { page } = app;
+  try {
+    await page.goto(`${BASE_URL}/?seed=1`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForFunction(() => window.__city && window.__city.ready === true, { timeout: 90000, polling: 100 });
+    await page.waitForFunction(() => [...document.querySelectorAll('button')].some((x) => /Continue/.test(x.textContent)), { timeout: 30000 });
+    const cam = await page.evaluate(async () => {
+      const c = window.__city.ctx;
+      const title = { y: c.camera.position.y, fov: c.camera.fov };
+      [...document.querySelectorAll('button')].find((x) => /Continue/.test(x.textContent)).click();
+      await new Promise((r) => setTimeout(r, 300));
+      const play = { y: c.camera.position.y, fov: c.camera.fov };
+      // Quit to Title -> Continue keeps the player's own camera
+      c.camera.position.set(120, 150, 60); c.controls.target.set(100, 0, 0); c.controls.update();
+      const mine = c.camera.position.toArray();
+      c.modules.get('menu').api.openPause();
+      await new Promise((r) => setTimeout(r, 200));
+      [...document.querySelectorAll('.lc-menu-item')].find((b) => /Quit/.test(b.textContent)).click();
+      await new Promise((r) => setTimeout(r, 300));
+      const dlg = [...document.querySelectorAll('button')].find((b) => /^(Quit|Yes|Confirm|OK)/.test(b.textContent.trim()) && !b.classList.contains('lc-menu-item'));
+      if (dlg) { dlg.click(); await new Promise((r) => setTimeout(r, 300)); }
+      const atTitle = [...document.querySelectorAll('button')].some((x) => /Continue/.test(x.textContent));
+      if (atTitle) { [...document.querySelectorAll('button')].find((x) => /Continue/.test(x.textContent)).click(); await new Promise((r) => setTimeout(r, 300)); }
+      const back = c.camera.position.toArray();
+      return { title, play, atTitle, restored: Math.hypot(back[0] - mine[0], back[1] - mine[1], back[2] - mine[2]) };
+    });
+    check(cam.title.y < 60 && cam.play.y > 150 && cam.play.fov >= 45, `J: Continue leaves the low title camera for an overview (y ${cam.title.y.toFixed(0)} -> ${cam.play.y.toFixed(0)}, fov ${cam.title.fov} -> ${cam.play.fov})`);
+    check(cam.atTitle && cam.restored < 1, `J: Quit to Title then Continue restores the player's own camera (off by ${cam.restored.toFixed(2)} m)`);
   } finally { await app.close(); }
 }
 

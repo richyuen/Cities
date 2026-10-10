@@ -63,10 +63,13 @@ const api = {
   },
   /** Toggle a view on if off (or a different one on); clicking the active view turns it off. */
   toggle(id) { return api.setView(S?.active === id ? null : id); },
-  /** Cycle to the next (+1) / previous (-1) view. */
+  /** Cycle to the next (+1) / previous (-1) view. "Off" is one stop on the ring: stepping past the last view
+   * (or back past the first) turns the views off, and from off -1 goes to the last view. */
   cycle(dir = 1) {
-    const idx = VIEWS.findIndex((v) => v.id === S?.active);
-    return api.setView(VIEWS[(idx + (dir >= 0 ? 1 : VIEWS.length - 1)) % VIEWS.length].id);
+    const idx = VIEWS.findIndex((v) => v.id === S?.active); // -1 = off
+    const n = VIEWS.length + 1;
+    const next = (idx + 1 + (dir >= 0 ? 1 : n - 1)) % n - 1;
+    return api.setView(next < 0 ? null : VIEWS[next].id);
   },
   /** Force an immediate rebuild (tools/tests). */
   refresh() { if (S) { S.dirty = false; rebuild(); } },

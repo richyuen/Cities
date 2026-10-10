@@ -20,6 +20,11 @@ const ZONING_PRESENT = Object.keys(import.meta.glob('../zoning/index.js')).lengt
 
 const GROWTH_INTERVAL = 3; // seconds of real/game time between auto-growth passes (full game only)
 const GROWTH_SPAWN_CAP = 6; // per zone, per pass — avoids a single-frame population explosion
+const GROWTH_DEMAND_GATE = 0.3; // smoothed demand above which any zoned-empty cell may grow
+// Land the player zoned in this session grows on a softer rule: each pass succeeds with probability
+// demand / GROWTH_DEMAND_GATE (floored), so a mature city whose demand idles below the gate still builds on
+// newly zoned land instead of ignoring it for days.
+const GROWTH_RECENT_MIN_CHANCE = 0.15;
 const REBUILD_DEBOUNCE_MS = 30;
 // Full game only: once the debounce window elapses, hand any dirty chunks to BuildingBatcher.flushIncremental()
 // instead of the unbounded flush() — a chunk covers up to a quarter of the map (see batching.js CHUNK_CELLS
@@ -45,6 +50,7 @@ const S = {
   ctx: null, group: null, batcher: null, studField: null, indicators: null, fireIndicators: null, fireDrones: null,
   burglaryIndicators: null, patrolCars: null, dynMats: null, rng: null, unsub: [],
   pendingDirty: false, lastEvent: 0, growthAcc: 0, growthTick: 0, growthRng: null,
+  growthLive: false, zoneSeq: 0, zonedAt: new Map(), // cell index -> order it was zoned in during live play
   tweens: [], variant: null, closeupTarget: null, settling: false, houseRow: null,
   levelUpQueue: [], levelUpQueued: null, // null placeholder; set() in init() (needs a real Set instance)
 };
@@ -158,19 +164,31 @@ function autoGrowthPass(ctx) {
       if (!c.zone || c.buildingId || c.type !== 'zone') continue;
       if (!byZone[c.zone]) continue;
       if (!cellAdjacentToRoad(world, i, j)) continue;
-      byZone[c.zone].push({ i, j });
+      byZone[c.zone].push({ i, j, at: S.zonedAt.get(j * W + i) || 0 });
     }
   }
   S.growthTick++;
   const rng = S.growthRng.fork(`t${S.growthTick}`);
   for (const zone of ['r', 'c', 'i']) {
-    if ((demand[zone] ?? 0) <= 0.3) continue;
-    const list = byZone[zone];
-    if (!list.length) continue;
-    rng.shuffle(list);
-    const n = Math.min(GROWTH_SPAWN_CAP, list.length);
-    for (let k = 0; k < n; k++) {
-      const { i, j } = list[k];
+    const d = demand[zone] ?? 0;
+    const all = byZone[zone];
+    if (!all.length || d <= 0) continue;
+    const picks = [];
+    // Recently zoned land first, newest first. No rng is drawn unless such land exists, so a city nobody has
+    // zoned in (the demo at boot, every capture) grows exactly as before.
+    const recent = all.filter((c) => c.at > 0);
+    if (recent.length && rng.chance(Math.max(GROWTH_RECENT_MIN_CHANCE, Math.min(1, d / GROWTH_DEMAND_GATE)))) {
+      rng.shuffle(recent);
+      recent.sort((p, q) => q.at - p.at);
+      for (const c of recent) { if (picks.length >= GROWTH_SPAWN_CAP) break; picks.push(c); }
+    }
+    if (d > GROWTH_DEMAND_GATE && picks.length < GROWTH_SPAWN_CAP) {
+      const list = recent.length ? all.filter((c) => !picks.includes(c)) : all;
+      rng.shuffle(list);
+      for (const c of list) { if (picks.length >= GROWTH_SPAWN_CAP) break; picks.push(c); }
+    }
+    for (const { i, j } of picks) {
+      S.zonedAt.delete(j * W + i);
       world.addBuilding({ i, j, w: 1, d: 1, zone, level: 1, seed: rng.int(0, 1e9) });
     }
   }
@@ -402,6 +420,15 @@ export default {
 
     S.unsub.push(ctx.events.on('building:spawned', ({ building }) => regenerateBuilding(ctx, building)));
     S.unsub.push(ctx.events.on('building:removed', ({ building }) => { S.batcher.remove(building.id); markDirty(); }));
+    // Growth priority for land zoned during play (not by city generation, which runs before the first update, and
+    // not by a save replay, which ends with sim:reset). Module state only: it is not saved.
+    S.growthLive = false; S.zoneSeq = 0; S.zonedAt.clear();
+    S.unsub.push(ctx.events.on('zone:changed', ({ i, j, zone }) => {
+      if (!S.growthLive) return;
+      const k = j * ctx.world.size.w + i;
+      if (zone) S.zonedAt.set(k, ++S.zoneSeq); else S.zonedAt.delete(k);
+    }));
+    S.unsub.push(ctx.events.on('sim:reset', () => S.zonedAt.clear()));
     S.unsub.push(ctx.events.on('sim:tick', () => {
       const sim = ctx.modules.get('simulation');
       if (sim?.status === 'ok' && typeof sim.api?.getUnservedBuildings === 'function') {
@@ -456,7 +483,9 @@ export default {
     S.burglaryIndicators?.update(dt);
     S.patrolCars?.update(dt, ctx);
     if (ctx.showcase) return; // auto-growth only runs in the full game
-    S.growthAcc += dt;
+    S.growthLive = true;
+    // Growth follows the game clock: 2x / 4x build faster, and nothing is built while the clock is paused.
+    if (!ctx.clock.paused) S.growthAcc += dt * Math.max(0, ctx.clock.timeScale ?? 1);
     if (S.growthAcc >= GROWTH_INTERVAL) {
       S.growthAcc = 0;
       autoGrowthPass(ctx);

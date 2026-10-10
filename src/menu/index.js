@@ -17,7 +17,7 @@ const SUB_VIEWS = new Set(['options', 'newCity', 'saveLoad', 'credits']);
 
 const initialState = () => ({
   ctx: null, root: null, style: null, backdrop: null, panelHost: null, confirmHost: null,
-  stack: [], wasClockPaused: false, wasHudVisible: true, pendingBoot: false, bootFrames: 0, forcedView: null, onKey: null,
+  stack: [], wasClockPaused: false, wasHudVisible: true, gameCamera: null, pendingBoot: false, bootFrames: 0, forcedView: null, onKey: null,
   viewState: { optionsTab: 'Graphics' },
   prefs: { audio: { master: 0.8, ambience: 1.0, sfx: 1.0, muted: false } },
 });
@@ -107,8 +107,19 @@ const nav = {
     if (S.stack[0] === 'pause') closeMenu();
     // title root: Escape/back has nothing to do
   },
-  resume() { closeMenu(); },
-  quitToTitle() { openMenu('title'); },
+  resume() {
+    const fromTitle = S.stack[0] === 'title';
+    closeMenu();
+    // The title background camera is a low, long-lens beauty shot down the avenue: fine behind a menu, a poor
+    // place to start playing from (a tower face fills a third of the frame). Hand the player the view they left
+    // (Quit to Title -> Continue), or the standard overview on a fresh boot.
+    if (fromTitle) { S.ctx.cameraApi.apply(S.gameCamera || 'overview'); S.gameCamera = null; }
+  },
+  quitToTitle() {
+    const { camera, controls } = S.ctx;
+    S.gameCamera = { pos: camera.position.toArray(), target: controls.target.toArray(), fov: camera.fov };
+    openMenu('title');
+  },
   rootView() { return S.stack[0]; },
   confirm: (opts) => S.confirmHost.confirm(opts),
   notify: (text, kind = 'info') => modApi(S.ctx, 'ui')?.notify?.(text, kind),
