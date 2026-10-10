@@ -451,6 +451,71 @@ try {
     check(sp.length > 0 && bare.length === 0, `every demo-sp-* house has >= 1 yard item (${sp.length} houses, ${bare.length} bare${bare.length ? ': ' + bare.slice(0, 5).map((r) => r.id).join(',') : ''})`);
   }
 
+  // ---- 2d (LOOP c6 demo stage). the garden's hero house is a landmark record with the full house vocabulary, its
+  // hero camera frames it large and unoccluded, and no demo-placed house is buried by a terrace step (c6 buildings
+  // critic issues 3-5) ----------------------------------------------------------------------------------------------
+  {
+    const hero = await page.evaluate(async () => {
+      const c = window.__city, world = c.world, ctx = c.ctx, THREE = c.THREE, cs = world.cellSize;
+      const gen = await import('/src/buildings/generator.js');
+      const terr = ctx.modules.get('terrain')?.api;
+      const hAt = (x, z) => (terr?.surfaceHeight ? terr.surfaceHeight(x, z) : world.getHeight(x, z));
+      const out = { found: false, steps: [] };
+      // terrace steps under demo-placed houses: the generator seats a house on the ground at its cell centre, so any
+      // terrain inside the cell that stands above that buries the porch/plinth on that side
+      for (const b of world.buildings.values()) {
+        if (!String(b.id).startsWith('demo-sp-')) continue;
+        const x0 = world.minX + b.i * cs, z0 = world.minZ + b.j * cs, w = b.w * cs, d = b.d * cs;
+        const g = hAt(x0 + w / 2, z0 + d / 2);
+        let over = 0;
+        for (let v = 0; v <= 8; v++) for (let u = 0; u <= 8; u++) over = Math.max(over, hAt(x0 + 0.2 + (w - 0.4) * u / 8, z0 + 0.2 + (d - 0.4) * v / 8) - g);
+        out.steps.push({ id: b.id, over: +over.toFixed(2) });
+      }
+      const b = world.buildings.get('demo-sp-garden-house');
+      if (!b) return out;
+      out.found = true;
+      out.landmark = b.landmark === true;
+      out.level = b.level;
+      out.features = gen.generateBuilding(ctx, b, ctx.rng.fork('buildings').fork(`${b.seed ?? 0}:${b.id}`)).features;
+      // projected size of the house at the 01 hero camera (same preset and tod as tools/shot-list.mjs)
+      const todWas = ctx.clock.hours;
+      ctx.clock.set(17.7);
+      let cam = null;
+      try { cam = ctx.cameraPresets.get('demo:sp-garden'); } catch { cam = null; }
+      if (Number.isFinite(todWas)) ctx.clock.set(todWas);
+      if (!cam) return out;
+      const pc = new THREE.PerspectiveCamera(cam.fov || 45, 16 / 9, 0.5, 4000);
+      pc.position.set(...cam.pos);
+      pc.lookAt(new THREE.Vector3(...cam.target));
+      pc.updateMatrixWorld();
+      pc.updateProjectionMatrix();
+      const x0 = world.minX + b.i * cs, z0 = world.minZ + b.j * cs;
+      const cx = x0 + cs / 2, cz = z0 + cs / 2, gy = hAt(cx, cz), h = b.height || 8;
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      for (const dx of [0.75, cs - 0.75]) for (const dz of [0.75, cs - 0.75]) for (const dy of [0, h]) {
+        const p = new THREE.Vector3(x0 + dx, gy + dy, z0 + dz).project(pc);
+        minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+      }
+      out.frame = { hFrac: +((maxY - minY) / 2).toFixed(3), wFrac: +((maxX - minX) / 2).toFixed(3), inside: minX >= -1 && maxX <= 1 && minY >= -1 && maxY <= 1 };
+      out.camDist = +Math.hypot(cam.pos[0] - cx, cam.pos[1] - (gy + h / 2), cam.pos[2] - cz).toFixed(1);
+      // nothing but the house itself between the camera and its body
+      const from = new THREE.Vector3(...cam.pos);
+      const hit = world.raycastBuildings(new THREE.Ray(from, new THREE.Vector3(cx, gy + h * 0.5, cz).sub(from).normalize()), 400);
+      out.firstHit = hit ? hit.id : null;
+      return out;
+    });
+    const f = hero.features || {};
+    check(hero.found && hero.landmark, `garden hero house is a landmark record (found ${hero.found}, landmark ${hero.landmark}, level ${hero.level})`);
+    check(f.storeys === 2 && f.porch === true && f.dormers === 2 && f.siding === true,
+      `garden hero house carries the full house vocabulary (storeys ${f.storeys}, porch ${f.porch}, dormers ${f.dormers}, siding ${f.siding})`);
+    check(!!hero.frame && hero.frame.hFrac >= 0.70 && hero.frame.inside,
+      `demo:sp-garden frames the hero house large and whole (height ${hero.frame?.hFrac} of the frame >= 0.70, width ${hero.frame?.wFrac}, inside ${hero.frame?.inside}, ${hero.camDist} m away)`);
+    check(hero.firstHit === 'demo-sp-garden-house', `demo:sp-garden sees the hero house unoccluded (first building on the centre ray: ${hero.firstHit})`);
+    const buried = hero.steps.filter((r) => r.over > 0.3);
+    check(hero.steps.length > 0 && buried.length === 0,
+      `no demo-sp-* house has terrain > 0.3 m above its floor inside its cell (${hero.steps.length} houses, ${buried.length} buried${buried.length ? ': ' + buried.map((r) => `${r.id} +${r.over}`).join(', ') : ''})`);
+  }
+
 // ---- 1. cross-boot determinism --------------------------------------------------------------------------
   await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForFunction(() => window.__city && window.__city.ready === true, { timeout: 90000, polling: 100 });

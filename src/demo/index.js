@@ -14,17 +14,18 @@
 // applied and merged *before* the boot screen lifts — `ready` means the complete city is on screen, not a
 // half-built one that fills in over the next ~6 s (r1 review item 1).
 import { buildCity, buildDowntownOnly } from './citygen.js';
-import { placeSetPieces, chooseCameras, infillFrames, occlusion } from './setpieces.js';
+import { placeSetPieces, stampParkLand, dressHouseYard, infillAround, chooseCameras, heroCameras, occlusion } from './setpieces.js';
 
 let S = null;
 const WARM_TICKS = 600;
 
-/** Live hero camera of the sited set-piece of `type` (props registry, chosen side), or the suburb framing. */
+/** Live hero camera of the sited set-piece of `type` (the chosen side of setpieces.js heroCameras(): the garden's is
+ * composed around its hero house, skate / farm are the props registry cameras), or the suburb framing. */
 function setPieceCamera(type) {
   const row = S?.stats?.setPieces?.find((r) => r.type === type && r.placed);
   const e = row && S.ctx.modules.get('props')?.api?.setPieces?.().find((p) => p.id === row.id);
-  if (!e) return { pos: [250, 200, -120], target: [-60, 0, -430], fov: 46 };
-  return e[row.camera || 'hero'];
+  const cam = e && heroCameras(S.ctx, e, row.house)[row.camera || 'hero'];
+  return cam || { pos: [250, 200, -120], target: [-60, 0, -430], fov: 46 };
 }
 
 /** Seed everything both the full game and the showcase need: city, traffic density, transit loop, warm-up and
@@ -73,29 +74,46 @@ function seed(ctx, rng) {
     setPieces = placeSetPieces(ctx, stats.setPiecePlan);
     for (const m of stats.setPiecePlan.misses || []) ctx.log(`[demo] set-piece site miss: ${m}`);
   }
-  // Hero camera per piece (occlusion-checked) and the town infill behind each frame — both BEFORE settleDetail()
-  // below, so the infill houses' C2 yard dressing is settled with the rest of the city (and the deck heights it
-  // re-resolves do not move: the terrain is final here, so the cameras computed now are the final ones).
+  // LOOP c6: the leftover never-zoned land of the blocks that host a piece becomes park (props dresses it on its next
+  // park flush). After the warm-up, like the infill, so the warm-up economy is the pre-cycle one. `?sppark=0`: A/B flag.
+  // Same flag: the hero house's side yards get a hedge row, a tree and a flower bed each.
+  const tSpA = performance.now();
+  const parkOn = setPieces.length && ctx.params?.get?.('sppark') !== '0';
+  const park = parkOn ? stampParkLand(ctx, setPieces) : { cells: 0, blocks: {} };
+  park.yardProps = parkOn ? dressHouseYard(ctx, setPieces) : 0;
+  const tSpB = performance.now();
+  // Town infill around each piece (camera-independent since LOOP c6), then the hero camera per piece on that final
+  // city - both BEFORE settleDetail() below, so the infill houses' C2 yard dressing is settled with the rest of the
+  // city (the deck heights it re-resolves do not move: the terrain is final here, so the cameras chosen now are the
+  // final ones). `?spinfill=0`: A/B flag for the infill alone (set-pieces + garden house stay).
+  const infill = setPieces.length && ctx.params?.get?.('spinfill') !== '0' ? infillAround(ctx, setPieces, rng.fork('setpieces').fork('infill')) : 0;
+  const tSpC = performance.now();
   chooseCameras(ctx, setPieces);
-  // `?spinfill=0`: A/B flag for the infill alone (set-pieces + garden house stay).
-  const infill = setPieces.length && ctx.params?.get?.('spinfill') !== '0' ? infillFrames(ctx, setPieces, rng.fork('setpieces').fork('infill')) : 0;
   const placeMs = performance.now() - tSp0;
   // LOOP cycle 2 fix round: the terrain/road surface has stopped moving now, so re-resolve the props module's
   // C2 dressing heights once (its own optional hook, same contract as buildings.settle()).
   const detailSettled = ctx.modules.get('props')?.api?.settleDetail?.() ?? 0;
   const tSp1 = performance.now();
-  // Re-test the chosen camera on the final city (report only; infill is behind the subject by construction).
+  // Re-test the chosen camera after the settle (report only): same heroCameras() the presets return, same fan.
   const reg = new Map((ctx.modules.get('props')?.api?.setPieces?.() || []).map((e) => [e.id, e]));
-  for (const r of setPieces) if (r.placed && r.camera) r.occlusionFinal = occlusion(ctx, reg.get(r.id)?.[r.camera]);
+  for (const r of setPieces) {
+    if (!r.placed || !r.camera) continue;
+    const houseId = r.house ? r.house.id : null;
+    r.occlusionFinal = occlusion(ctx, heroCameras(ctx, reg.get(r.id), houseId)[r.camera], houseId);
+  }
   stats.setPieces = setPieces.map((r) => ({
     type: r.type, id: r.id, x: r.x, z: r.z, rot: r.rot, w: r.w, d: r.d, block: r.block, corner: r.corner,
     placed: !!r.placed, verge: r.verge ?? 0, blockers: r.blockers, house: r.house ? r.house.id : null,
     camera: r.camera || null, occlusion: r.occlusion || null, occlusionFinal: r.occlusionFinal || null, infill: r.infill ?? 0,
   }));
   stats.setPieceInfill = infill;
-  // house + placement + camera choice + infill + final occlusion (the reservation runs inside buildCity; settleDetail
-  // is timed by props)
+  stats.setPiecePark = park;
+  // house + placement + park stamp + infill + camera choice + final occlusion (the reservation runs inside buildCity;
+  // settleDetail is timed by props)
   stats.setPieceMs = Math.round((placeMs + performance.now() - tSp1) * 10) / 10;
+  // where that boot stall goes (ms): house + placement / park stamp + yard / infill houses / camera choice + final fan
+  const r1 = (n) => Math.round(n * 10) / 10;
+  stats.setPieceTimes = { place: r1(tSpA - tSp0), park: r1(tSpB - tSpA), infill: r1(tSpC - tSpB), cameras: r1(placeMs - (tSpC - tSp0) + performance.now() - tSp1) };
   return { stats, busStops, busLine, levelUps, detailSettled };
 }
 
@@ -115,6 +133,7 @@ export default {
     'demo:waterfront': () => ({ pos: [150, 150, 430], target: [530, 0, 0], fov: 46 }),
     'demo:highway': () => ({ pos: [-380, 130, -330], target: [-540, 0, -560], fov: 46 }),
     // LOOP cycle 5: the occlusion-checked hero camera of each sited set-piece (falls back to demo:suburb).
+    // LOOP cycle 6: sp-garden is the demo's own composition around the hero house (setpieces.js gardenHero).
     'demo:sp-skate': () => setPieceCamera('skate'),
     'demo:sp-garden': () => setPieceCamera('garden'),
     'demo:sp-farm': () => setPieceCamera('farm'),
@@ -172,13 +191,15 @@ export default {
     stats() { return S ? S.stats : null; },
     /** LOOP cycle 5: the sited set-pieces with the live registry entry and the chosen hero camera:
      * [{ type, id, x, z, rot, w, d, block, corner, placed, house, camera: 'hero'|'heroAlt', cam: {pos,target,fov},
-     *    hero, heroAlt, occlusion }]. Empty with ?nosp=1. */
+     *    hero, heroAlt, occlusion }]. `hero` / `heroAlt` / `cam` are setpieces.js heroCameras() - exactly what the
+     * 'demo:sp-*' presets return. Empty with ?nosp=1. */
     setPieces() {
       if (!S?.stats?.setPieces) return [];
       const reg = new Map((S.ctx.modules.get('props')?.api?.setPieces?.() || []).map((e) => [e.id, e]));
       return S.stats.setPieces.map((r) => {
         const e = reg.get(r.id);
-        return { ...r, placed: r.placed && !!e, hero: e?.hero || null, heroAlt: e?.heroAlt || null, cam: e ? e[r.camera || 'hero'] : null, deckY: e?.deckY ?? null };
+        const cams = heroCameras(S.ctx, e, r.house);
+        return { ...r, placed: r.placed && !!e, hero: cams.hero || null, heroAlt: cams.heroAlt || null, cam: cams[r.camera || 'hero'] || null, deckY: e?.deckY ?? null };
       });
     },
   },
