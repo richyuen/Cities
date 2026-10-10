@@ -242,7 +242,10 @@ async function pageSuite() {
 
   // ---- 3. Endpoint near an existing node joins it (no near-duplicate node) ------------------------------
   {
-    const junction = [...R.nodes.values()].find((n) => n.edges.length >= 3 && Math.hypot(n.x, n.z) > 200);
+    // The 45 degree probe must not run along one of the junction's own arms (the overlap guard would refuse it,
+    // correctly): take the first junction where the probe is allowed.
+    const junction = [...R.nodes.values()].find((n) => n.edges.length >= 3 && Math.hypot(n.x, n.z) > 200
+      && !world.roadOverlapBlocked({ x: n.x + 2.5, z: n.z + 2.5 }, { x: n.x + 44, z: n.z + 44 }, 'street'));
     if (!junction) { check('near-node: found a junction', false, null); } else {
       const beforeNodes = R.nodes.size;
       const degBefore = junction.edges.length;

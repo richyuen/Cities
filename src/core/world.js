@@ -346,8 +346,32 @@ export class World {
   }
 
   /** Resolve one end of a new vehicle road: join a nearby node, else split the nearest road edge, else make a node. */
-  _resolveRoadNode(x, z, nodeSnap = NODE_SNAP) {
-    const near = this._nearestNode(x, z, nodeSnap);
+  /** True when every edge at the node is a pedestrian path (an alley or park path end, typically at a kerb). */
+  _pathOnlyNode(n) {
+    if (!n.edges.length) return false;
+    for (const id of n.edges) { const e = this.roads.edges.get(id); if (e && e.kind !== 'path') return false; }
+    return true;
+  }
+
+  /** Node snapping for an interactively drawn vehicle road. A path-only node is not a junction a street should be
+   * pulled onto: alleys end at the kerb, a few metres off the centreline, so the wide interactive snap radii would
+   * drag a new street's endpoint or route onto them and leave a micro-edge (a 4 m stub that survives a bulldoze).
+   * Such a node still joins when the point is on it (NODE_SNAP), so no near-duplicate node is ever created. */
+  _nearestVehicleNode(x, z, maxDist) {
+    const near = this._nearestNode(x, z, maxDist);
+    if (!near || !this._pathOnlyNode(near)) return near;
+    let best = null, bestD = maxDist + 1e-9;
+    for (const n of this.roads.nodes.values()) {
+      const d = Math.hypot(n.x - x, n.z - z);
+      if (d >= bestD) continue;
+      if (this._pathOnlyNode(n) && d > NODE_SNAP) continue;
+      bestD = d; best = n;
+    }
+    return best;
+  }
+
+  _resolveRoadNode(x, z, nodeSnap = NODE_SNAP, vehicleOnly = false) {
+    const near = vehicleOnly ? this._nearestVehicleNode(x, z, nodeSnap) : this._nearestNode(x, z, nodeSnap);
     if (near) return near;
     const hit = this._nearestRoadEdgePoint(x, z, ENDPOINT_SNAP);
     if (hit) {
@@ -479,8 +503,9 @@ export class World {
     this._retireEdge(e2, 'merge');
     this._createEdgeBetween(o1, o2, proto, 'merge');
     this._cleanupNode(nodeId);
-    this._healNode(o1.id);
-    this._healNode(o2.id);
+    // No recursion into o1 / o2: their degree did not change (each swapped one edge for the merged one), so a
+    // collinear degree-2 node there was already in the network before this removal. Merging it too made a
+    // bulldoze remove junction nodes it never touched, so undoing a drawn road did not restore the network.
   }
 
   static ROAD_SPECS = {
@@ -743,8 +768,8 @@ export class World {
     if (this.roadOverlapBlocked(a, b, kind)) return null;
     if (kind === 'path') return this._addLegacyRoad(a, b, kind, spec, bridge);
 
-    const na = this._resolveRoadNode(a.x, a.z, snapNodes ? JUNCTION_SNAP : NODE_SNAP);
-    const nb = this._resolveRoadNode(b.x, b.z, snapNodes ? JUNCTION_SNAP : NODE_SNAP);
+    const na = this._resolveRoadNode(a.x, a.z, snapNodes ? JUNCTION_SNAP : NODE_SNAP, snapNodes);
+    const nb = this._resolveRoadNode(b.x, b.z, snapNodes ? JUNCTION_SNAP : NODE_SNAP, snapNodes);
     if (!na || !nb || na === nb) return null;
 
     const junctionT = new Map(); // junction node id -> t along the requested segment
@@ -757,7 +782,7 @@ export class World {
         if (!ea || !eb) continue;
         const hit = segIntersect(na.x, na.z, nb.x, nb.z, ea.x, ea.z, eb.x, eb.z);
         if (!hit) continue;
-        const node = this._nearestNode(hit.x, hit.z, JUNCTION_SNAP) || this._splitEdgeAt(e.id, hit.x, hit.z);
+        const node = (snapNodes ? this._nearestVehicleNode(hit.x, hit.z, JUNCTION_SNAP) : this._nearestNode(hit.x, hit.z, JUNCTION_SNAP)) || this._splitEdgeAt(e.id, hit.x, hit.z);
         if (!node || node === na || node === nb) continue;
         const prev = junctionT.get(node.id);
         if (prev === undefined || hit.t < prev) junctionT.set(node.id, hit.t);
@@ -769,7 +794,9 @@ export class World {
           if (!(l2 > 1e-12)) continue;
           const t = ((n.x - na.x) * dx + (n.z - na.z) * dz) / l2;
           if (t <= 1e-6 || t >= 1 - 1e-6) continue;
-          if (pointSegDist(n.x, n.z, na.x, na.z, nb.x, nb.z) > ROUTE_SNAP) continue;
+          const off = pointSegDist(n.x, n.z, na.x, na.z, nb.x, nb.z);
+          if (off > ROUTE_SNAP) continue;
+          if (off > NODE_SNAP && this._pathOnlyNode(n)) continue; // an alley end beside the route is not on it
           const prev = junctionT.get(n.id);
           if (prev === undefined || t < prev) junctionT.set(n.id, t);
         }
