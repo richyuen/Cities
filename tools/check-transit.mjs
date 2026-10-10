@@ -50,9 +50,12 @@ try {
     const transit = C.modules.get('transit').api;
     window.__city.pause();
     sim.tick(true); // pushes the current fare into the model…
+    // Read the ridership that fare was computed from now: population (and with it ridership) still moves every
+    // tick in the freshly booted city, so the value after the second tick is one tick newer than the budget's.
+    const ridership = transit.getRidership();
     sim.tick(true); // …and the next step writes it into the budget snapshot (one-tick lag, like upkeep)
     const bud = sim.getBudget();
-    return { perTick: bud.perTick.income.transit, perDay: bud.perDay.income.transit, ridership: transit.getRidership(), coverage: transit.getCoverage(), budgetPop: sim.getStats().population };
+    return { perTick: bud.perTick.income.transit, perDay: bud.perDay.income.transit, ridership, coverage: transit.getCoverage(), budgetPop: sim.getStats().population };
   });
   const expected = fare.ridership * 0.35 / 1200;
   check(fare.ridership > 0, `ridership is live (${fare.ridership}/day at ${Math.round(fare.coverage * 100)}% coverage)`);

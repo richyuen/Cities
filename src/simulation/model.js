@@ -34,6 +34,12 @@ export const UPKEEP = { road: 0.10, building: 0.05 };
 // pays in full, and a city that grows mostly homes is not charged as if every resident also brought a job. Past
 // the threshold growth keeps the budget roughly level instead of compounding it; taxes, upkeep and construction
 // are what move it. Towns under the threshold, and every small showcase city, are untouched.
+//
+// Beyond the demo city's size (derived from its measured budget at 35k residents, not measured in play): per
+// resident, structure upkeep is about a quarter of reference tax income, and services take up to 98.5% of it, so
+// a city that expands with the same density of roads and utilities breaks even near 46k residents at the default
+// 9% rates and needs its rates raised gradually after that, towards about 11% for a very large city. Lower
+// SERVICES_SHARE to push that point out (0.75 would never need a raise, and would bank ~$170k/day at 35k).
 export const SERVICES_FREE_POP = 11000;
 export const SERVICES_REF_TAX = 0.09;
 export const SERVICES_SHARE = 0.985;
