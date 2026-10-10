@@ -552,7 +552,11 @@ try {
 }
 
 // ---- Part 2b (LOOP c5): `?nosp=1` (set-pieces, their lot reservation and frame infill off) is the pre-cycle city --
-const PRE_C5_CENSUS_HASH = 'e0f35033'; // check-detail census hash at 1876d3b (before cycle 5)
+// e0f35033 was the check-detail census hash at 1876d3b (before cycle 5). Re-pinned 2026-10-10 to 82e9cf4b for one
+// intended change: junctions are re-signalled once generation ends, so the 37 four-arm and one six-arm junctions
+// that carried three lights now carry one per arm (traffic_light 242 -> 282, total +40; nothing else in the
+// census moved). The check still means what it did: `?nosp=1` is the city without set-pieces.
+const PRE_C5_CENSUS_HASH = '82e9cf4b';
 let nospHash = null;
 {
   const app2b = await openApp({ seed: 1, tod: 12, hud: 0, extra: { nosp: '1' } });

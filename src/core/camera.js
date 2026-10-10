@@ -143,6 +143,21 @@ export class CameraPresets {
           const ray = new THREE.Ray(new THREE.Vector3(px, eyeY, pz), new THREE.Vector3(s.x - px, gy + h * 0.42 - eyeY, s.z - pz).normalize());
           const hit = this.world.raycastBuildings(ray, dist + 60);
           if (hit && hit.id !== s.b.id) continue;
+          // Nothing in the lens. Any prop within 3 m of the eye is out (the street preset's rule); a pole or tree
+          // within 10 m and inside the horizontal field of view is out too: a civic lot sits on a street corner,
+          // and a junction's signal pole 6 m in front of the eye fills a tenth of the frame.
+          const vx = s.x - px, vz = s.z - pz, vl = Math.hypot(vx, vz) || 1;
+          const ux = vx / vl, uz = vz / vl;
+          let inLens = false;
+          for (const p of this.world.props.values()) {
+            const ox = p.x - px, oz = p.z - pz;
+            const d = Math.hypot(ox, oz);
+            if (d < 3) { inLens = true; break; }
+            if (d >= 10 || !(p.kind === 'traffic_light' || p.kind === 'streetlamp' || String(p.kind).startsWith('tree'))) continue;
+            const along = (ox * ux + oz * uz) / d;          // cos of the angle off the view axis
+            if (along > 0.80) { inLens = true; break; }     // within ~37 deg: the 42 deg lens spans 34 deg each side
+          }
+          if (inLens) continue;
           const face = Math.cos(off);
           const sunDot = Math.sin(off) * sunDx + Math.cos(off) * sunDz;
           const score = s.score * face * face * (0.5 + 0.5 * sunDot);

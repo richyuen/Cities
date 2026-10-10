@@ -469,6 +469,7 @@ function addDetailForBuilding(b) {
  * and `showcase()` calls it after staging. */
 function settleDetail() {
   const world = S.ctx.world;
+  flushSignals(); // generation is over: every junction has its final arms
   settleSetPieces();
   if (S.c2Off) return 0;
   const t0 = performance.now();
@@ -1173,14 +1174,23 @@ function updateTrafficPhase(dt) {
 }
 
 // ---- auto-population (full game only; showcase stages its own scenes explicitly) ---------------------------
-function maybeSignalIntersections() {
+/** addProp for re-placed signals: a content-derived id (like the C2 placer's), so re-signalling a junction never
+ * consumes world._ids.prop and no other prop's id (and with it its per-instance variation) shifts. */
+function addSignalProp(kind, x, z, rot = 0) {
+  if (!KIND_SET.has(kind)) return null;
+  let id = `sig:${x.toFixed(2)}:${z.toFixed(2)}`;
+  for (let k = 2; S.ctx.world.props.has(id); k++) id = `sig:${x.toFixed(2)}:${z.toFixed(2)}:${k}`;
+  return S.ctx.world.addProp({ id, x, y: resolveHeight(S.ctx, x, z), z, rot, kind });
+}
+
+function maybeSignalIntersections(addProp = api.addProp) {
   const ctx = S.ctx;
   const roads = ctx.modules.get('roads');
   if (roads?.status !== 'ok') return;
   for (const node of roads.api.getIntersections()) {
     if (node.arms.length < 3 || S.signaledNodes.has(node.nodeId)) continue;
     S.signaledNodes.add(node.nodeId);
-    const ids = populateIntersectionNode(ctx, api.addProp, S.rng, roads.api, node);
+    const ids = populateIntersectionNode(ctx, addProp, S.rng, roads.api, node);
     if (ids && ids.length) S.nodeSignalProps.set(node.nodeId, tagProps(ids, 'nodeId', node.nodeId));
   }
 }
@@ -1194,7 +1204,18 @@ function respawnSignals(nodeIds) {
     if (ids) { for (const pid of ids) S.ctx.world.removeProp(pid); S.nodeSignalProps.delete(id); }
     if (S.signaledNodes.delete(id)) changed = true;
   }
-  if (changed) maybeSignalIntersections();
+  if (changed) maybeSignalIntersections(addSignalProp);
+}
+
+/** Re-place the signals of every junction that gained an arm after it was signalled. A junction is signalled the
+ * moment its third arm arrives, so a four-way crossing built one road at a time (every generated grid, every
+ * drawn crossing) would otherwise keep three lights. Runs at the end of generation (settleDetail) and once per
+ * frame in live play. */
+function flushSignals() {
+  if (!S.signalDirty.size) return;
+  const ids = [...S.signalDirty];
+  S.signalDirty.clear();
+  respawnSignals(ids);
 }
 
 /** Lay one edge's street furniture (idempotent per edge id) and tag it with the edge. */
@@ -1250,10 +1271,9 @@ function onRoadAdded({ edgeId, edge, reason }) {
     furnishEdge(edgeId);
     populatePedestriansForEdge(edgeId); // C2: figures on this edge's sidewalks
   }
-  // A junction is signalled once, when its third arm arrives. In live play an arm added to an already signalled
-  // junction (the fourth arm of a drawn crossing) re-places its lights for the new arm set on the next update.
-  // Generation-time junctions are left as they were built, so the generated city is unchanged.
-  if (S.live && e) for (const nid of [e.a, e.b]) if (S.signaledNodes.has(nid)) S.signalDirty.add(nid);
+  // A junction is signalled once, when its third arm arrives. An arm added to an already signalled junction (the
+  // fourth arm of a crossing) marks it, and flushSignals() re-places its lights for the final arm set.
+  if (e) for (const nid of [e.a, e.b]) if (S.signaledNodes.has(nid)) S.signalDirty.add(nid);
   maybeSignalIntersections();
   // Live play only (after the boot settle): a newly drawn/edited road can change the surface under already
   // settled C2 props (the same mechanism that used to leave levitating figures), so re-resolve once.
@@ -1599,7 +1619,7 @@ export default {
     }
     if (S.spResettle) { S.spResettle = false; settleSetPieces(); }
     S.live = true;
-    if (S.signalDirty.size) { const ids = [...S.signalDirty]; S.signalDirty.clear(); respawnSignals(ids); }
+    flushSignals();
     if (S.dirty && performance.now() - S.lastEvent > 30) rebuild();
     if (S.parkDirty.size && performance.now() > S.parkFlushAt) flushParkClusters();
     applyLod(false);

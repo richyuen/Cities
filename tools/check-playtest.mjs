@@ -84,6 +84,22 @@ let before = null;
     }));
     check(f.sim === 'Foo Town' && f.world === 'Foo Town' && f.hud === 'Foo Town', `F: ?city= reaches sim, world.stats and HUD (${JSON.stringify(f)})`);
 
+    // Signals: every generated junction carries one light per arm (a grid built one road at a time used to leave
+    // its four-way crossings with three)
+    const sig = await page.evaluate(() => {
+      const c = window.__city, w = c.world;
+      const lights = new Map();
+      for (const p of w.props.values()) if (p.kind === 'traffic_light' && p.nodeId != null) lights.set(p.nodeId, (lights.get(p.nodeId) || 0) + 1);
+      let junctions = 0, wrong = 0, fourWay = 0;
+      for (const n of c.ctx.modules.get('roads').api.getIntersections()) {
+        if (n.arms.length < 3) continue;
+        junctions++; if (n.arms.length === 4) fourWay++;
+        if ((lights.get(n.nodeId) || 0) !== n.arms.length) wrong++;
+      }
+      return { junctions, fourWay, wrong };
+    });
+    check(sig.junctions > 50 && sig.fourWay > 30 && sig.wrong === 0, `signals: all ${sig.junctions} generated junctions (${sig.fourWay} four-way) have one light per arm (${sig.wrong} wrong)`);
+
     // C1: a street on open land, then bulldoze it
     const c1 = await page.evaluate(async () => {
       const c = window.__city, w = c.world, H = window.__pt;
