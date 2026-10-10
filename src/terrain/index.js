@@ -3,7 +3,8 @@ import * as THREE from 'three';
 import { TerrainData, PLATE, WATER_OFFSET, STUD_PITCH, quantize } from './data.js';
 import { generateHeightField, variantParams, riverZ } from './heightgen.js';
 import { buildChunkGeometry, buildWaterGeometry } from './mesher.js';
-import { patchGroundMaterial, patchWaterMaterial, makeMaskTexture, makeHeightTexture } from './shaders.js';
+import { patchGroundMaterial, patchWaterMaterial, makeMaskTexture, makeHeightTexture, makeLawnTexture } from './shaders.js';
+import { LAWN_N, LAWN_DEFAULT, LAWN_VARIANTS, createLawn } from './lawn.js';
 import { StudManager } from './studs.js';
 
 // 4x2 ground meshes: worst case 8 colour + 8 shadow + 2 stud + 1 stud shadow + 1 water = 20 draw calls (budget 20)
@@ -11,6 +12,13 @@ const CHUNKS_X = 4, CHUNKS_Z = 2;
 const STUD_CHUNK_CELLS = 8;     // 64 m stud chunks: fine-grained radial selection around the camera
 const MAX_STUDS = 40000;
 const GROUND_ENV_MUL = 0.35;    // ground shows a third of the scene env-map sheen (keeps far greens saturated)
+// LOOP c6 lawn fix. The post AO darkens the side wall of an isolated 0.17 m stud about 10x (see studs.js and
+// docs/core-requests/terrain-c6-lawn.md). Terrain's own lawn studs dodge it by not writing depth, and so do the verge
+// studs roads' infill emits through api.studKeep (roads/studs.js `depthless`, fix round 2). false = verges are tiles
+// only, like building yards (the fix-round-1 stopgap: the first lawn panel read that near field as empty).
+const LAWN_VERGE_STUDS = true;
+const LAWN_RELIEF = 0.5;        // far-relief rim tilt in lawn mode (0.9 on the full grid): a lone rim glints at low sun
+const LAWN_RING = 0.18;         // stud contact-ring darkness in the lawn ground shader (v2's far relief uses 0.26)
 const MAP_VARIANT = { default: 'default', closeup: 'default', water: 'water' };
 
 let S = null; // module state (single instance)
@@ -109,6 +117,15 @@ function onCell({ i, j }) {
   S.studDebounce = 0.25;
 }
 
+/** LOOP c6 lawn only: world.addBuilding/removeBuilding change cell.type without a world:cell event. */
+function onBuilding({ building: b } = {}) {
+  if (!S || !b) return;
+  const i1 = b.i + (b.w || 1) - 1, j1 = b.j + (b.d || 1) - 1;
+  updateStudMask(b.i, b.j, i1, j1);
+  S.studs.invalidateRegion(b.i, b.j, i1, j1);
+  S.studDebounce = 0.25;
+}
+
 function generate(variant) {
   const world = S.ctx.world;
   // Pinned (fixed plateau/river/coast position) whenever the pre-built demo city will load — its road network
@@ -176,10 +193,14 @@ export default {
   async init(ctx) {
     const world = ctx.world;
     const mode = ctx.params.get('terrain') === 'ramp' ? 'ramp' : 'terrace';
+    // LOOP c6 lawn (owner-approved trial): absent = sparse12; ?lawn=0 = the pre-lawn full stud grid, code path untouched
+    const lp = ctx.params.get('lawn');
+    const lawnMode = lp === null ? LAWN_DEFAULT : lp === '0' ? 0 : (LAWN_VARIANTS[lp] ? Number(lp) : LAWN_DEFAULT);
     S = {
       ctx, rng: ctx.rng.fork('terrain'), variant: null, dirty: new Set(), waterDirty: true, time: 0, studDebounce: 0,
       unsub: [], chunks: [], bulk: false, waterCells: new Set(), seaLevel0: world.seaLevel,
     };
+    S.lawn = lawnMode ? createLawn(lawnMode) : null;
     S.data = new TerrainData(world, S.rng, ctx.materials, { mode });
     S.group = new THREE.Group();
     S.group.name = 'terrain';
@@ -195,8 +216,13 @@ export default {
       uStudMask: { value: S.studMaskTex },
       uMapMin: { value: new THREE.Vector2(world.minX, world.minZ) },
       uMapSize: { value: new THREE.Vector2(world.widthMeters, world.depthMeters) },
-      uStudPitch: { value: STUD_PITCH }, uReliefStrength: { value: 0.9 }, uStudFade: { value: S.studFade },
+      uStudPitch: { value: STUD_PITCH }, uReliefStrength: { value: S.lawn ? LAWN_RELIEF : 0.9 }, uStudFade: { value: S.studFade },
     };
+    if (S.lawn) {
+      S.lawnTex = makeLawnTexture(S.lawn.pattern, LAWN_N);
+      S.groundUniforms.uLawnTex = { value: S.lawnTex };
+      S.groundUniforms.uLawn = { value: new THREE.Vector4(S.lawn.seamDark, S.lawn.seamHalf, S.lawn.tone, LAWN_RING) };
+    }
     const base = ctx.materials.plastic('white', { roughness: 0.45, clearcoat: 0.2, clearcoatRoughness: 0.3 });
     S.groundMat = base.clone();
     S.groundMat.vertexColors = true;
@@ -207,7 +233,7 @@ export default {
     Object.defineProperty(S.groundMat, 'envMapIntensity', {
       get() { return this._envBase * GROUND_ENV_MUL; }, set(v) { this._envBase = v; }, configurable: true,
     });
-    patchGroundMaterial(S.groundMat, S.groundUniforms);
+    patchGroundMaterial(S.groundMat, S.groundUniforms, S.lawn);
     // Shadow depth pass: three defaults every material to the OPPOSITE side (shadowSide[FrontSide] = BackSide),
     // a back-face trick that is safe for closed solids only. The ground is an open heightfield, so the default
     // culls its top faces from the sun and the chunks write no depth at all (B6/G11: live cascade-1 map coverage
@@ -273,6 +299,7 @@ export default {
     // near-camera instanced studs
     S.studs = new StudManager(ctx, S.data, S.group, {
       chunkCells: STUD_CHUNK_CELLS, maxStuds: MAX_STUDS, radius: 170, material: S.studMat, fadeUniform: S.studFade,
+      lawn: S.lawn,
     });
 
     S.unsub.push(ctx.events.on('terrain:changed', onTerrainChanged));
@@ -281,11 +308,16 @@ export default {
       if (p.studs !== undefined) S.studs.setEnabled(p.studs);
     }));
 
+    if (S.lawn) {
+      S.unsub.push(ctx.events.on('building:spawned', onBuilding));
+      S.unsub.push(ctx.events.on('building:removed', onBuilding));
+    }
+
     generate('default');
     S.studs.update(0, ctx.camera, true);
     let hMin = Infinity, hMax = -Infinity;
     for (const v of world.heightField) { if (v < hMin) hMin = v; if (v > hMax) hMax = v; }
-    ctx.log(`[terrain] mode=${mode} tris≈${S.chunks.reduce((n, c) => n + (c.mesh.geometry.index?.count || 0) / 3, 0) | 0} studs=${S.studs.count} h=[${hMin.toFixed(1)}, ${hMax.toFixed(1)}]`);
+    ctx.log(`[terrain] mode=${mode} tris≈${S.chunks.reduce((n, c) => n + (c.mesh.geometry.index?.count || 0) / 3, 0) | 0} studs=${S.studs.count} h=[${hMin.toFixed(1)}, ${hMax.toFixed(1)}]${S.lawn ? ` lawn=${S.lawn.mode}:${S.lawn.name} fnv=${S.lawn.fnv}` : ''}`);
   },
 
   update(dt, ctx) {
@@ -314,6 +346,7 @@ export default {
     S.water.geometry?.dispose();
     S.studs.dispose();
     S.studMaskTex.dispose(); S.heightTex.dispose();
+    S.lawnTex?.dispose();
     ctx.materials.cache.delete('terrain:ground'); ctx.materials.cache.delete('terrain:water'); ctx.materials.cache.delete('terrain:studs');
     S.groundMat.dispose(); S.waterMat.dispose(); S.studMat.dispose();
     S = null;
@@ -373,5 +406,13 @@ export default {
     waterY() { return S ? S.ctx.world.seaLevel + WATER_OFFSET : WATER_OFFSET; },
     /** Palette colour name of the plate at cell (i,j). */
     plateColor(i, j) { return S ? S.data.colorNameOf(i, j) : 'brightGreen'; },
+    /**
+     * LOOP c6 lawn: may another module's ground infill (roads' verges) put a stud on stud-lattice point (ix, iz) =
+     * round(world x|z / 0.8)? Always true under ?lawn=0. In lawn mode it is the keep rule only when LAWN_VERGE_STUDS is
+     * set; as shipped it is false (see the constant). The pattern itself is reported by api.lawn().
+     */
+    studKeep(ix, iz) { return S && S.lawn ? LAWN_VERGE_STUDS && S.lawn.keep(ix, iz) : true; },
+    /** LOOP c6 lawn: active variant and pattern checksum ({ mode: 0 } under ?lawn=0). */
+    lawn() { return S && S.lawn ? { mode: S.lawn.mode, name: S.lawn.name, fnv: S.lawn.fnv, studs: S.lawn.studs } : { mode: 0, name: 'off', fnv: null, studs: null }; },
   },
 };

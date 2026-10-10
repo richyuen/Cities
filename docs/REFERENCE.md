@@ -4,7 +4,7 @@ No copyrighted reference screenshots are stored in this repo. If images are plac
 must use them. Otherwise score against this rubric, which describes the target look concretely.
 
 ## The look
-1. **Everything is bricks.** Ground is a sea of baseplates with visible studs (pitch 0.8 m in-world). Buildings are stacked bricks,
+1. **Everything is bricks.** Ground is baseplates on a 0.8 m stud pitch: since LOOP c6 a tiled lawn (seamed tiles, sparse studs; `?lawn=0` = the old full stud grid). Buildings are stacked bricks,
    plates, slopes, windows and doors in official Blox colours; roofs have studs or are tiled smooth. Roads are dark-grey road plates
    with printed white/yellow markings and stud shoulders. Trees are Blox trees (stacked leaf elements, brown trunk cylinders).
    Cars are 4–6-stud-wide Blox cars with transparent windscreens and round headlight elements.
@@ -29,5 +29,5 @@ must use them. Otherwise score against this rubric, which describes the target l
 | 5 | Programmer art: flat colours, no shadows, boxes |
 | < 3 | Broken or empty |
 
-Deductions (guidance): missing studs on Blox surfaces −1; visible z-fighting/gaps −1; flat/unlit materials −2; wrong sun/shadow
+Deductions (guidance): missing studs on built Blox surfaces (roofs, shoulders, decks; the ground lawn is sparse by design) −1; visible z-fighting/gaps −1; flat/unlit materials −2; wrong sun/shadow
 direction −1; night with no emissive life −1.5; console errors → automatic fail; over perf budget → automatic fail.

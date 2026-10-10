@@ -65,13 +65,20 @@ function makeStudGeometry(radius = 0.24, height = 0.17) {
 }
 
 export class StudField {
-  constructor(materials, { capacity = 120000, radius = 200 } = {}) {
+  constructor(materials, { capacity = 120000, radius = 200, depthless = false } = {}) {
     this.materials = materials;
     this.capacity = capacity;
     this.radius = radius;
     this.chunks = new Map(); // key → { cx, cz, data: number[] (x,y,z,r,g,b) }
     this.geometry = makeStudGeometry();
-    this.mesh = new THREE.InstancedMesh(this.geometry, materials.plastic('white', { instanceColor: true }), capacity);
+    let mat = materials.plastic('white', { instanceColor: true });
+    // LOOP c6 lawn: sparse verge studs must not write depth, like terrain's own lawn studs (terrain/studs.js): the post
+    // AO otherwise turns the side wall of an isolated stud into a dark puck. Own material clone (the cached one is
+    // shared), drawn after the other opaques, instances sorted farthest first in update().
+    this.depthless = depthless;
+    if (depthless) { mat = mat.clone(); mat.depthWrite = false; }
+    this.mesh = new THREE.InstancedMesh(this.geometry, mat, capacity);
+    if (depthless) this.mesh.renderOrder = 1;
     this.mesh.count = 0;
     this.mesh.castShadow = false;
     this.mesh.receiveShadow = true;
@@ -113,13 +120,29 @@ export class StudField {
   /** Upload studs near the camera. Cheap when nothing changed. */
   update(camera, force = false) {
     const cp = camera.position;
-    if (!force && !this._dirty && cp.distanceTo(this._lastCam) < 12) return;
+    if (!force && !this._dirty && cp.distanceTo(this._lastCam) < (this.depthless ? 2 : 12)) return;
     this._lastCam.copy(cp);
     this._dirty = false;
     const mesh = this.mesh, m = this._m, col = this._col;
     const r2 = (this.radius + CHUNK) ** 2;
     let n = 0;
-    outer: for (const c of this.chunks.values()) {
+    if (this.depthless) {
+      const L = [];
+      for (const c of this.chunks.values()) {
+        const dx = c.cx - cp.x, dz = c.cz - cp.z;
+        if (dx * dx + dz * dz > r2) continue;
+        const d = c.data;
+        for (let i = 0; i < d.length; i += 6) L.push({ d, i, d2: (d[i] - cp.x) ** 2 + (d[i + 1] - cp.y) ** 2 + (d[i + 2] - cp.z) ** 2 });
+      }
+      L.sort((a, b) => b.d2 - a.d2 || a.d[a.i] - b.d[b.i] || a.d[a.i + 2] - b.d[b.i + 2]);
+      for (const { d, i } of L.slice(Math.max(0, L.length - this.capacity))) {
+        m.makeTranslation(d[i], d[i + 1], d[i + 2]);
+        mesh.setMatrixAt(n, m);
+        col.setRGB(d[i + 3], d[i + 4], d[i + 5]);
+        mesh.setColorAt(n, col);
+        n++;
+      }
+    } else outer: for (const c of this.chunks.values()) {
       const dx = c.cx - cp.x, dz = c.cz - cp.z;
       if (dx * dx + dz * dz > r2) continue;
       const d = c.data;
@@ -137,5 +160,5 @@ export class StudField {
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
   }
 
-  dispose() { this.mesh.dispose(); this.geometry.dispose(); }
+  dispose() { if (this.depthless) this.mesh.material.dispose(); this.mesh.dispose(); this.geometry.dispose(); }
 }

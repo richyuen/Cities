@@ -51,9 +51,10 @@ function makeInstanced(geo, mat, cap, name) {
 }
 
 export class StudManager {
-  constructor(ctx, data, group, { chunkCells = 8, maxStuds = 40000, radius = 170, material, fadeUniform } = {}) {
+  constructor(ctx, data, group, { chunkCells = 8, maxStuds = 40000, radius = 170, material, fadeUniform, lawn = null } = {}) {
     this.ctx = ctx;
     this.data = data;
+    this.lawn = lawn; // LOOP c6 lawn keep rule (null = every lattice point, the pre-lawn path)
     this.group = group;
     this.chunkCells = chunkCells;
     this.maxStuds = maxStuds;
@@ -70,6 +71,15 @@ export class StudManager {
     this.near.castShadow = true;
     this.far = makeInstanced(this.geoFar, this.material, maxStuds, 'terrain-studs-far');
     this.far.castShadow = false;
+    if (lawn) {
+      // LOOP c6 lawn fix: the post AO (GTAO from scene depth + the grade's power curve) turns the 0.17 m side wall of
+      // an isolated stud about 10x darker than the plate (dark pucks on a pale lawn). Sparse lawn studs therefore do
+      // not write depth, so the AO pass never sees them; they are depth-TESTED against everything drawn before them
+      // (renderOrder puts them after the other opaques, far before near) and _rebuild sorts each mesh back to front,
+      // which is all a field of convex, back-face-culled prisms needs. The material is terrain's own clone.
+      this.material.depthWrite = false;
+      this.far.renderOrder = 1; this.near.renderOrder = 2;
+    }
     group.add(this.near, this.far);
     this.current = '';
     this.currentSet = new Set();
@@ -102,6 +112,9 @@ export class StudManager {
     const i0 = cx * c, j0 = cz * c, i1 = Math.min(data.w, i0 + c), j1 = Math.min(data.h, j0 + c);
     const per = cs / STUD_PITCH; // studs per cell edge (10)
     const pos = [], col = [];
+    const lawn = this.lawn, tone = lawn ? [] : null;
+    // world-anchored stud lattice index of the map corner (ix = round(x / pitch)), the ground shader's floor(p + 0.5)
+    const ix0 = Math.round(world.minX / STUD_PITCH), iz0 = Math.round(world.minZ / STUD_PITCH);
     for (let j = j0; j < j1; j++) {
       for (let i = i0; i < i1; i++) {
         if (!data.studdable(i, j)) continue;
@@ -111,17 +124,19 @@ export class StudManager {
           const z = z0 + l * STUD_PITCH;
           for (let k = 0; k < per; k++) {
             const x = x0 + k * STUD_PITCH;
+            if (lawn && !lawn.keep(ix0 + i * per + k, iz0 + j * per + l)) continue;
             const h = data.topAt(x + EPS, z + EPS);
             if (h === null) continue;
             const hb = data.topAt(x - EPS, z + EPS), hc = data.topAt(x + EPS, z - EPS), hd = data.topAt(x - EPS, z - EPS);
             if (hb === null || hc === null || hd === null) continue;
             if (Math.abs(hb - h) > 1e-3 || Math.abs(hc - h) > 1e-3 || Math.abs(hd - h) > 1e-3) continue;
             pos.push(x, h, z); col.push(ci);
+            if (tone) tone.push(lawn.toneAt(ix0 + i * per + k, iz0 + j * per + l));
           }
         }
       }
     }
-    const rec = { pos: Float32Array.from(pos), col: Uint8Array.from(col), count: col.length };
+    const rec = { pos: Float32Array.from(pos), col: Uint8Array.from(col), count: col.length, tone: tone ? Uint8Array.from(tone) : null };
     this.cache.set(this.key(cx, cz), rec);
     return rec;
   }
@@ -131,7 +146,8 @@ export class StudManager {
   /** Pick chunks by distance to camera within budget; rebuild the instance buffers when needed. */
   update(dt, camera, force = false) {
     this._timer += dt;
-    const moved = this._lastCam.distanceToSquared(camera.position) > 36;
+    // lawn: the instances are depth-sorted for the camera position, so re-sort after 2 m instead of 6 m
+    const moved = this._lastCam.distanceToSquared(camera.position) > (this.lawn ? 4 : 36);
     if (!force && !this.dirty && !moved && this._timer < 0.5) return;
     this._timer = 0;
     const data = this.data, world = data.world, cs = data.cs, c = this.chunkCells, span = c * cs;
@@ -178,6 +194,7 @@ export class StudManager {
     const cp = camera.position;
     const nearR2 = NEAR_SHADOW_R * NEAR_SHADOW_R, fadeFar = this.fade.y;
     let nn = 0, nf = 0;
+    const lawn = this.lawn, toned = { r: 0, g: 0, b: 0 }; // scratch: the palette colours are shared, never mutate them
     const put = (M, Cc, n, x, y, z, col) => {
       const o = n * 16;
       M[o] = 1; M[o + 1] = 0; M[o + 2] = 0; M[o + 3] = 0;
@@ -186,15 +203,44 @@ export class StudManager {
       M[o + 12] = x; M[o + 13] = y; M[o + 14] = z; M[o + 15] = 1;
       Cc[n * 3] = col.r; Cc[n * 3 + 1] = col.g; Cc[n * 3 + 2] = col.b;
     };
-    for (const cd of chosen) {
-      const rec = this.get(cd.cx, cd.cz);
-      for (let k = 0; k < rec.count; k++) {
+    if (lawn) {
+      // lawn studs do not write depth (see the constructor): gather, then emit each mesh farthest first
+      const L = this._sortList || (this._sortList = []);
+      let n = 0;
+      for (const cd of chosen) {
+        const rec = this.get(cd.cx, cd.cz);
+        for (let k = 0; k < rec.count; k++) {
+          const dx = rec.pos[k * 3] - cp.x, dy = rec.pos[k * 3 + 1] - cp.y, dz = rec.pos[k * 3 + 2] - cp.z, d2 = dx * dx + dy * dy + dz * dz;
+          if (d2 > fadeFar * fadeFar) continue; // fully shrunk anyway
+          const e = L[n] || (L[n] = { rec: null, k: 0, d2: 0 });
+          e.rec = rec; e.k = k; e.d2 = d2; n++;
+        }
+      }
+      L.length = n;
+      L.sort((a, b) => b.d2 - a.d2);
+      for (let q = 0; q < n; q++) {
+        const { rec, k, d2 } = L[q];
+        let col = data.colors[rec.col[k]];
+        if (rec.tone) {   // same per-tile tone factor as the ground shader
+          const t = 1 + (rec.tone[k] / 255 - 0.5) * 2 * lawn.tone;
+          toned.r = col.r * t; toned.g = col.g * t; toned.b = col.b * t;
+          col = toned;
+        }
         const x = rec.pos[k * 3], y = rec.pos[k * 3 + 1], z = rec.pos[k * 3 + 2];
-        const dx = x - cp.x, dy = y - cp.y, dz = z - cp.z, d2 = dx * dx + dy * dy + dz * dz;
-        if (d2 > fadeFar * fadeFar) continue; // fully shrunk anyway
-        const col = data.colors[rec.col[k]];
         if (d2 < nearR2 && nn < NEAR_CAP) put(nearM, nearC, nn++, x, y, z, col);
         else if (nf < this.maxStuds) put(farM, farC, nf++, x, y, z, col);
+      }
+    } else {
+      for (const cd of chosen) {
+        const rec = this.get(cd.cx, cd.cz);
+        for (let k = 0; k < rec.count; k++) {
+          const x = rec.pos[k * 3], y = rec.pos[k * 3 + 1], z = rec.pos[k * 3 + 2];
+          const dx = x - cp.x, dy = y - cp.y, dz = z - cp.z, d2 = dx * dx + dy * dy + dz * dz;
+          if (d2 > fadeFar * fadeFar) continue; // fully shrunk anyway
+          const col = data.colors[rec.col[k]];
+          if (d2 < nearR2 && nn < NEAR_CAP) put(nearM, nearC, nn++, x, y, z, col);
+          else if (nf < this.maxStuds) put(farM, farC, nf++, x, y, z, col);
+        }
       }
     }
     this.near.count = nn; this.far.count = nf;

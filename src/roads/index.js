@@ -279,6 +279,8 @@ function markFootprint(ctx, footprint, studs) {
         && Math.abs(world.getVertexHeight(oi + 1, oj + 1) - h) < 1e-4 ? h : null;
     };
     const flatCache = new Map();
+    // LOOP c6 lawn: terrain's sparse-stud keep rule (same lattice) also thins the verge infill; absent / ?lawn=0 = every stud
+    const keepStud = typeof tapi?.studKeep === 'function' ? tapi.studKeep : null;
     for (const ck of touched.keys()) {
       const i = ck % W, j = (ck - i) / W;
       const x0 = world.minX + i * cs, z0 = world.minZ + j * cs;
@@ -288,6 +290,7 @@ function markFootprint(ctx, footprint, studs) {
           const key = lkey(Math.round(x / PITCH), Math.round(z / PITCH));
           if (covered.has(key) || emitted.has(key)) continue;
           emitted.add(key);
+          if (keepStud && !keepStud(Math.round(x / PITCH), Math.round(z / PITCH))) continue;
           const oi = i + (k === 10 ? 1 : 0), oj = j + (l === 10 ? 1 : 0);
           const oc = world.cellAt(oi, oj);
           if (!oc || oc.height < -0.01) continue;
@@ -650,7 +653,9 @@ export default {
     S.studs = new StudField(ctx.materials, { capacity: 80000, radius: 260 });
     S.group.add(S.studs.mesh);
     // terrain studs put back on the uncovered part of road cells: culled like the terrain's own studs (170 m)
-    S.infill = new StudField(ctx.materials, { capacity: 80000, radius: 150 });
+    // LOOP c6 lawn: in lawn mode they are the lawn's sparse studs, so they are drawn depth-less like terrain's
+    const lawnOn = (ctx.modules.get('terrain')?.api?.lawn?.().mode ?? 0) > 0;
+    S.infill = new StudField(ctx.materials, { capacity: 80000, radius: 150, depthless: lawnOn });
     S.infill.mesh.name = 'roads-infill-studs';
     S.group.add(S.infill.mesh);
     const bump = () => markDirty();

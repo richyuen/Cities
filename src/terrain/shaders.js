@@ -19,7 +19,8 @@ function replaceAll(src, pairs) {
  * camera-distance band [uStudFade.x, uStudFade.y] in which the real instanced studs shrink OUT, so there is no
  * LOD seam. Beyond a few hundred metres (stud < ~1 px) the pattern dissolves to the plain plate colour.
  */
-export function patchGroundMaterial(mat, uniforms) {
+export function patchGroundMaterial(mat, uniforms, lawn = null) {
+  if (lawn) return patchGroundMaterialLawn(mat, uniforms);
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
     shader.vertexShader = replaceAll(shader.vertexShader, WP_VERTEX('vTerrainWP'));
@@ -69,6 +70,83 @@ float tStudMaskAt(vec2 p) { return texture2D(uStudMask, (p - uMapMin) / uMapSize
     ]);
   };
   mat.customProgramCacheKey = () => 'terrain-ground-v2';
+  return mat;
+}
+
+/**
+ * LOOP c6 lawn (?lawn=1..3): v3 ground. Same stud relief as v2 but only on the lattice cells the lawn pattern keeps
+ * (uLawnTex.r, the bytes the CPU stud placement reads), plus tile seams and a per-tile tone on every dry, in-map,
+ * up-facing fragment. uLawn = (seam darkness, seam half-width in cells, tone amplitude, stud contact-ring darkness); variants differ only by
+ * uniforms, so they share one program. ?lawn=0 never reaches this function (v2 strings and key stay as they were).
+ */
+function patchGroundMaterialLawn(mat, uniforms) {
+  mat.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, uniforms);
+    shader.vertexShader = replaceAll(shader.vertexShader, WP_VERTEX('vTerrainWP'));
+    shader.fragmentShader = replaceAll(shader.fragmentShader, [
+      ['#include <common>', `#include <common>
+varying vec3 vTerrainWP;
+uniform sampler2D uStudMask;
+uniform sampler2D uLawnTex;
+uniform vec4 uLawn;
+uniform vec2 uMapMin;
+uniform vec2 uMapSize;
+uniform float uStudPitch;
+uniform float uReliefStrength;
+uniform vec2 uStudFade;
+float tStudMaskAt(vec2 p) { return texture2D(uStudMask, (p - uMapMin) / uMapSize).r; }`],
+      ['#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+{
+  vec3 nW = transformDirectionByInverseViewMatrix(nonPerturbedNormal, viewMatrix);
+  float flatW = step(0.999, nW.y);
+  vec2 p = vTerrainWP.xz / uStudPitch;
+  vec2 c = floor(p + 0.5);
+  vec2 d = p - c;
+  float r = length(d);
+  vec2 fwv = fwidth(p);
+  float fw = fwv.x + fwv.y;
+  vec4 lw = texelFetch(uLawnTex, (ivec2(c) + 4096) & 255, 0);
+  // tiles: every dry, in-map, up-facing fragment (yards and road verges included; not gated by the stud mask)
+  vec2 q = (vTerrainWP.xz - uMapMin) / uMapSize;
+  float tileW = flatW * step(-0.005, vTerrainWP.y) * step(0.0, min(q.x, q.y)) * step(max(q.x, q.y), 1.0);
+  if (tileW > 0.5) {
+    float fmax = max(fwv.x, fwv.y);
+    diffuseColor.rgb *= 1.0 + (lw.g * 2.0 - 1.0) * uLawn.z * (1.0 - smoothstep(0.20, 0.60, fmax));
+    int bits = int(lw.b * 255.0 + 0.5);
+    vec2 on = vec2(float((bits >> (d.x < 0.0 ? 0 : 1)) & 1), float((bits >> (d.y < 0.0 ? 2 : 3)) & 1));
+    vec2 e = 0.5 - abs(d);                                   // distance to the nearest cell edge, per axis
+    vec2 f = max(fwv, vec2(1e-4));
+    vec2 ln = clamp((uLawn.y - e) / f + 0.5, vec2(0.0), min(vec2(1.0), 2.0 * uLawn.y / f)) * on;
+    diffuseColor.rgb *= 1.0 - uLawn.x * max(ln.x, ln.y) * (1.0 - smoothstep(0.12, 0.40, fmax));
+  }
+  vec2 cw = c * uStudPitch;
+  float m = tStudMaskAt(cw + vec2(0.01, 0.01)) * tStudMaskAt(cw + vec2(-0.01, 0.01))
+          * tStudMaskAt(cw + vec2(0.01, -0.01)) * tStudMaskAt(cw + vec2(-0.01, -0.01));
+  float dist = distance(vTerrainWP, cameraPosition);
+  float lod = smoothstep(uStudFade.x, uStudFade.y, dist);          // real studs -> relief cross-fade
+  float fade = 1.0 - smoothstep(0.55, 1.4, fw);                     // pattern -> plain plate when sub-pixel
+  float kb = flatW * step(0.5, m) * fade * step(0.5, lw.r);         // lawn: only the cells the pattern keeps
+  float k = kb * lod;
+  if (kb > 0.001) {
+    float aa = max(0.03, fw * 0.75);
+    float R = 0.3;
+    float top = 1.0 - smoothstep(R - aa, R + aa, r);
+    float rim = smoothstep(R - 0.14 - aa, R - 0.02, r) * top;
+    float ao = (1.0 - smoothstep(R + aa, R + 0.13 + aa, r)) * (1.0 - top);
+    vec3 tilt = vec3(d.x, 0.0, d.y) / max(r, 1e-4);
+    nW = normalize(nW + tilt * rim * uReliefStrength * k);
+    normal = normalize((viewMatrix * vec4(nW, 0.0)).xyz);
+    // contact ring at every distance (uLawn.w): the real lawn studs write no depth, so the post AO does not ground
+    // them; this ring does, and it is the same ring the far relief shows, so the cross-fade keeps one look
+    diffuseColor.rgb *= 1.0 - uLawn.w * ao * kb;
+  }
+}`],
+      // v2 also copies the tilted relief normal into the clearcoat layer. The lawn does not: with sparse studs the
+      // sharp clearcoat lobe on a lone rim is a white speck at low sun (frame 03), so the coat keeps the flat plate
+      // normal (three's default, nonPerturbedNormal) and only the rougher base layer sees the rim.
+    ]);
+  };
+  mat.customProgramCacheKey = () => 'terrain-ground-v3-lawn';
   return mat;
 }
 
@@ -186,6 +264,19 @@ export function makeMaskTexture(w, h) {
   t.generateMipmaps = false;
   t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
   t.unpackAlignment = 1;
+  t.needsUpdate = true;
+  return t;
+}
+
+/** LOOP c6 lawn: RGBA8 nearest-filtered pattern texture (n x n texels, read with texelFetch). */
+export function makeLawnTexture(pattern, n) {
+  const t = new THREE.DataTexture(pattern, n, n, THREE.RGBAFormat, THREE.UnsignedByteType);
+  t.magFilter = THREE.NearestFilter;
+  t.minFilter = THREE.NearestFilter;
+  t.generateMipmaps = false;
+  t.flipY = false;
+  t.colorSpace = THREE.NoColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.needsUpdate = true;
   return t;
 }
