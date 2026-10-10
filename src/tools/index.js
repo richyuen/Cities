@@ -360,6 +360,9 @@ function currentMoney(ctx) {
  * clobbered by the next sim:tick, since simulation republishes world.stats.money from its own ledger). */
 function spendMoney(ctx, cost) {
   const sim = ctx.modules.get('simulation');
+  // The simulation owns the ledger: debit it there. (This used to return without charging whenever the simulation
+  // was loaded, so roads and zoning showed a price in the toast and cost nothing.)
+  if (sim?.status === 'ok' && typeof sim.api?.spend === 'function') { sim.api.spend(cost); return; }
   if (sim?.status === 'ok') return;
   const cur = Number.isFinite(ctx.world.stats?.money) ? ctx.world.stats.money : 0;
   ctx.world.setStats({ money: Math.max(0, cur - cost) });

@@ -25,6 +25,18 @@ export const MILESTONES = [
 /** money per tick per unit (person / job) at 100% tax */
 export const TAX_YIELD = { r: 0.10, c: 0.20, i: 0.17 };
 export const UPKEEP = { road: 0.10, building: 0.05 };
+// City services (administration, sanitation, maintenance crews). Tax income grows with population while road /
+// building / utility upkeep is per structure and stays flat as buildings level up, so without this line a grown
+// city banks about twenty times what a young one does (demo city, seed 1: +$28k/day at 9k residents, +$525k/day
+// at 34.6k). Services cost SERVICES_SHARE of the city's tax base at the reference SERVICES_REF_TAX rate, phased
+// in above SERVICES_FREE_POP by (1 - FREE / population): nothing for a town, most of the reference income for a
+// metropolis. It follows the tax base (residents and jobs), not the player's own rates, so raising a tax still
+// pays in full, and a city that grows mostly homes is not charged as if every resident also brought a job. Past
+// the threshold growth keeps the budget roughly level instead of compounding it; taxes, upkeep and construction
+// are what move it. Towns under the threshold, and every small showcase city, are untouched.
+export const SERVICES_FREE_POP = 11000;
+export const SERVICES_REF_TAX = 0.09;
+export const SERVICES_SHARE = 0.985;
 export const WORKFORCE_SHARE = 0.55;
 export const PARK_RADIUS = 6;                 // cells (Chebyshev)
 export const POWER_RADIUS = 18;                // cells (Chebyshev) — one plant covers a real district
@@ -172,7 +184,7 @@ export class SimModel {
     this.newCandidates = [];                          // ids that became candidates this tick
     this.roadAdjCoverage = null;
     this.unserved = [];                                // building ids missing road, power, or water
-    this.budget = { income: { r: 0, c: 0, i: 0, transit: 0, total: 0 }, expenses: { roads: 0, buildings: 0, utilities: 0, transit: 0, policies: 0, disasters: 0, total: 0 }, net: 0 };
+    this.budget = { income: { r: 0, c: 0, i: 0, transit: 0, total: 0 }, expenses: { roads: 0, buildings: 0, utilities: 0, services: 0, transit: 0, policies: 0, disasters: 0, total: 0 }, net: 0 };
     this.debt = 0;                                    // 0..1 service degradation from a negative treasury
     this.wealth = 0;                                  // 0..1 bonus from a healthy treasury
     this.bankruptTicks = 0;                            // consecutive ticks with debt saturated at 1.0
@@ -610,12 +622,14 @@ export class SimModel {
     }
     const expPol = fx.upkeep;   // flat $/tick per active policy (not scaled by the scenario upkeepMul)
     const expDisaster = this.disasterCost;   // active-disaster insurance/cleanup (disasters pushes; see src/disasters)
-    const income = incR + incC + incI + this.transitFare, expenses = expRoads + expBld + expUtil + this.transitUpkeep + expPol + expDisaster;
+    const svcBase = (pop * TAX_YIELD.r + jobsC * TAX_YIELD.c + jobsI * TAX_YIELD.i) * SERVICES_REF_TAX;
+    const expSvc = pop > SERVICES_FREE_POP ? svcBase * SERVICES_SHARE * (1 - SERVICES_FREE_POP / pop) * fx.upkeepMul : 0;
+    const income = incR + incC + incI + this.transitFare, expenses = expRoads + expBld + expUtil + expSvc + this.transitUpkeep + expPol + expDisaster;
     this.money += income - expenses;
     if (this.bankrupt && this.money < BANKRUPT_FLOOR) this.money += (BANKRUPT_FLOOR - this.money) * BANKRUPT_SPRING;
     const bg = this.budget;
     bg.income.r = incR; bg.income.c = incC; bg.income.i = incI; bg.income.transit = this.transitFare; bg.income.total = income;
-    bg.expenses.roads = expRoads; bg.expenses.buildings = expBld; bg.expenses.utilities = expUtil;
+    bg.expenses.roads = expRoads; bg.expenses.buildings = expBld; bg.expenses.utilities = expUtil; bg.expenses.services = expSvc;
     bg.expenses.transit = this.transitUpkeep;
     bg.expenses.policies = expPol;
     bg.expenses.disasters = expDisaster;
@@ -681,7 +695,7 @@ export class SimModel {
         income: { r: bg.income.r * perDay, c: bg.income.c * perDay, i: bg.income.i * perDay, transit: bg.income.transit * perDay, total: bg.income.total * perDay },
         expenses: {
           roads: bg.expenses.roads * perDay, buildings: bg.expenses.buildings * perDay,
-          utilities: bg.expenses.utilities * perDay, transit: bg.expenses.transit * perDay,
+          utilities: bg.expenses.utilities * perDay, services: bg.expenses.services * perDay, transit: bg.expenses.transit * perDay,
           policies: bg.expenses.policies * perDay, disasters: bg.expenses.disasters * perDay,
           total: bg.expenses.total * perDay,
         },

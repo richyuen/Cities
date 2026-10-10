@@ -56,6 +56,7 @@ function buildTreasuryModal(ctx) {
       h('span', {}, 'Income / day'), h('span', {}, fmtMoney(bud.perDay.income.total)),
       h('span', {}, 'Transit fares / day'), h('span', {}, fmtMoney(bud.perDay.income.transit || 0)),
       h('span', {}, 'Expenses / day'), h('span', {}, fmtMoney(bud.perDay.expenses.total)),
+      h('span', {}, 'City services / day'), h('span', {}, fmtMoney(bud.perDay.expenses.services || 0)),
       h('span', {}, 'Transit upkeep / day'), h('span', {}, fmtMoney(bud.perDay.expenses.transit || 0)),
       h('span', {}, 'Policy upkeep / day'), h('span', {}, fmtMoney(bud.perDay.expenses.policies || 0)),
       h('span', {}, 'Disaster costs / day'), h('span', {}, fmtMoney(bud.perDay.expenses.disasters || 0)),

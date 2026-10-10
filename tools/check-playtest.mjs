@@ -364,6 +364,9 @@ let before = null;
   const app = await boot({});
   const { page } = app;
   try {
+    const boot0 = await page.evaluate(() => { const sim = window.__city.ctx.modules.get('simulation').api; sim.tick(true); const b = sim.getBudget().perDay; return { pop: sim.getStats().population, services: b.expenses.services, income: Math.round(b.income.total), net: Math.round(b.net) }; });
+    check(boot0.net > 10000 && boot0.net < 90000, `I: the freshly booted city (pop ${boot0.pop}) nets $${boot0.net}/day ($${Math.round(boot0.services)} city services)`);
+
     // J: view cycling
     const v = await page.evaluate(() => {
       const views = window.__city.ctx.modules.get('views').api;
@@ -475,6 +478,46 @@ let before = null;
     check(!bulbs.err && bulbs.branch?.bulb > 0 && bulbs.throughEnd?.bulb > 0, `J: a real dead-end street keeps its cul-de-sac (branch ${bulbs.branch?.bulb}, street end ${bulbs.throughEnd?.bulb})`);
     check(!bulbs.err && bulbs.stub?.bulb === 0, `J: a 16 m stub ends square (${JSON.stringify(bulbs.stub)})`);
 
+    // I: a road drawn with the tool is paid for
+    const rd = await page.evaluate(async () => {
+      const c = window.__city, w = c.world, H = window.__pt;
+      const sim = c.ctx.modules.get('simulation').api;
+      const o = H.openLand(10, 2);
+      if (!o) return { err: 'no open land' };
+      const A = w.cellToWorld(o.i + 1, o.j + 5), B = w.cellToWorld(o.i + 8, o.j + 5);
+      const y = w.getHeight(A.x, A.z);
+      c.ctx.camera.position.set((A.x + B.x) / 2, y + 110, A.z + 0.5);
+      c.ctx.controls.target.set((A.x + B.x) / 2, y, A.z);
+      c.ctx.controls.update();
+      await H.frames(6);
+      const r = c.ctx.renderer.domElement.getBoundingClientRect();
+      const scr = (p) => { const v = new c.THREE.Vector3(p.x, w.getHeight(p.x, p.z), p.z).project(c.ctx.camera); return [r.left + (v.x + 1) / 2 * r.width, r.top + (1 - v.y) / 2 * r.height]; };
+      sim.tick(true);
+      return { a: scr(A), b: scr(B), money: sim.getStats().money, net: sim.getBudget().perTick.net, edges: w.roads.edges.size, services: sim.getBudget().perDay.expenses.services, pop: sim.getStats().population };
+    });
+    if (rd.err) check(false, `I: ${rd.err}`);
+    else {
+      await page.evaluate(() => window.__city.ctx.modules.get('ui').api.setTool('road:street'));
+      await page.mouse.move(rd.a[0], rd.a[1]);
+      await page.mouse.down();
+      await page.mouse.move((rd.a[0] + rd.b[0]) / 2, rd.a[1], { steps: 4 });
+      await page.mouse.move(rd.b[0], rd.b[1], { steps: 4 });
+      await page.evaluate(() => window.__pt.frames(2));
+      await page.mouse.up();
+      await page.evaluate(() => window.__pt.frames(4));
+      const after = await page.evaluate(() => {
+        const c = window.__city, sim = c.ctx.modules.get('simulation').api;
+        const toast = [...document.querySelectorAll('.lc-toast, [class*="toast"]')].map((t) => t.textContent).filter((t) => /built/.test(t)).pop() || '';
+        sim.tick(true);
+        c.ctx.modules.get('ui').api.setTool(null);
+        return { money: sim.getStats().money, edges: c.world.roads.edges.size, toast };
+      });
+      const quoted = Number((after.toast.match(/\$([\d,]+)/) || [])[1]?.replace(/,/g, '') || NaN);
+      const paid = rd.money - after.money;
+      check(after.edges === rd.edges + 1 && Number.isFinite(quoted) && quoted > 1000, `I: the street was built and quoted a price ("${after.toast}")`);
+      check(Math.abs(paid - quoted) < Math.abs(rd.net) * 4 + 50, `I: the treasury paid it ($${paid} for a $${quoted} street)`);
+    }
+
     // G: zone 6 road-adjacent cells in the mature city
     const g = await page.evaluate(async () => {
       const c = window.__city, w = c.world, H = window.__pt;
@@ -513,7 +556,22 @@ let before = null;
     check(g.control.buildings === 0, `G: untouched, the mature city spawns nothing on its old empty lots (${g.control.buildings} in 400 frames at 4x)`);
     check(g.cells === 6 && g.filled === 6, `G: 6 newly zoned cells fill within 2 game-hours at 4x (${g.filled}/6 after ${g.frames} frames)`);
     check(g.others === 0, `G: nothing else was spawned meanwhile (${g.others})`);
-    check(g.errors.length === 0, `Tier 2 page: no console errors (${g.errors.length})`);
+    // I: let the city mature. Income grows several-fold; the net must stay in the low five figures per day.
+    const eco = await page.evaluate(async () => {
+      const c = window.__city, sim = c.ctx.modules.get('simulation').api;
+      c.setTimeScale(4);
+      const snap = () => { const st = sim.getStats(), b = sim.getBudget().perDay; return { pop: st.population, income: Math.round(b.income.total), services: Math.round(b.expenses.services), net: Math.round(b.net), money: Math.round(st.money) }; };
+      const first = snap();
+      const rows = [];
+      for (let k = 0; k < 30; k++) { for (let t = 0; t < 80; t++) sim.tick(true); await c.frames(24); if (k % 10 === 9) rows.push(snap()); }
+      c.setTimeScale(1);
+      return { first, rows, errors: c.stats().errors };
+    });
+    const last = eco.rows[eco.rows.length - 1];
+    check(last.pop > 18000 && last.income > boot0.income * 1.5, `I setup: the city matured (pop ${boot0.pop} -> ${last.pop}, income/day $${boot0.income} -> $${last.income})`);
+    check(last.services > 0, `I: city services are charged past 11,000 residents ($${last.services}/day)`);
+    check(eco.rows.every((r) => r.net > 10000 && r.net < 90000), `I: net/day stays in the low five figures as the city grows (${eco.rows.map((r) => `$${r.net} @ ${r.pop}`).join(', ')})`);
+    check(g.errors.length === 0 && eco.errors.length === 0, `Tier 2 page: no console errors (${g.errors.length + eco.errors.length})`);
   } finally { await app.close(); }
 }
 
