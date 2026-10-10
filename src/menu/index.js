@@ -97,6 +97,10 @@ function closeMenu() {
 const nav = {
   get state() { return S.viewState; },
   get prefs() { return S.prefs; },
+  // The player's own HUD preference. The HUD itself is always hidden while a menu view is open, so Options must
+  // read and write the remembered value (applied by closeMenu), never the live ui.isHudVisible().
+  get hudVisible() { return S.wasHudVisible; },
+  setHudVisible(v) { S.wasHudVisible = !!v; },
   push(view) { S.stack.push(view); render(); },
   back() {
     if (S.stack.length > 1) { S.stack.pop(); render(); return; }

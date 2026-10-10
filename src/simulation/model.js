@@ -187,6 +187,25 @@ export class SimModel {
     this.disasterCost = 0;                             // $/tick, active-disaster insurance/cleanup (disasters pushes)
   }
 
+  /** Save/load: restore the live fields step() reads and writes. `stats` is only a per-tick snapshot of these, so
+   * patching stats alone is undone by the next tick. A save from before these were stored passes stats.money /
+   * stats.tick; game time is always tick * TICK_DT, so the day follows from the tick. */
+  restoreLive({ money, tick, gameSeconds, happiness, pressure, demand } = {}) {
+    if (Number.isFinite(money)) this.money = money;
+    if (Number.isFinite(tick)) this.tick = Math.max(0, Math.floor(tick));
+    this.gameSeconds = Number.isFinite(gameSeconds) ? gameSeconds : this.tick * TICK_DT;
+    this.day = 1 + Math.floor(this.gameSeconds / this.dayLengthSec);
+    if (Number.isFinite(happiness)) this.happiness = happiness;
+    for (const z of ['r', 'c', 'i']) {
+      if (Number.isFinite(demand?.[z])) this.demand[z] = demand[z];
+      if (Number.isFinite(pressure?.[z])) this.pressure[z] = pressure[z];
+      else if (Number.isFinite(demand?.[z])) this.pressure[z] = demand[z];
+    }
+    const st = this.stats;
+    st.money = Math.round(this.money); st.tick = this.tick; st.day = this.day; st.happiness = this.happiness;
+    st.demand.r = this.demand.r; st.demand.c = this.demand.c; st.demand.i = this.demand.i;
+  }
+
   _blankStats() {
     return {
       population: 0, jobs: 0, money: this.money, happiness: this.happiness, traffic: 0, employment: 1,

@@ -855,7 +855,18 @@ export class World {
   }
 
   // ---- buildings --------------------------------------------------------------
+  /** A record that arrives with its own counter-style id (a save replay) must push the counter past it, or the
+   * next fresh id reuses it and silently replaces the loaded record in the map. */
+  _reserveId(kind, prefix, id) {
+    if (typeof id !== 'string' || !id.startsWith(prefix)) return;
+    const tail = id.slice(prefix.length);
+    if (!/^\d+$/.test(tail)) return;
+    const n = Number(tail);
+    if (n >= this._ids[kind]) this._ids[kind] = n + 1;
+  }
+
   addBuilding(rec) {
+    if (rec.id) this._reserveId('building', 'b', rec.id);
     const id = rec.id || `b${this._ids.building++}`;
     const b = { level: 1, height: 10, seed: 0, kind: 'generic', w: 1, d: 1, ...rec, id };
     this.buildings.set(id, b);
@@ -889,6 +900,7 @@ export class World {
 
   // ---- props -----------------------------------------------------------------
   addProp(rec) {
+    if (rec.id) this._reserveId('prop', 'p', rec.id);
     const id = rec.id || `p${this._ids.prop++}`;
     const p = { x: 0, y: 0, z: 0, rot: 0, kind: 'generic', ...rec, id };
     this.props.set(id, p);

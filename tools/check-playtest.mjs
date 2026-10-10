@@ -1,0 +1,361 @@
+#!/usr/bin/env node
+// Regression check for the 2026-10-10 playtest fixes (Tier 1, A-F).
+//   node tools/check-playtest.mjs
+// Needs the dev server (npm run dev). Drives the full game through tools/shot.mjs openApp.
+//   A  save -> fresh boot -> load keeps treasury, tick and day (and they survive the next tick)
+//   B  load restores the props 1:1 (no regenerated lamps/signals/figures/yard/park props), and the loaded world is
+//      adopted: a road drawn afterwards only adds its own props, a bulldozed building takes its yard with it
+//   C  bulldozing a road removes its furniture; a crossing street keeps its own; signals follow the junction
+//   D  the utility stamp is centred on the cursor and a refusal names its reason
+//   E  Options -> Show HUD reads the player's setting and sticks
+//   F  one city name (sim stats == HUD), `?city=` propagates
+// Exit 1 on any failed check.
+import { openApp, BASE_URL } from './shot.mjs';
+
+const results = [];
+let failed = 0;
+const check = (ok, msg) => { results.push({ ok: !!ok, msg }); console.log(`${ok ? 'ok  ' : 'FAIL'} ${msg}`); if (!ok) failed++; };
+
+// ---- in-page helpers (installed on every boot) ---------------------------------------------------------------
+const installHelpers = () => {
+  const c = window.__city, w = c.world;
+  const api = (id) => c.ctx.modules.get(id)?.api;
+  const H = (window.__pt = {});
+  H.census = () => {
+    const kinds = {}, tags = { edgeId: 0, nodeId: 0, yardOf: 0, park: 0 };
+    for (const p of w.props.values()) { kinds[p.kind] = (kinds[p.kind] || 0) + 1; for (const k in tags) if (p[k] != null) tags[k]++; }
+    const st = api('simulation').getStats();
+    return { props: w.props.size, kinds, tags, money: st.money, day: st.day, tick: st.tick, name: st.cityName,
+      buildings: w.buildings.size, edges: w.roads.edges.size };
+  };
+  H.propsNear = (a, b, r) => {
+    const out = [];
+    const dx = b.x - a.x, dz = b.z - a.z, l2 = dx * dx + dz * dz || 1;
+    for (const p of w.props.values()) {
+      let t = ((p.x - a.x) * dx + (p.z - a.z) * dz) / l2; t = Math.max(0, Math.min(1, t));
+      if (Math.hypot(a.x + dx * t - p.x, a.z + dz * t - p.z) <= r) out.push(p.id);
+    }
+    return out;
+  };
+  /** Top-left cell of an n x n block of empty, buildable, dry land with `margin` clear cells around it. */
+  H.openLand = (n, margin = 3, skip = 0) => {
+    const terr = api('terrain');
+    const free = (i, j) => { const cc = w.cellAt(i, j); return !!cc && cc.type === 'none' && !cc.buildingId && !cc.zone && terr.isBuildable(i, j); };
+    let seen = 0;
+    for (let j = margin + 2; j < w.size.h - n - margin - 2; j += 2) {
+      for (let i = margin + 2; i < w.size.w - n - margin - 2; i += 2) {
+        let ok = true;
+        for (let dj = -margin; dj < n + margin && ok; dj++) for (let di = -margin; di < n + margin && ok; di++) ok = free(i + di, j + dj);
+        if (!ok) continue;
+        const p = w.cellToWorld(i, j), q = w.cellToWorld(i + n - 1, j + n - 1);
+        if (H.propsNear(p, q, 24).length) continue; // nothing standing nearby, so the before/after diff is clean
+        if (seen++ < skip) continue;
+        return { i, j };
+      }
+    }
+    return null;
+  };
+  H.frames = (k) => c.frames(k);
+};
+
+async function boot(extra = {}) {
+  const app = await openApp({ seed: 1, extra });
+  await app.page.evaluate(installHelpers);
+  return app;
+}
+
+let save = null;
+let before = null;
+
+// ---- page 1: play a little, test C/D/E/F on a fresh city, then save -------------------------------------------
+{
+  const app = await boot({ city: 'Foo Town' });
+  const { page } = app;
+  try {
+    // F
+    const f = await page.evaluate(() => ({
+      sim: window.__city.ctx.modules.get('simulation').api.getStats().cityName,
+      world: window.__city.world.stats.cityName,
+      hud: document.querySelector('.lc-city-name')?.firstChild?.textContent,
+    }));
+    check(f.sim === 'Foo Town' && f.world === 'Foo Town' && f.hud === 'Foo Town', `F: ?city= reaches sim, world.stats and HUD (${JSON.stringify(f)})`);
+
+    // C1: a street on open land, then bulldoze it
+    const c1 = await page.evaluate(async () => {
+      const c = window.__city, w = c.world, H = window.__pt;
+      const o = H.openLand(14, 3);
+      if (!o) return { err: 'no open land' };
+      const a = w.cellToWorld(o.i, o.j + 7), b = w.cellToWorld(o.i + 13, o.j + 7);
+      const pre = new Set(H.propsNear(a, b, 20));
+      const id = w.addRoad({ x: a.x, z: a.z }, { x: b.x, z: b.z }, 'street', { snapNodes: true });
+      await H.frames(4);
+      const added = H.propsNear(a, b, 20).filter((p) => !pre.has(p));
+      const tagged = added.filter((p) => w.props.get(p).edgeId === id).length;
+      w.removeRoad(id);
+      await H.frames(4);
+      const left = H.propsNear(a, b, 20).filter((p) => !pre.has(p));
+      return { o, id, added: added.length, tagged, left: left.length, leftKinds: left.map((p) => w.props.get(p).kind) };
+    });
+    check(!c1.err && c1.added >= 2 && c1.tagged === c1.added, `C: a new street lays tagged props (${JSON.stringify(c1)})`);
+    check(!c1.err && c1.left === 0, `C: bulldozing the street leaves no props behind (${c1.left} left)`);
+
+    // C2: a cross. Bulldoze one arm; the other three arms keep their lamps, the junction is re-signalled.
+    const c2 = await page.evaluate(async () => {
+      const c = window.__city, w = c.world, H = window.__pt;
+      const o = H.openLand(16, 3);
+      if (!o) return { err: 'no open land' };
+      const A = w.cellToWorld(o.i, o.j + 8), B = w.cellToWorld(o.i + 15, o.j + 8);
+      const C = w.cellToWorld(o.i + 8, o.j), D = w.cellToWorld(o.i + 8, o.j + 15);
+      const X = { x: C.x, z: A.z };
+      const kindsNear = (p, q, r) => { const k = {}; for (const id of H.propsNear(p, q, r)) { const pr = w.props.get(id); k[pr.kind] = (k[pr.kind] || 0) + 1; } return k; };
+      w.addRoad({ x: A.x, z: A.z }, { x: B.x, z: B.z }, 'street', { snapNodes: true });
+      await H.frames(3);
+      const lampsEW = kindsNear(A, B, 9).streetlamp || 0;
+      w.addRoad({ x: C.x, z: C.z }, { x: D.x, z: D.z }, 'street', { snapNodes: true });
+      await H.frames(3);
+      const cross = { lampsEW2: kindsNear(A, B, 9).streetlamp || 0, signals: kindsNear(X, X, 25).traffic_light || 0 };
+      // west arm: the edge between A's node and the junction
+      const west = [...w.roads.edges.values()].find((e) => {
+        const na = w.roads.nodes.get(e.a), nb = w.roads.nodes.get(e.b);
+        const mx = (na.x + nb.x) / 2, mz = (na.z + nb.z) / 2;
+        return Math.abs(mz - A.z) < 1 && mx > Math.min(A.x, X.x) && mx < Math.max(A.x, X.x);
+      });
+      const mid = { x: (A.x + X.x) / 2, z: A.z };
+      const westLamps0 = kindsNear(A, { x: X.x + (A.x - X.x) * 0.25, z: A.z }, 9).streetlamp || 0;
+      w.removeRoad(west.id);
+      await H.frames(4);
+      const westLamps1 = kindsNear(A, { x: X.x + (A.x - X.x) * 0.25, z: A.z }, 9).streetlamp || 0;
+      const eastLamps = kindsNear({ x: X.x + (B.x - X.x) * 0.25, z: B.z }, B, 9).streetlamp || 0;
+      const nsLamps = kindsNear(C, D, 9).streetlamp || 0;
+      const signals3 = kindsNear(X, X, 25).traffic_light || 0;
+      // remove the east arm too: the N-S street heals into one edge and the junction loses its signals
+      const east = [...w.roads.edges.values()].find((e) => {
+        const na = w.roads.nodes.get(e.a), nb = w.roads.nodes.get(e.b);
+        const mx = (na.x + nb.x) / 2, mz = (na.z + nb.z) / 2;
+        return Math.abs(mz - A.z) < 1 && mx > Math.min(B.x, X.x) && mx < Math.max(B.x, X.x);
+      });
+      w.removeRoad(east.id);
+      await H.frames(4);
+      const after2 = { nsLamps: kindsNear(C, D, 9).streetlamp || 0, signals: kindsNear(X, X, 25).traffic_light || 0, edges: [...w.roads.edges.values()].filter((e) => { const na = w.roads.nodes.get(e.a); return Math.abs(na.x - C.x) < 1; }).length };
+      // finally the healed N-S street itself: its lamps carry stale (pre-merge) edge tags
+      const ns = [...w.roads.edges.values()].find((e) => { const na = w.roads.nodes.get(e.a), nb = w.roads.nodes.get(e.b); return Math.abs(na.x - C.x) < 1 && Math.abs(nb.x - C.x) < 1; });
+      w.removeRoad(ns.id);
+      await H.frames(4);
+      const rest = H.propsNear({ x: A.x, z: C.z }, { x: B.x, z: D.z }, 70).filter((id) => { const p = w.props.get(id); return p.x > Math.min(A.x, B.x) - 12 && p.x < Math.max(A.x, B.x) + 12 && p.z > Math.min(C.z, D.z) - 12 && p.z < Math.max(C.z, D.z) + 12; });
+      return { lampsEW, cross, westLamps0, westLamps1, eastLamps, nsLamps, signals3, after2, rest: rest.length, mid };
+    });
+    // KNOWN DEFECT (not fixed here): a drawn 4-arm crossing gets 3 lights. The junction is signalled when its third
+    // arm arrives and the fourth arm never adds one. Expect 4 once that is fixed.
+    check(!c2.err && c2.cross.signals >= 3 && c2.cross.lampsEW2 >= c2.lampsEW, `C: a crossing keeps the first street's lamps and signals the junction (${JSON.stringify(c2.cross)}, lamps before ${c2.lampsEW})`);
+    check(!c2.err && c2.westLamps0 > 0 && c2.westLamps1 === 0, `C: bulldozing one arm removes that arm's lamps (${c2.westLamps0} -> ${c2.westLamps1})`);
+    check(!c2.err && c2.eastLamps > 0 && c2.nsLamps > 0, `C: the other arms keep theirs (east ${c2.eastLamps}, cross street ${c2.nsLamps})`);
+    check(!c2.err && c2.signals3 === 3, `C: the junction is re-signalled for 3 arms (${c2.signals3} lights)`);
+    check(!c2.err && c2.after2.signals === 0 && c2.after2.nsLamps > 0, `C: with both arms gone the healed street keeps its lamps and no signals (${JSON.stringify(c2.after2)})`);
+    check(!c2.err && c2.rest === 0, `C: bulldozing the healed street clears the site (${c2.rest} props left)`);
+
+    // D: stamp centred on the cursor, refusal reason named
+    const d = await page.evaluate(async () => {
+      const c = window.__city, w = c.world, H = window.__pt;
+      const o = H.openLand(12, 2);
+      if (!o) return { err: 'no open land' };
+      const p = w.cellToWorld(o.i + 6, o.j + 6);
+      const y = w.getHeight(p.x, p.z);
+      c.ctx.camera.position.set(p.x, y + 90, p.z + 0.5);
+      c.ctx.controls.target.set(p.x, y, p.z);
+      c.ctx.controls.update();
+      // a short street so one placement can be refused by a road
+      const a = w.cellToWorld(o.i + 1, o.j + 2), b = w.cellToWorld(o.i + 10, o.j + 2);
+      w.addRoad({ x: a.x, z: a.z }, { x: b.x, z: b.z }, 'street', { snapNodes: true });
+      await H.frames(6);
+      const v = new c.THREE.Vector3(p.x, y, p.z).project(c.ctx.camera);
+      const r = c.ctx.renderer.domElement.getBoundingClientRect();
+      const v2 = new c.THREE.Vector3(w.cellToWorld(o.i + 5, o.j + 3).x, y, w.cellToWorld(o.i + 5, o.j + 3).z).project(c.ctx.camera);
+      return { o, sx: r.left + (v.x + 1) / 2 * r.width, sy: r.top + (1 - v.y) / 2 * r.height,
+        rx: r.left + (v2.x + 1) / 2 * r.width, ry: r.top + (1 - v2.y) / 2 * r.height };
+    });
+    if (d.err) check(false, `D: ${d.err}`);
+    else {
+      const ghost = async (tool, x, y) => {
+        await page.evaluate((t) => window.__city.ctx.modules.get('ui').api.setTool(t), tool);
+        await page.mouse.move(x, y);
+        await page.mouse.down();
+        await page.evaluate(() => window.__pt.frames(2));
+        const g = await page.evaluate(() => ({ drag: window.__city.ctx.modules.get('tools').api.getGhostState().drag, status: document.querySelector('.lc-status')?.textContent }));
+        await page.keyboard.press('Escape');
+        await page.mouse.up();
+        return g;
+      };
+      const z = await ghost('zone:r', d.sx, d.sy);          // the cursor's own cell
+      const pw = await ghost('utility:power', d.sx, d.sy);  // 3x3
+      const wt = await ghost('utility:water', d.sx, d.sy);  // 2x2
+      const hit = z.drag ? { i: z.drag.i0, j: z.drag.j0 } : null;
+      check(hit && pw.drag && pw.drag.i0 === hit.i - 1 && pw.drag.j0 === hit.j - 1 && pw.drag.i1 === hit.i + 1 && pw.drag.j1 === hit.j + 1,
+        `D: the 3x3 stamp is centred on the cursor cell (cursor ${JSON.stringify(hit)}, stamp ${pw.drag?.i0},${pw.drag?.j0}..${pw.drag?.i1},${pw.drag?.j1})`);
+      check(hit && wt.drag && wt.drag.i0 === hit.i && wt.drag.j0 === hit.j && wt.drag.i1 === hit.i + 1, `D: the 2x2 stamp covers the cursor cell (${wt.drag?.i0},${wt.drag?.j0}..${wt.drag?.i1},${wt.drag?.j1})`);
+      check(/\$8,000/.test(pw.status || ''), `D: a free site shows the price ("${pw.status}")`);
+      const blocked = await ghost('utility:power', d.rx, d.ry);
+      check(/Blocked — road in the way/.test(blocked.status || ''), `D: a refusal names its reason ("${blocked.status}")`);
+      await page.evaluate(() => window.__city.ctx.modules.get('ui').api.setTool(null));
+    }
+
+    // E: Options -> Show HUD
+    const e = await page.evaluate(async () => {
+      const c = window.__city, H = window.__pt;
+      const ui = c.ctx.modules.get('ui').api, menu = c.ctx.modules.get('menu').api;
+      const openOptions = async () => {
+        menu.openPause(); await H.frames(2);
+        [...document.querySelectorAll('.lc-menu-item')].find((b) => b.textContent === 'Options').click();
+        await H.frames(2);
+        const row = [...document.querySelectorAll('.lc-menu-row')].find((r) => r.textContent.includes('Show HUD'));
+        return row.querySelector('.lc-menu-switch');
+      };
+      const close = async () => { document.querySelector('.lc-menu-back').click(); await H.frames(1); [...document.querySelectorAll('.lc-menu-item')].find((b) => /Resume/.test(b.textContent)).click(); await H.frames(2); };
+      const out = { start: ui.isHudVisible() };
+      let sw = await openOptions();
+      out.readsOn = sw.classList.contains('on'); out.hiddenBehindMenu = !ui.isHudVisible();
+      sw.click(); out.stillHiddenAfterToggle = !ui.isHudVisible();
+      await close(); out.afterOff = ui.isHudVisible();
+      sw = await openOptions(); out.readsOff = !sw.classList.contains('on');
+      sw.click(); await close(); out.afterOn = ui.isHudVisible();
+      return out;
+    });
+    check(e.start && e.readsOn && e.hiddenBehindMenu, `E: Show HUD reads ON while the menu hides the HUD (${JSON.stringify(e)})`);
+    check(e.stillHiddenAfterToggle && e.afterOff === false && e.readsOff && e.afterOn === true, 'E: toggling sticks after the menu closes, both ways');
+
+    // play a little so the save differs from a fresh boot, then save
+    before = await page.evaluate(async () => {
+      const c = window.__city, H = window.__pt;
+      const sim = c.ctx.modules.get('simulation').api;
+      for (let k = 0; k < 1500; k++) sim.tick(true);
+      sim.spend(1234);
+      await H.frames(30); // park flush (200 ms) and any deferred prop work
+      const m = c.ctx.modules.get('simulation');
+      return H.census();
+    });
+    save = await page.evaluate(async () => {
+      const { serializeSave } = await import('/src/menu/serialize.js');
+      return JSON.stringify(serializeSave(window.__city.ctx, { name: 'check-playtest' }));
+    });
+    check(before.day > 1 && before.tick >= 1500, `setup: the saved city is past day 1 (day ${before.day}, tick ${before.tick}, $${before.money}, ${before.props} props, ${(save.length / 1e6).toFixed(2)} MB)`);
+    check(before.tags.edgeId > 500 && before.tags.nodeId > 100 && before.tags.yardOf > 500, `setup: props carry their owner tags (${JSON.stringify(before.tags)})`);
+  } finally { await app.close(); }
+}
+
+// ---- page 2: fresh boot (as Load does), apply the save --------------------------------------------------------
+{
+  const app = await boot({});
+  const { page } = app;
+  try {
+    const fresh = await page.evaluate(() => window.__pt.census());
+    check(fresh.name === 'Brickport', `F: without ?city= the sim uses the HUD's default name (${fresh.name})`);
+    const after = await page.evaluate(async (json) => {
+      const c = window.__city, H = window.__pt;
+      const { applySave } = await import('/src/menu/serialize.js');
+      applySave(c.ctx, JSON.parse(json));
+      const r0 = H.census();
+      await H.frames(40); // > 200 ms: a park flush would land here
+      await new Promise((r) => setTimeout(r, 400));
+      await H.frames(10);
+      const r1 = H.census();
+      c.ctx.modules.get('simulation').api.tick(true);
+      const r2 = H.census();
+      return { r0, r1, r2 };
+    }, save);
+    const { r0, r1, r2 } = after;
+    check(r0.money === before.money && r0.day === before.day && r0.tick === before.tick, `A: load restores treasury/day/tick ($${before.money}/d${before.day}/t${before.tick} -> $${r0.money}/d${r0.day}/t${r0.tick})`);
+    check(Math.abs(r2.money - before.money) < Math.max(5000, Math.abs(before.money) * 0.02) && r2.day === before.day && r2.tick > before.tick && r2.tick <= before.tick + 12, // the game keeps ticking during the waits
+      `A: and they survive the next tick ($${r2.money}/d${r2.day}/t${r2.tick})`);
+    check(r0.props === before.props, `B: prop count is identical after load (${before.props} -> ${r0.props})`);
+    const kindDiff = Object.keys({ ...before.kinds, ...r0.kinds }).filter((k) => before.kinds[k] !== r0.kinds[k]).map((k) => `${k} ${before.kinds[k] || 0}->${r0.kinds[k] || 0}`);
+    check(kindDiff.length === 0, `B: per-kind counts are identical (${kindDiff.join(', ') || 'no difference'})`);
+    check(r1.props === before.props, `B: nothing is generated in the frames after the load (${r1.props})`);
+    check(r0.buildings === before.buildings && r0.edges === before.edges, `B: buildings and road edges match (${r0.buildings}, ${r0.edges})`);
+
+    // the loaded world is adopted: live edits behave as before the save
+    const live = await page.evaluate(async () => {
+      const c = window.__city, w = c.world, H = window.__pt;
+      const out = {};
+      const n0 = w.props.size;
+      const o = H.openLand(14, 3);
+      const a = w.cellToWorld(o.i, o.j + 7), b = w.cellToWorld(o.i + 13, o.j + 7);
+      const id = w.addRoad({ x: a.x, z: a.z }, { x: b.x, z: b.z }, 'street', { snapNodes: true });
+      await H.frames(4);
+      out.roadAdded = w.props.size - n0;                 // only this street's own props
+      w.removeRoad(id); await H.frames(4);
+      out.roadNet = w.props.size - n0;
+      // a loaded building with a yard: bulldozing it takes the yard along
+      let pick = null, best = 0;
+      const byB = new Map();
+      for (const p of w.props.values()) if (p.yardOf != null) byB.set(p.yardOf, (byB.get(p.yardOf) || 0) + 1);
+      for (const [bid, k] of byB) if (k > best && w.buildings.has(bid)) { best = k; pick = bid; }
+      const n1 = w.props.size;
+      w.removeBuilding(pick); await H.frames(2);
+      out.yard = best; out.yardRemoved = n1 - w.props.size;
+      // a loaded street edge: bulldozing it removes the props tagged to it
+      const cnt = new Map();
+      for (const p of w.props.values()) if (p.edgeId != null && p.kind === 'streetlamp') cnt.set(p.edgeId, (cnt.get(p.edgeId) || 0) + 1);
+      let eid = null, eb = 0;
+      for (const [k, v] of cnt) if (v > eb && w.roads.edges.has(k)) { eb = v; eid = k; }
+      const tagged = [...w.props.values()].filter((p) => p.edgeId === eid).length;
+      const n2 = w.props.size;
+      w.removeRoad(eid); await H.frames(4);
+      out.edgeTagged = tagged; out.edgeRemoved = n2 - w.props.size;
+      out.staleTags = [...w.props.values()].filter((p) => p.edgeId === 'none').length;
+      out.errors = c.stats().errors;
+      // ids handed out after a load must not collide with loaded ones
+      const pid = w.addProp({ kind: 'bench', x: a.x, y: 0, z: a.z });
+      out.newPropId = pid; w.removeProp(pid);
+      return out;
+    });
+    check(live.roadAdded > 0 && live.roadAdded < 40 && live.roadNet === 0, `B: a road drawn after the load adds only its own props (${live.roadAdded}) and removes them again (net ${live.roadNet})`);
+    check(live.yard > 0 && live.yardRemoved >= live.yard, `B/C: bulldozing a loaded building removes its ${live.yard} yard props (${live.yardRemoved} removed)`);
+    check(live.edgeTagged > 0 && live.edgeRemoved >= live.edgeTagged, `C: bulldozing a loaded road removes its ${live.edgeTagged} tagged props (${live.edgeRemoved} removed)`);
+    check(live.errors.length === 0, `no console errors (${live.errors.length})`);
+    console.log(`     info: props left without a nearby road after the load: ${live.staleTags}; first new prop id after load: ${live.newPropId}`);
+  } finally { await app.close(); }
+}
+
+// ---- page 3: the real Load path (?load=<slot>, no fixeddt): menu applies the save on boot frame 2 -------------
+{
+  const app = await boot({});
+  const { page } = app;
+  try {
+    const slotId = await page.evaluate(async (json) => {
+      const st = await import('/src/menu/storage.js');
+      const id = st.newSlotId();
+      const res = st.writeSlot(id, JSON.parse(json));
+      return res && res.ok === false ? null : id;
+    }, save);
+    check(!!slotId, `real load: the save fits a slot (${slotId})`);
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(String(e)));
+    await page.goto(`${BASE_URL}/?seed=1&city=Foo%20Town&load=${slotId}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForFunction(() => window.__city && window.__city.ready === true, { timeout: 90000, polling: 100 });
+    await page.evaluate(installHelpers);
+    // menu applies the save two frames after boot; wait for it, then let deferred work (park flush) land
+    await page.waitForFunction((n) => window.__city.world.buildings.size === n && window.__city.ctx.modules.get('simulation').api.getStats().tick >= 1500, { timeout: 60000, polling: 100 }, before.buildings);
+    const r = await page.evaluate(async () => {
+      const H = window.__pt;
+      const first = H.census();
+      await new Promise((res) => setTimeout(res, 600));
+      await H.frames(20);
+      const c = H.census();
+      c.first = { props: first.props, money: first.money, day: first.day, tick: first.tick };
+      c.errors = window.__city.stats().errors;
+      c.hud = document.querySelector('.lc-city-name')?.firstChild?.textContent;
+      return c;
+    });
+    await page.evaluate(async (id) => { (await import('/src/menu/storage.js')).deleteSlot(id); }, slotId);
+    const kd = Object.keys({ ...before.kinds, ...r.kinds }).filter((k) => before.kinds[k] !== r.kinds[k]).map((k) => `${k} ${before.kinds[k] || 0}->${r.kinds[k] || 0}`);
+    check(r.props === before.props && kd.length === 0, `real load B: props identical, total and per kind (${before.props} -> ${r.props}; ${kd.join(', ') || 'no difference'})`);
+    check(r.first.props === before.props, `real load B: identical on the first frame too (${r.first.props})`);
+    check(r.day === before.day && r.tick >= before.tick && r.tick <= before.tick + 40 && Math.abs(r.money - before.money) < Math.max(20000, Math.abs(before.money) * 0.1),
+      `real load A: treasury/day/tick carried over ($${before.money}/d${before.day}/t${before.tick} -> $${r.money}/d${r.day}/t${r.tick})`);
+    check(r.buildings === before.buildings && r.edges === before.edges, `real load: buildings and road edges match (${r.buildings}, ${r.edges})`);
+    check(r.name === 'Foo Town' && r.hud === 'Foo Town', `real load F: one city name (${r.name} / ${r.hud})`);
+    check(r.errors.length === 0 && errors.length === 0, `real load: no errors (${r.errors.length + errors.length})`);
+  } finally { await app.close(); }
+}
+
+console.log(`\n${results.length - failed}/${results.length} checks passed`);
+process.exit(failed ? 1 : 0);

@@ -337,6 +337,9 @@ const populatedEdges = new Set();
  * road edit changes the cross-section and the furniture has to be re-laid at the new offsets. */
 export function forgetEdge(edgeId) { populatedEdges.delete(edgeId); }
 
+/** Record an edge as already furnished without laying anything (a save replay restores the furniture itself). */
+export function markEdgePopulated(edgeId) { populatedEdges.add(edgeId); }
+
 /** Streetlamps every ~24 m alternating sides + occasional bin/bench/sign, along one road edge. Safe to call more
  * than once with the same `edgeId`: every call after the first is a no-op (see `populatedEdges` above). */
 export function populateAlongRoad(ctx, addProp, rngRoot, edgeId) {

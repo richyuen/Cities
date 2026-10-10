@@ -160,7 +160,10 @@ const api = {
    *  snapshot, per-building occupancy/maturity (the world replay rebuilds the buildings; the model needs its
    *  progression restored) and the claimed milestone set. */
   getState() {
-    return { policy: { ...S.model.basePolicy }, policies: S.model.getActivePolicies(), taxRate: { ...S.model.taxRate }, transitUpkeep: S.model.transitUpkeep, stats: snapshot(S.model.stats), occupancy: S.model.getOccupancyState(), milestones: S.model.getClaimedMilestones() };
+    const m = S.model;
+    // `live`: the model's own running fields (stats only mirrors them once per tick, rounded).
+    const live = { money: m.money, tick: m.tick, gameSeconds: m.gameSeconds, happiness: m.happiness, pressure: { ...m.pressure } };
+    return { policy: { ...m.basePolicy }, policies: m.getActivePolicies(), taxRate: { ...m.taxRate }, transitUpkeep: m.transitUpkeep, stats: snapshot(m.stats), live, occupancy: m.getOccupancyState(), milestones: m.getClaimedMilestones() };
   },
   /** Restore exactly what getState() returned (used by menu's Load) — no synthetic tick warm-up: a loaded save
    * should look exactly as it did when saved, unlike a freshly generated city which has no history to restore. */
@@ -178,6 +181,11 @@ const api = {
       // ramps back up over the next few game-minutes (firePressure is transient and deliberately not restored).
       if (typeof patch.stats.crime === 'number') S.model.crime = patch.stats.crime;
     }
+    // Treasury, tick and day live on the model, not in stats: without this the next tick overwrites the loaded
+    // stats with the freshly booted model's values (the save "lost" its money and restarted at day 1). Saves
+    // from before `live` existed fall back to the stats snapshot.
+    const ps = patch.stats || {};
+    S.model.restoreLive(patch.live || { money: ps.money, tick: ps.tick, happiness: ps.happiness, demand: ps.demand });
     // Claimed milestones must be restored before the next tick: an old save without the field claims everything
     // up to its current level silently, so the load never re-grants cash the player already earned.
     S.model.applyMilestones(patch.milestones, patch.stats?.cityLevel ?? S.model.stats.cityLevel ?? 0);
@@ -208,7 +216,10 @@ export default {
   async init(ctx) {
     S.ctx = ctx;
     S.rng = ctx.rng.fork('simulation');
-    S.model = new SimModel({ dayLengthSec: ctx.clock.dayLengthSec, cityName: cityNameFor(S.rng.fork('name')) });
+    // One city name everywhere: the player's (`?city=`, set by New City / Load) wins. Without it the game uses the
+    // same default the HUD and menus show; only the showcase keeps its seeded name for the in-world sign.
+    const seededName = cityNameFor(S.rng.fork('name'));
+    S.model = new SimModel({ dayLengthSec: ctx.clock.dayLengthSec, cityName: ctx.params?.get('city') || (ctx.showcase ? seededName : 'Brickport') });
     S.grid = new DesirabilityGrid(ctx.world);
     S.model.syncBuildings(ctx.world);
     publish(S.model.stats);

@@ -15,7 +15,7 @@ import {
 import { buildRoleMaterials } from './materials.js';
 import { mat } from './geo.js';
 import {
-  populateAlongRoad, populateIntersectionNode, populatePark, forgetEdge,
+  populateAlongRoad, populateIntersectionNode, populatePark, forgetEdge, markEdgePopulated,
   populateYard, populateCivicEntrance, populateServiceBack, populatePedestrians, FIGURE_CAP,
 } from './populate.js';
 import { stageStreet, stagePark, stageYards, stageSetPieces, PRESETS } from './showcase.js';
@@ -107,7 +107,20 @@ const S = {
   spSettle: null,         // { pieces, fixed } of the last set-piece settle
   spPlacing: false,       // true while placeSetPiece() adds its own props (the adopt hook stays out of the way)
   spResettle: false,      // terrain changed under the world: re-settle the set-piece decks on the next update
+  // Save replay (menu's applySave): the saved props are restored 1:1, so every generator that reacts to
+  // road/building/park events stays quiet until endReplay() re-adopts the restored world.
+  replaying: false,
+  signalDirty: new Set(), // node ids whose arm set changed by a road removal (signals re-placed in update())
 };
+
+/** Ownership tags written onto the world's prop records (they ride along in a save): `edgeId` = street furniture
+ * and sidewalk figures of that road edge, `nodeId` = that junction's traffic lights, `yardOf` = a building's yard
+ * dressing, `park` = park scatter. They are what lets a removal take its own props with it. */
+function tagProps(ids, key, value) {
+  const props = S.ctx.world.props;
+  for (const id of ids || []) { const p = props.get(id); if (p) p[key] = value; }
+  return ids;
+}
 
 function idxKey(ix, iz) { return `${ix}:${iz}`; }
 function idxOf(x, z) { return `${Math.floor(x / IDX)}:${Math.floor(z / IDX)}`; }
@@ -442,7 +455,7 @@ function addDetailForBuilding(b) {
     }
     if (SERVICE_KINDS.has(kind)) ids.push(...populateServiceBack(S.ctx, S.rng, b, placer));
   }
-  S.yardByBuilding.set(b.id, ids);
+  S.yardByBuilding.set(b.id, tagProps(ids, 'yardOf', b.id));
   S.detailMs = (S.detailMs || 0) + (performance.now() - t0);
   return ids;
 }
@@ -503,6 +516,7 @@ function settleDetail() {
         const pid = placer.add(want, px, pz, prng.range(0, Math.PI * 2));
         if (!pid) continue;
         ids.push(pid);
+        tagProps([pid], 'yardOf', id);
         added++;
         if (want === 'figure') needFigs--; else needItems--;
       }
@@ -535,6 +549,7 @@ function buriedUnderRoadDeck(x, z) {
 }
 
 function onBuildingSpawned({ building }) {
+  if (S.replaying) { indexBuilding(building); return; } // the save carries this building's yard props
   if (S.setPieces.size) sweepSetPiecesForBuilding(building); // a lot claimed over a set-piece demolishes it
   indexBuilding(building);
   sweepDetailInFootprint(building); // a later lot row can claim a former neighbour's yard band
@@ -556,7 +571,7 @@ function populatePedestriansForEdge(edgeId) {
   const edge = S.ctx.world.roads.edges.get(edgeId);
   if (!edge) return [];
   S.pedEdges.add(edgeId);
-  return populatePedestrians(S.ctx, S.rng, edgeId, placer);
+  return tagProps(populatePedestrians(S.ctx, S.rng, edgeId, placer), 'edgeId', edgeId);
 }
 
 /** Rebuild the C2 spatial indexes from the world (init, and again after a showcase clearContent()). */
@@ -1165,7 +1180,7 @@ function maybeSignalIntersections() {
     if (node.arms.length < 3 || S.signaledNodes.has(node.nodeId)) continue;
     S.signaledNodes.add(node.nodeId);
     const ids = populateIntersectionNode(ctx, api.addProp, S.rng, roads.api, node);
-    if (ids && ids.length) S.nodeSignalProps.set(node.nodeId, ids);
+    if (ids && ids.length) S.nodeSignalProps.set(node.nodeId, tagProps(ids, 'nodeId', node.nodeId));
   }
 }
 
@@ -1179,6 +1194,11 @@ function respawnSignals(nodeIds) {
     if (S.signaledNodes.delete(id)) changed = true;
   }
   if (changed) maybeSignalIntersections();
+}
+
+/** Lay one edge's street furniture (idempotent per edge id) and tag it with the edge. */
+function furnishEdge(edgeId) {
+  return tagProps(populateAlongRoad(S.ctx, api.addProp, S.rng, edgeId), 'edgeId', edgeId);
 }
 
 // Furniture kinds populateAlongRoad() lays down; only these are cleaned up on an in-place edit (traffic lights,
@@ -1199,7 +1219,7 @@ function onRoadChanged({ edgeId, edge, prev }) {
     if (segmentDist(p.x, p.z, na.x, na.z, nb.x, nb.z) <= reach) world.removeProp(p.id);
   }
   forgetEdge(edgeId);
-  populateAlongRoad(S.ctx, api.addProp, S.rng, edgeId);
+  furnishEdge(edgeId);
   sweepDetailNearEdge(edge); // C2: the widened cross-section may now cover yard props
   if (S.setPieces.size) sweepSetPiecesForEdge(edge);
   respawnSignals([edge.a, edge.b]);
@@ -1214,6 +1234,7 @@ function onRoadAdded({ edgeId, edge, reason }) {
   // linearly scans every edge in it — so on a city with hundreds of short path segments (e.g. the demo city's
   // interior alleys, added purely so every lot is road-adjacent — see src/demo/citygen.js's paveAlleyRow), that
   // cost was being paid per lamp, on every alley, and dominated generation time.
+  if (S.replaying) return; // the save carries this road's furniture, figures and signals (see endReplay)
   const e = edge ?? S.ctx.world.roads.edges.get(edgeId);
   const kind = e?.kind;
   // C2: a road added after the dressing may have paved through a yard (alleys/parks/connectors are added in
@@ -1225,7 +1246,7 @@ function onRoadAdded({ edgeId, edge, reason }) {
   // line, so repopulating the halves would duplicate lamps near the new junction. Signals still need the new
   // node, so that pass always runs.
   if (reason !== 'split' && reason !== 'merge') {
-    populateAlongRoad(S.ctx, api.addProp, S.rng, edgeId);
+    furnishEdge(edgeId);
     populatePedestriansForEdge(edgeId); // C2: figures on this edge's sidewalks
   }
   maybeSignalIntersections();
@@ -1234,7 +1255,118 @@ function onRoadAdded({ edgeId, edge, reason }) {
   if (S.detailSettledOnce && reason !== 'split' && reason !== 'merge') settleDetail();
 }
 
+/** A road the player (or anything else) removed takes its own furniture and sidewalk figures with it, and the
+ * junctions at its ends get their signals re-placed for the arms that are left. Splits and merges are the core
+ * re-stitching a road that is still there: its props stay, and their now-stale edge tag is resolved lazily here
+ * (nearest live edge) the next time a neighbouring edge is removed. */
+function onRoadRemoved({ edgeId, edge, reason }) {
+  if (S.replaying || reason === 'split' || reason === 'merge' || !edge) return;
+  const world = S.ctx.world;
+  const na = world.roads.nodes.get(edge.a), nb = world.roads.nodes.get(edge.b);
+  if (!na || !nb) return; // clearContent(): the graph (and every prop) is already gone
+  forgetEdge(edgeId);
+  S.pedEdges.delete(edgeId);
+  S.signalDirty.add(edge.a); S.signalDirty.add(edge.b);
+  const width = S.roadsApi?.roadWidth(edge.kind) ?? edge.width ?? 8;
+  const fp = ((S.roadsApi?.footprintWidth ? S.roadsApi.footprintWidth(edge.kind) : width + 4) || width + 4) / 2;
+  const reach = Math.max(fp, width / 2 + 1.4) + 1.2; // lamp / extra / figure lateral offsets (populate.js) + slack
+  const doomed = [];
+  for (const p of world.props.values()) {
+    if (p.edgeId == null) continue;
+    if (p.edgeId === edgeId) { doomed.push(p.id); continue; }
+    if (world.roads.edges.has(p.edgeId)) continue;        // belongs to another live edge
+    const d = segmentDist(p.x, p.z, na.x, na.z, nb.x, nb.z);
+    if (d > reach) continue;
+    const near = world.nearestRoad(p.x, p.z, d);            // a live edge at least as close keeps it
+    if (near) p.edgeId = near.edge.id; else doomed.push(p.id);
+  }
+  for (const id of doomed) world.removeProp(id);
+}
+
+/** Park cells grouped into 4-connected clusters: [{ key, cellSet }] (key = the cluster's first cell, sorted). */
+function parkClustersOf(seeds, visited = new Set()) {
+  const world = S.ctx.world;
+  const out = [];
+  for (const seedKey of seeds) {
+    if (visited.has(seedKey)) continue;
+    const [si, sj] = seedKey.split(',').map(Number);
+    const stack = [[si, sj]], cellSet = new Set();
+    while (stack.length) {
+      const [i, j] = stack.pop();
+      const k = `${i},${j}`;
+      if (cellSet.has(k)) continue;
+      const c = world.cellAt(i, j);
+      if (!c || c.type !== 'park') continue;
+      cellSet.add(k); visited.add(k);
+      stack.push([i + 1, j], [i - 1, j], [i, j + 1], [i, j - 1]);
+    }
+    if (cellSet.size) out.push({ key: [...cellSet].sort()[0], cellSet });
+  }
+  return out;
+}
+
+/** After a save replay: take ownership of the restored world without generating anything. Every edge counts as
+ * furnished and walked, every junction as signalled, and the restored props are re-attached to their owners by
+ * tag, so later live edits (a new road, a bulldoze, a park extension) behave exactly as in the saved session.
+ * Edge and node ids are new in this session, so road tags are re-pointed at the nearest replayed edge / node. */
+function adoptReplayedWorld() {
+  const world = S.ctx.world;
+  S.roadSnapDirty = true;
+  S.pedEdges.clear();
+  for (const id of world.roads.edges.keys()) { S.pedEdges.add(id); markEdgePopulated(id); }
+
+  S.signaledNodes.clear(); S.nodeSignalProps.clear(); S.signalDirty.clear();
+  const junctions = [];
+  const roads = S.ctx.modules.get('roads');
+  if (roads?.status === 'ok') {
+    for (const node of roads.api.getIntersections()) {
+      if (node.arms.length < 3) continue;
+      S.signaledNodes.add(node.nodeId);
+      junctions.push(node);
+    }
+  }
+
+  S.yardByBuilding.clear();
+  for (const b of world.buildings.values()) S.yardByBuilding.set(b.id, []);
+
+  S.parkDirty.clear(); S.parkClusters.clear();
+  const parkSeeds = [];
+  for (const c of world.cells) if (c.type === 'park') parkSeeds.push(`${c.i},${c.j}`);
+  const clusterOfCell = new Map();
+  for (const { key, cellSet } of parkClustersOf(parkSeeds)) {
+    const entry = { cellSet, propIds: [] };
+    S.parkClusters.set(key, entry);
+    for (const k of cellSet) clusterOfCell.set(k, entry);
+  }
+
+  for (const p of world.props.values()) {
+    if (isSpProp(p)) continue; // set-pieces re-adopt themselves on prop:added
+    if (p.kind === 'traffic_light') {
+      // Untagged lights (a save from before the tags) are adopted too: the kind alone identifies them.
+      let best = null, bestD = 30;
+      for (const n of junctions) { const d = Math.hypot(n.x - p.x, n.z - p.z); if (d < bestD) { bestD = d; best = n; } }
+      if (best) {
+        p.nodeId = best.nodeId;
+        const list = S.nodeSignalProps.get(best.nodeId);
+        if (list) list.push(p.id); else S.nodeSignalProps.set(best.nodeId, [p.id]);
+      }
+      continue;
+    }
+    if (p.edgeId != null) {
+      const near = world.nearestRoad(p.x, p.z, 16);
+      p.edgeId = near ? near.edge.id : 'none';
+    }
+    if (p.yardOf != null) S.yardByBuilding.get(p.yardOf)?.push(p.id);
+    if (p.park) {
+      const { i, j } = world.worldToCell(p.x, p.z);
+      clusterOfCell.get(`${i},${j}`)?.propIds.push(p.id);
+    }
+  }
+  markDirty();
+}
+
 function onParkCell(i, j, cell) {
+  if (S.replaying) return; // the save carries the park's props; endReplay() registers the clusters
   if (cell.type !== 'park') return;
   S.parkDirty.add(`${i},${j}`);
   S.parkFlushAt = performance.now() + 200;
@@ -1244,29 +1376,12 @@ function flushParkClusters() {
   const world = S.ctx.world;
   const seeds = [...S.parkDirty];
   S.parkDirty.clear();
-  const visited = new Set();
-  for (const seedKey of seeds) {
-    if (visited.has(seedKey)) continue;
-    const [si, sj] = seedKey.split(',').map(Number);
-    const c0 = world.cellAt(si, sj);
-    if (!c0 || c0.type !== 'park') continue;
-    const stack = [[si, sj]], clusterSet = new Set();
-    while (stack.length) {
-      const [i, j] = stack.pop();
-      const k = `${i},${j}`;
-      if (clusterSet.has(k)) continue;
-      const c = world.cellAt(i, j);
-      if (!c || c.type !== 'park') continue;
-      clusterSet.add(k); visited.add(k);
-      stack.push([i + 1, j], [i - 1, j], [i, j + 1], [i, j - 1]);
-    }
-    if (!clusterSet.size) continue;
-    const clusterKey = [...clusterSet].sort()[0];
+  for (const { key: clusterKey, cellSet: clusterSet } of parkClustersOf(seeds)) {
     const existing = S.parkClusters.get(clusterKey);
     if (existing && existing.cellSet.size === clusterSet.size) continue;
     if (existing) for (const id of existing.propIds) world.removeProp(id);
     const cells = [...clusterSet].map((k) => { const [i, j] = k.split(',').map(Number); return { i, j }; });
-    const propIds = populatePark(S.ctx, api.addProp, S.rng, cells, placer);
+    const propIds = tagProps(populatePark(S.ctx, api.addProp, S.rng, cells, placer), 'park', 1);
     S.parkClusters.set(clusterKey, { cellSet: clusterSet, propIds });
   }
 }
@@ -1284,7 +1399,11 @@ const api = {
   removeProp(id) { return S.ctx.world.removeProp(id); },
   /** Populate streetlamps + occasional bins/benches/signs along one road edge (tools calls this after an
    * interactive road placement; the module also calls it itself on every `road:added` in the full game). */
-  populateAlongRoad(edgeId) { return populateAlongRoad(S.ctx, api.addProp, S.rng, edgeId); },
+  populateAlongRoad(edgeId) { return furnishEdge(edgeId); },
+  /** Save replay bracket (menu's applySave). Between the two calls the world's road/building/park events do not
+   * generate props; endReplay() then adopts the restored props (see adoptReplayedWorld). */
+  beginReplay() { S.replaying = true; },
+  endReplay() { if (!S.replaying) return; S.replaying = false; adoptReplayedWorld(); },
   /** Scatter park furniture (fountain/trees/benches/flower beds/hedge border) over a list of {i,j} park cells. */
   populatePark(cells) { return populatePark(S.ctx, api.addProp, S.rng, cells, placer); },
   /** C2: walk one street/avenue edge (or every un-walked edge when omitted) and place its sidewalk figures.
@@ -1450,6 +1569,7 @@ export default {
     if (!ctx.showcase) {
       S.unsub.push(ctx.events.on('road:added', onRoadAdded));
       S.unsub.push(ctx.events.on('road:changed', onRoadChanged));
+      S.unsub.push(ctx.events.on('road:removed', onRoadRemoved));
       S.unsub.push(ctx.events.on('world:cell', ({ i, j, cell }) => onParkCell(i, j, cell)));
       S.unsub.push(ctx.events.on('zone:changed', ({ i, j, zone }) => {
         const c = ctx.world.cellAt(i, j);
@@ -1473,6 +1593,7 @@ export default {
       for (const id of S.spEvict.splice(0)) ctx.world.removeProp(id);
     }
     if (S.spResettle) { S.spResettle = false; settleSetPieces(); }
+    if (S.signalDirty.size) { const ids = [...S.signalDirty]; S.signalDirty.clear(); respawnSignals(ids); }
     if (S.dirty && performance.now() - S.lastEvent > 30) rebuild();
     if (S.parkDirty.size && performance.now() > S.parkFlushAt) flushParkClusters();
     applyLod(false);
@@ -1518,5 +1639,6 @@ export default {
     S.pIdx.clear(); S.bIdx.clear(); S.yardByBuilding.clear(); S.pedEdges.clear(); S.figureCount = 0;
     S.roadSnap = null; S.roadSnapDirty = true; S.detailSettle = null; S.detailSettledOnce = false;
     S.setPieces.clear(); S.spEvict.length = 0; S.spSettle = null; S.spPlacing = false; S.spResettle = false;
+    S.replaying = false; S.signalDirty.clear();
   },
 };

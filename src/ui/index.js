@@ -476,7 +476,7 @@ export default {
     // long-lived (not sticky) so the real timer path is exercised
     const long = { ms: 10 * 60 * 1000 };
     if (variant === 'night') {
-      api.notify('Streetlights switched on across Brickport', 'info', long);
+      api.notify(`Streetlights switched on across ${ctx.params?.get('city') || 'Brickport'}`, 'info', long);
       api.notify('Night market opened in Old Town (+$1,800)', 'success', long);
     } else {
       api.notify('New residents moved into Maple Street', 'success', long);

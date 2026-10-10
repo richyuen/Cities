@@ -268,14 +268,37 @@ function cellBuildable(ctx, i, j) {
 /** A fixed-footprint civic structure needs every cell free of an existing building — bare 'none' land or
  * zoned-but-unbuilt 'zone' land are both fine (placing here uses up any prior zoning, see World.addBuilding),
  * matching how RCI auto-growth treats zoned-empty cells as available. Road/park/building cells still block. */
-function stampBuildable(ctx, i0, j0, w, d) {
+function stampBuildable(ctx, i0, j0, w, d) { return !stampBlockReason(ctx, i0, j0, w, d); }
+
+// Worst blocker first, so the message names the thing the player has to deal with.
+const STAMP_BLOCK_ORDER = ['edge', 'building', 'road', 'water', 'park', 'uneven'];
+const STAMP_BLOCK_TEXT = {
+  edge: 'off the map', building: 'building in the way', road: 'road in the way', water: 'water',
+  park: 'park in the way', uneven: 'ground too uneven',
+};
+
+/** Why a w x d footprint at (i0, j0) cannot be built: null when it can, else a STAMP_BLOCK_TEXT key. */
+function stampBlockReason(ctx, i0, j0, w, d) {
+  let worst = -1;
+  const note = (r) => { const k = STAMP_BLOCK_ORDER.indexOf(r); if (worst < 0 || k < worst) worst = k; };
   for (let j = j0; j < j0 + d; j++) {
     for (let i = i0; i < i0 + w; i++) {
       const c = ctx.world.cellAt(i, j);
-      if (!c || c.buildingId || !(c.type === 'none' || c.type === 'zone') || !cellBuildable(ctx, i, j)) return false;
+      if (!c) note('edge');
+      else if (c.buildingId || c.type === 'building') note('building');
+      else if (c.type === 'road') note('road');
+      else if (c.type === 'water') note('water');
+      else if (!(c.type === 'none' || c.type === 'zone')) note('park');
+      else if (!cellBuildable(ctx, i, j)) note('uneven'); // terrain.isBuildable: plate spread within the cell
     }
   }
-  return true;
+  return worst < 0 ? null : STAMP_BLOCK_ORDER[worst];
+}
+
+/** Footprint origin for a stamp under the cursor: the cursor's cell is the footprint's centre cell (odd sizes)
+ * or the cell just up-left of centre (even sizes), so the ghost never grows away from the pointer. */
+function stampOrigin(def, hit) {
+  return { i0: hit.i - Math.floor((def.w - 1) / 2), j0: hit.j - Math.floor((def.d - 1) / 2) };
 }
 
 /** The terrain module renders a plate-quantized (stepped, "Blox brick") surface, not the smooth bilinear one
@@ -449,7 +472,8 @@ function startDrag(hit) {
     S.drag = { group: 'road', kind: info.kind, a: p, b: p };
   } else if (info.group === 'stamp') {
     const def = UTILITY_DEF[info.utilKind];
-    S.drag = { group: 'stamp', utilKind: info.utilKind, i0: hit.i, j0: hit.j, i1: hit.i + def.w - 1, j1: hit.j + def.d - 1 };
+    const { i0, j0 } = stampOrigin(def, hit);
+    S.drag = { group: 'stamp', utilKind: info.utilKind, i0, j0, i1: i0 + def.w - 1, j1: j0 + def.d - 1 };
   } else {
     S.drag = { group: info.group, zone: info.zone, areaKind: info.areaKind, i0: hit.i, j0: hit.j, i1: hit.i, j1: hit.j };
   }
@@ -461,7 +485,8 @@ function updateDrag(hit) {
   if (S.drag.group === 'road') S.drag.b = snapRoadPoint(S.ctx, hit.x, hit.z);
   else if (S.drag.group === 'stamp') {
     const def = UTILITY_DEF[S.drag.utilKind];
-    S.drag.i0 = hit.i; S.drag.j0 = hit.j; S.drag.i1 = hit.i + def.w - 1; S.drag.j1 = hit.j + def.d - 1;
+    const { i0, j0 } = stampOrigin(def, hit);
+    S.drag.i0 = i0; S.drag.j0 = j0; S.drag.i1 = i0 + def.w - 1; S.drag.j1 = j0 + def.d - 1;
   } else { S.drag.i1 = hit.i; S.drag.j1 = hit.j; }
   updateGhostsForDrag();
 }
@@ -487,10 +512,10 @@ function updateGhostsForDrag() {
   }
   if (d.group === 'stamp') {
     const def = UTILITY_DEF[d.utilKind];
-    const valid = stampBuildable(ctx, d.i0, d.j0, def.w, def.d);
-    applyRect(rectBounds(ctx, d.i0, d.j0, d.i1, d.j1), valid ? 'lime' : 'transRed');
+    const blocked = stampBlockReason(ctx, d.i0, d.j0, def.w, def.d);
+    applyRect(rectBounds(ctx, d.i0, d.j0, d.i1, d.j1), blocked ? 'transRed' : 'lime');
     const afford = currentMoney(ctx) >= def.cost;
-    const txt = !valid ? 'Blocked' : afford ? `$${def.cost.toLocaleString()}` : 'Insufficient funds';
+    const txt = blocked ? `Blocked — ${STAMP_BLOCK_TEXT[blocked]}` : afford ? `$${def.cost.toLocaleString()}` : 'Insufficient funds';
     uiApi(ctx)?.setStatus?.(`${def.label}: ${txt}`);
     return;
   }
@@ -525,8 +550,9 @@ function updateHoverGhost(hit) {
   }
   if (info.group === 'stamp') {
     const def = UTILITY_DEF[info.utilKind];
-    const valid = stampBuildable(ctx, hit.i, hit.j, def.w, def.d);
-    applyRect(rectBounds(ctx, hit.i, hit.j, hit.i + def.w - 1, hit.j + def.d - 1), valid ? 'lime' : 'transRed');
+    const { i0, j0 } = stampOrigin(def, hit);
+    const valid = stampBuildable(ctx, i0, j0, def.w, def.d);
+    applyRect(rectBounds(ctx, i0, j0, i0 + def.w - 1, j0 + def.d - 1), valid ? 'lime' : 'transRed');
     return;
   }
   if (info.group === 'transit') {
@@ -684,7 +710,8 @@ function finishStamp(d) {
   const ctx = S.ctx;
   const def = UTILITY_DEF[d.utilKind];
   if (!def) return;
-  if (!stampBuildable(ctx, d.i0, d.j0, def.w, def.d)) { fail('Cannot build here'); return; }
+  const blocked = stampBlockReason(ctx, d.i0, d.j0, def.w, def.d);
+  if (blocked) { fail(`Cannot build here — ${STAMP_BLOCK_TEXT[blocked]}`); return; }
   const sim = ctx.modules.get('simulation');
   const hasLedger = sim?.status === 'ok' && typeof sim.api?.spend === 'function';
   if (hasLedger && !sim.api.spend(def.cost)) { fail(`Insufficient funds — need $${def.cost.toLocaleString()}`); return; }

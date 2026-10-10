@@ -46,12 +46,21 @@ export function serializeSave(ctx, { name }) {
 export function applySave(ctx, save) {
   if (!save) return;
   const world = ctx.world;
-  world.clearContent();
-  for (const r of save.roads || []) world.addRoad(r.a, r.b, r.kind, { bridge: !!r.bridge, oneway: r.oneway | 0 });
-  for (const z of save.zones || []) world.setZone(z.i, z.j, z.zone, z.density);
-  for (const p of save.parks || []) world.setCell(p.i, p.j, { type: 'park', parkKind: p.parkKind ?? undefined });
-  for (const b of save.buildings || []) world.addBuilding(b);
-  for (const p of save.props || []) world.addProp(p);
+  // The save holds every prop as it stood. Replaying roads, parks and buildings would otherwise make `props`
+  // generate lamps, signals, figures and yard dressing again on top of the saved ones (the loaded city used to
+  // come back with ~28% more props), so the replay is bracketed: props stays quiet, then adopts what was restored.
+  const props = mod(ctx, 'props');
+  props?.beginReplay?.();
+  try {
+    world.clearContent();
+    for (const r of save.roads || []) world.addRoad(r.a, r.b, r.kind, { bridge: !!r.bridge, oneway: r.oneway | 0 });
+    for (const z of save.zones || []) world.setZone(z.i, z.j, z.zone, z.density);
+    for (const p of save.parks || []) world.setCell(p.i, p.j, { type: 'park', parkKind: p.parkKind ?? undefined });
+    for (const b of save.buildings || []) world.addBuilding(b);
+    for (const p of save.props || []) world.addProp(p);
+  } finally {
+    props?.endReplay?.();
+  }
   if (save.weather) world.setWeather(save.weather);
   mod(ctx, 'simulation')?.loadState?.(save.simulation);
   // Traffic caches lane geometry lazily; force the rebuild before transit restores its lines so their key loops

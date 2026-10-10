@@ -29,14 +29,14 @@ const slider = (min, max, step, value, onInput) => {
   return s;
 };
 
-function buildGraphics(ctx) {
+function buildGraphics(ctx, nav) {
   const ui = mod(ctx, 'ui');
   const settings = ui?.getSettings?.() ?? { quality: 'high', studs: true };
-  const hudOn = ui?.isHudVisible?.() ?? true;
+  const hudOn = nav.hudVisible;
   return h('div', { class: 'lc-menu-tab-body' },
     row('Quality', seg(QUALITY, settings.quality, (q) => ctx.events.emit('settings:changed', { quality: q }))),
     row('Show studs', switchBtn(settings.studs, (v) => ctx.events.emit('settings:changed', { studs: v }))),
-    row('Show HUD', switchBtn(hudOn, (v) => ui?.setHudVisible?.(v))),
+    row('Show HUD', switchBtn(hudOn, (v) => nav.setHudVisible(v))),
     h('div', { class: 'lc-menu-hint' }, ui ? '' : 'HUD module not loaded — graphics settings limited.'));
 }
 
@@ -119,7 +119,7 @@ export function renderOptions(ctx, nav) {
     for (const [k, b] of Object.entries(tabBtns)) b.classList.toggle('on', k === name);
     body.innerHTML = '';
     body.append(
-      name === 'Graphics' ? buildGraphics(ctx) :
+      name === 'Graphics' ? buildGraphics(ctx, nav) :
       name === 'Audio' ? buildAudio(ctx, nav) :
       name === 'Gameplay' ? buildGameplay(ctx) :
       name === 'Camera' ? buildCamera(ctx) : buildControls());
