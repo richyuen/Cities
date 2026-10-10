@@ -163,7 +163,12 @@ export function buildNetwork(world, groundAt) {
     if (arms.length === 1) {
       const a = arms[0];
       const rb = a.frame.spec.bulb > 0 ? Math.max(a.w + 0.5, a.frame.spec.bulb) : 0;
-      if (rb > 0 && bulbCollides(world, n, a, rb)) a.noBulb = true;
+      // A cul-de-sac closes a street that leads somewhere. A stub shorter than three bulb radii, or a lone segment
+      // with a dead end at both ends, would render as a dumbbell: two 10.5 m discs joined by a short neck. Those
+      // ends stay square until the street is extended or joined.
+      const far = world.roads.nodes.get(a.frame.a === n.id ? a.frame.b : a.frame.a);
+      const stub = rb > 0 && (a.frame.L < rb * 3 || (far && far.edges.length === 1));
+      if (rb > 0 && (stub || bulbCollides(world, n, a, rb))) a.noBulb = true;
     }
     computeNodeCorners(node);
     // node height: highest rendered terrain under the node's actual footprint, so plates never sink into a hill

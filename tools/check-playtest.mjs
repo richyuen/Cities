@@ -148,9 +148,7 @@ let before = null;
       const rest = H.propsNear({ x: A.x, z: C.z }, { x: B.x, z: D.z }, 70).filter((id) => { const p = w.props.get(id); return p.x > Math.min(A.x, B.x) - 12 && p.x < Math.max(A.x, B.x) + 12 && p.z > Math.min(C.z, D.z) - 12 && p.z < Math.max(C.z, D.z) + 12; });
       return { lampsEW, cross, westLamps0, westLamps1, eastLamps, nsLamps, signals3, after2, rest: rest.length, mid };
     });
-    // KNOWN DEFECT (not fixed here): a drawn 4-arm crossing gets 3 lights. The junction is signalled when its third
-    // arm arrives and the fourth arm never adds one. Expect 4 once that is fixed.
-    check(!c2.err && c2.cross.signals >= 3 && c2.cross.lampsEW2 >= c2.lampsEW, `C: a crossing keeps the first street's lamps and signals the junction (${JSON.stringify(c2.cross)}, lamps before ${c2.lampsEW})`);
+    check(!c2.err && c2.cross.signals === 4 && c2.cross.lampsEW2 >= c2.lampsEW, `C: a crossing keeps the first street's lamps and signals the junction (${JSON.stringify(c2.cross)}, lamps before ${c2.lampsEW})`);
     check(!c2.err && c2.westLamps0 > 0 && c2.westLamps1 === 0, `C: bulldozing one arm removes that arm's lamps (${c2.westLamps0} -> ${c2.westLamps1})`);
     check(!c2.err && c2.eastLamps > 0 && c2.nsLamps > 0, `C: the other arms keep theirs (east ${c2.eastLamps}, cross street ${c2.nsLamps})`);
     check(!c2.err && c2.signals3 === 3, `C: the junction is re-signalled for 3 arms (${c2.signals3} lights)`);
@@ -450,6 +448,32 @@ let before = null;
       check(covN.opacity <= 0.3 && covN.emissive <= 0.15, `J: and stays one at night (${JSON.stringify(covN)})`);
       await page.evaluate(() => { window.__city.setTime(14); window.__city.ctx.modules.get('ui').api.setTool(null); });
     }
+
+    // J: cul-de-sac bulbs. A lone segment and a short stub end square; a real dead-end street keeps its bulb.
+    const bulbs = await page.evaluate(async () => {
+      const c = window.__city, w = c.world, H = window.__pt;
+      const roads = c.ctx.modules.get('roads').api;
+      const o = H.openLand(20, 3);
+      if (!o) return { err: 'no open land' };
+      const P = (di, dj) => { const p = w.cellToWorld(o.i + di, o.j + dj); return { x: p.x, z: p.z }; };
+      const bulbAt = (p) => { const n = roads.getIntersections().find((m) => Math.hypot(m.x - p.x, m.z - p.z) < 2); return n ? { arms: n.arms.length, bulb: n.arms[0].bulb } : null; };
+      const out = {};
+      w.addRoad(P(0, 2), P(4, 2), 'street', { snapNodes: true });            // lone 32 m segment
+      await H.frames(3);
+      out.lone = [bulbAt(P(0, 2)), bulbAt(P(4, 2))];
+      w.addRoad(P(0, 10), P(19, 10), 'street', { snapNodes: true });         // a long street...
+      w.addRoad(P(10, 10), P(10, 19), 'street', { snapNodes: true });        // ...with a 72 m dead-end branch
+      w.addRoad(P(4, 10), P(4, 12), 'street', { snapNodes: true });          // ...and a 16 m stub
+      await H.frames(3);
+      out.branch = bulbAt(P(10, 19)); out.stub = bulbAt(P(4, 12)); out.throughEnd = bulbAt(P(0, 10));
+      out.audit = roads.audit ? roads.audit().ok : null;
+      for (const e of [...w.roads.edges.values()]) { const a = w.roads.nodes.get(e.a); if (a.x >= P(0, 0).x - 4 && a.x <= P(19, 0).x + 4 && a.z >= P(0, 0).z - 4 && a.z <= P(0, 19).z + 4) w.removeRoad(e.id); }
+      await H.frames(3);
+      return out;
+    });
+    check(!bulbs.err && bulbs.lone.every((n) => n && n.arms === 1 && n.bulb === 0), `J: a lone 32 m street ends square at both ends (${JSON.stringify(bulbs.lone)})`);
+    check(!bulbs.err && bulbs.branch?.bulb > 0 && bulbs.throughEnd?.bulb > 0, `J: a real dead-end street keeps its cul-de-sac (branch ${bulbs.branch?.bulb}, street end ${bulbs.throughEnd?.bulb})`);
+    check(!bulbs.err && bulbs.stub?.bulb === 0, `J: a 16 m stub ends square (${JSON.stringify(bulbs.stub)})`);
 
     // G: zone 6 road-adjacent cells in the mature city
     const g = await page.evaluate(async () => {

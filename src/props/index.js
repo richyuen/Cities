@@ -110,6 +110,7 @@ const S = {
   // Save replay (menu's applySave): the saved props are restored 1:1, so every generator that reacts to
   // road/building/park events stays quiet until endReplay() re-adopts the restored world.
   replaying: false,
+  live: false,            // set by the first update(): city generation is over, edits from here on are the player's
   signalDirty: new Set(), // node ids whose arm set changed by a road removal (signals re-placed in update())
 };
 
@@ -1249,6 +1250,10 @@ function onRoadAdded({ edgeId, edge, reason }) {
     furnishEdge(edgeId);
     populatePedestriansForEdge(edgeId); // C2: figures on this edge's sidewalks
   }
+  // A junction is signalled once, when its third arm arrives. In live play an arm added to an already signalled
+  // junction (the fourth arm of a drawn crossing) re-places its lights for the new arm set on the next update.
+  // Generation-time junctions are left as they were built, so the generated city is unchanged.
+  if (S.live && e) for (const nid of [e.a, e.b]) if (S.signaledNodes.has(nid)) S.signalDirty.add(nid);
   maybeSignalIntersections();
   // Live play only (after the boot settle): a newly drawn/edited road can change the surface under already
   // settled C2 props (the same mechanism that used to leave levitating figures), so re-resolve once.
@@ -1593,6 +1598,7 @@ export default {
       for (const id of S.spEvict.splice(0)) ctx.world.removeProp(id);
     }
     if (S.spResettle) { S.spResettle = false; settleSetPieces(); }
+    S.live = true;
     if (S.signalDirty.size) { const ids = [...S.signalDirty]; S.signalDirty.clear(); respawnSignals(ids); }
     if (S.dirty && performance.now() - S.lastEvent > 30) rebuild();
     if (S.parkDirty.size && performance.now() > S.parkFlushAt) flushParkClusters();
@@ -1639,6 +1645,6 @@ export default {
     S.pIdx.clear(); S.bIdx.clear(); S.yardByBuilding.clear(); S.pedEdges.clear(); S.figureCount = 0;
     S.roadSnap = null; S.roadSnapDirty = true; S.detailSettle = null; S.detailSettledOnce = false;
     S.setPieces.clear(); S.spEvict.length = 0; S.spSettle = null; S.spPlacing = false; S.spResettle = false;
-    S.replaying = false; S.signalDirty.clear();
+    S.replaying = false; S.live = false; S.signalDirty.clear();
   },
 };
