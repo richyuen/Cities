@@ -241,19 +241,19 @@ let before = null;
     check(e.stillHiddenAfterToggle && e.afterOff === false && e.readsOff && e.afterOn === true, 'E: toggling sticks after the menu closes, both ways');
 
     // play a little so the save differs from a fresh boot, then save
-    before = await page.evaluate(async () => {
+    // Census and save are taken in one synchronous step (the module is imported first): the game keeps running
+    // between two separate evaluates, and a growth pass or a few ticks in the gap made the comparison racy.
+    const snap = await page.evaluate(async () => {
       const c = window.__city, H = window.__pt;
       const sim = c.ctx.modules.get('simulation').api;
+      const { serializeSave } = await import('/src/menu/serialize.js');
       for (let k = 0; k < 1500; k++) sim.tick(true);
       sim.spend(1234);
       await H.frames(30); // park flush (200 ms) and any deferred prop work
-      const m = c.ctx.modules.get('simulation');
-      return H.census();
+      sim.tick(true);     // stats are a per-tick snapshot: make them current before reading
+      return { before: H.census(), save: JSON.stringify(serializeSave(c.ctx, { name: 'check-playtest' })) };
     });
-    save = await page.evaluate(async () => {
-      const { serializeSave } = await import('/src/menu/serialize.js');
-      return JSON.stringify(serializeSave(window.__city.ctx, { name: 'check-playtest' }));
-    });
+    before = snap.before; save = snap.save;
     check(before.day > 1 && before.tick >= 1500, `setup: the saved city is past day 1 (day ${before.day}, tick ${before.tick}, $${before.money}, ${before.props} props, ${(save.length / 1e6).toFixed(2)} MB)`);
     check(before.tags.edgeId > 500 && before.tags.nodeId > 100 && before.tags.yardOf > 500, `setup: props carry their owner tags (${JSON.stringify(before.tags)})`);
   } finally { await app.close(); }
