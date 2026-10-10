@@ -123,14 +123,16 @@ function auditNetwork(world) {
     if (!nodeIds.has(e.a)) out.orphans.push(`edge ${e.id} -> ${e.a}`);
     if (!nodeIds.has(e.b)) out.orphans.push(`edge ${e.id} -> ${e.b}`);
   }
+  // A vehicle node sitting on another vehicle edge it is not part of: a dead end inside the edge's band (an
+  // unsplit T), or any node on the edge's centreline (a road laid through a junction or seam without joining it).
   for (const n of nodes) {
-    if (n.edges.length !== 1) continue;
-    const inc = world.roads.edges.get(n.edges[0]);
-    if (!isVeh(inc)) continue;
+    const incs = n.edges.map((id) => world.roads.edges.get(id)).filter(isVeh);
+    if (!incs.length) continue;
+    const deadEnd = n.edges.length === 1;
     for (const e of info) {
-      if (e.e.id === inc.id || !isVeh(e.e)) continue;
+      if (!isVeh(e.e)) continue;
       if (e.e.a === n.id || e.e.b === n.id) continue;
-      if (pointSegDist(n.x, n.z, e.ax, e.az, e.ax + e.dx, e.az + e.dz) <= e.e.width / 2 - 0.01) {
+      if (pointSegDist(n.x, n.z, e.ax, e.az, e.ax + e.dx, e.az + e.dz) <= (deadEnd ? e.e.width / 2 - 0.01 : 0.5)) {
         out.unsplitT.push({ node: n.id, edge: e.e.id });
         break;
       }

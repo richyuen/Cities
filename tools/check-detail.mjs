@@ -555,8 +555,10 @@ try {
 // e0f35033 was the check-detail census hash at 1876d3b (before cycle 5). Re-pinned 2026-10-10 to 82e9cf4b for one
 // intended change: junctions are re-signalled once generation ends, so the 37 four-arm and one six-arm junctions
 // that carried three lights now carry one per arm (traffic_light 242 -> 282, total +40; nothing else in the
-// census moved). The check still means what it did: `?nosp=1` is the city without set-pieces.
-const PRE_C5_CENSUS_HASH = '82e9cf4b';
+// census moved). Re-pinned again the same day to cf4b86db: the street that crossed the avenue seam at (-480,-220)
+// without a junction is now joined there (edges 490 -> 491, one more four-way junction and its four lights).
+// The check still means what it did: `?nosp=1` is the city without set-pieces.
+const PRE_C5_CENSUS_HASH = 'cf4b86db';
 let nospHash = null;
 {
   const app2b = await openApp({ seed: 1, tod: 12, hud: 0, extra: { nosp: '1' } });

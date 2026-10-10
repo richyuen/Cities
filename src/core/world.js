@@ -787,7 +787,13 @@ export class World {
         const prev = junctionT.get(node.id);
         if (prev === undefined || hit.t < prev) junctionT.set(node.id, hit.t);
       }
-      if (snapNodes) {
+      // Route through existing nodes on the segment. Interactive drags take any node within ROUTE_SNAP; every
+      // other caller still joins a vehicle node that lies ON the segment (NODE_SNAP). The crossing test above
+      // only sees a crossing in another edge's interior, so a road laid exactly through the shared end node of
+      // two edges (an avenue built in two pieces, then a street across the seam) used to pass through it with no
+      // junction at all: two roads overlapping at grade, cars of one driving under the other's plate.
+      {
+        const routeSnap = snapNodes ? ROUTE_SNAP : NODE_SNAP;
         for (const n of this.roads.nodes.values()) {
           if (n === na || n === nb) continue;
           const dx = nb.x - na.x, dz = nb.z - na.z, l2 = dx * dx + dz * dz;
@@ -795,8 +801,10 @@ export class World {
           const t = ((n.x - na.x) * dx + (n.z - na.z) * dz) / l2;
           if (t <= 1e-6 || t >= 1 - 1e-6) continue;
           const off = pointSegDist(n.x, n.z, na.x, na.z, nb.x, nb.z);
-          if (off > ROUTE_SNAP) continue;
-          if (off > NODE_SNAP && this._pathOnlyNode(n)) continue; // an alley end beside the route is not on it
+          if (off > routeSnap) continue;
+          // an alley end beside the route is not on it; and outside interactive drags a path never splits a street
+          if ((off > NODE_SNAP || !snapNodes) && this._pathOnlyNode(n)) continue;
+          if (!snapNodes && !n.edges.some((id) => { const e = this.roads.edges.get(id); return e && !e.bridge && e.kind !== 'path'; })) continue;
           const prev = junctionT.get(n.id);
           if (prev === undefined || t < prev) junctionT.set(n.id, t);
         }
