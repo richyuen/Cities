@@ -149,55 +149,70 @@ const SMOKE_FRAG = /* glsl */`
     #include <colorspace_fragment>
   }`;
 
+const material = (frag, uniforms, name) => new THREE.ShaderMaterial({
+  name,
+  uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, uniforms]),
+  vertexShader: VERT,
+  fragmentShader: frag,
+  transparent: true,
+  depthWrite: false,
+  depthTest: true,
+  blending: THREE.CustomBlending,
+  blendSrc: THREE.OneFactor,
+  blendDst: THREE.OneMinusSrcAlphaFactor,
+  blendSrcAlpha: THREE.OneFactor,
+  blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
+  side: THREE.DoubleSide,
+  fog: true,
+});
+
+// one quad per instance; the per-instance aParam (life, seed, strength, roll / halo flag) rides on the mesh's own
+// geometry as mesh.userData.param
+function instancedQuads(mat, n, name) {
+  const geo = new THREE.PlaneGeometry(1, 1);
+  const param = new THREE.InstancedBufferAttribute(new Float32Array(n * 4), 4);
+  param.setUsage(THREE.DynamicDrawUsage);
+  geo.setAttribute('aParam', param);
+  const mesh = new THREE.InstancedMesh(geo, mat, n);
+  mesh.name = name;
+  mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  mesh.frustumCulled = false;
+  mesh.castShadow = false; mesh.receiveShadow = false;
+  mesh.count = 0;
+  mesh.visible = false;
+  mesh.userData.param = param;
+  return mesh;
+}
+
+/** A mesh of up to `n` flame quads for another effect (the kaiju's breath): the same shader as the building
+ * fires, with its own material. Per instance: setMatrixAt(i, position + size) and userData.param (life 0..1,
+ * seed 0..1, strength 0..1, 0 for a tongue or 1 for a glow halo); the caller sets mesh.count, mesh.visible,
+ * the needsUpdate flags, and material.uniforms.uTime / uGlow / uHalo every frame. dispose() frees it. */
+export function createFlameMesh(n, name) {
+  const mat = material(FLAME_FRAG, { uTime: { value: 0 }, uGlow: { value: 2.4 }, uHalo: { value: 0.1 } }, name);
+  const mesh = instancedQuads(mat, n, name);
+  mesh.renderOrder = 1;
+  const dispose = mesh.dispose.bind(mesh);
+  mesh.dispose = () => { dispose(); mesh.geometry.dispose(); mat.dispose(); };
+  return mesh;
+}
+
 export class BuildingFires {
   constructor(ctx, rng) {
     this.ctx = ctx;
     this.group = new THREE.Group();
     this.group.name = 'buildings-fires';
 
-    const material = (frag, uniforms, name) => new THREE.ShaderMaterial({
-      name,
-      uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, uniforms]),
-      vertexShader: VERT,
-      fragmentShader: frag,
-      transparent: true,
-      depthWrite: false,
-      depthTest: true,
-      blending: THREE.CustomBlending,
-      blendSrc: THREE.OneFactor,
-      blendDst: THREE.OneMinusSrcAlphaFactor,
-      blendSrcAlpha: THREE.OneFactor,
-      blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
-      side: THREE.DoubleSide,
-      fog: true,
-    });
     this.flameMat = material(FLAME_FRAG, { uTime: { value: 0 }, uGlow: { value: 2.4 }, uHalo: { value: 0.1 } }, 'BuildingFlames');
     this.smokeMat = material(SMOKE_FRAG, {
       uTime: { value: 0 }, uLight: { value: 1 }, uEmber: { value: 0.35 },
       uDark: { value: new THREE.Color(0.035, 0.032, 0.032) }, uLit: { value: new THREE.Color(0.3, 0.3, 0.32) },
     }, 'BuildingSmoke');
-
-    // one quad per instance; the per-instance aParam (life, seed, strength, roll) rides on each mesh's own geometry
-    const inst = (mat, n, name) => {
-      const geo = new THREE.PlaneGeometry(1, 1);
-      const param = new THREE.InstancedBufferAttribute(new Float32Array(n * 4), 4);
-      param.setUsage(THREE.DynamicDrawUsage);
-      geo.setAttribute('aParam', param);
-      const mesh = new THREE.InstancedMesh(geo, mat, n);
-      mesh.name = name;
-      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-      mesh.frustumCulled = false;
-      mesh.castShadow = false; mesh.receiveShadow = false;
-      mesh.count = 0;
-      mesh.visible = false;
-      mesh.userData.param = param;
-      this.group.add(mesh);
-      return mesh;
-    };
-    this.flames = inst(this.flameMat, MAX_FLAMES, 'buildings:fire-flames');
-    this.smoke = inst(this.smokeMat, MAX_SMOKE, 'buildings:fire-smoke');
+    this.flames = instancedQuads(this.flameMat, MAX_FLAMES, 'buildings:fire-flames');
+    this.smoke = instancedQuads(this.smokeMat, MAX_SMOKE, 'buildings:fire-smoke');
     this.flames.renderOrder = 1;
     this.smoke.renderOrder = 2;
+    this.group.add(this.flames, this.smoke);
 
     // seeded once; the fire itself is animated by time, like the kaiju's flame stream
     this.table = [];

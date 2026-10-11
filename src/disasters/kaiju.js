@@ -4,10 +4,13 @@ import {
   sideOf, stepPhase, footPlant, tailPoints, emerged, breathT,
 } from './kaijuGait.js';
 
-// Kaiju visuals: a bipedal brick lizard, built from unit boxes. Two instanced meshes, so two draw calls plus the
-// body's shadow passes while it is on the map and none when idle (the group is hidden):
-//   kaiju:body  every brick of the body, coloured per instance (casts and receives shadows)
-//   kaiju:fire  the two eyes and the fire breath, self-lit (no shadow); only the eyes are drawn outside a breath
+// Kaiju visuals: a bipedal brick lizard, built from unit boxes. Three instanced meshes, so two draw calls plus
+// the body's shadow passes while it is on the map (a third while it breathes) and none when idle (the group is
+// hidden):
+//   kaiju:body    every brick of the body, coloured per instance (casts and receives shadows)
+//   kaiju:fire    the two eyes, self-lit boxes (no shadow)
+//   kaiju:breath  the fire breath: a stream of flame quads from the mouth to the ground, drawn with the building
+//                 fires' shader (buildings.api.createFlameMesh), plus a glow halo where it lands; empty otherwise
 // Local space: origin on the ground under the hips, +X forward, +Z right; the group is turned by -heading.
 // Where the feet and the tail are comes from kaijuGait.js, the same functions the simulation stomps and sweeps
 // with. Everything else here (bob, sway, flame flicker) is presentation.
@@ -99,16 +102,20 @@ export function createKaijuVisuals(ctx, rng) {
   }
   body.instanceColor.needsUpdate = true;
 
-  const fire = new THREE.InstancedMesh(geo, fireMat, 2 + FLAMES);
+  const fire = new THREE.InstancedMesh(geo, fireMat, 2);
   fire.name = 'kaiju:fire';
   fire.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   fire.frustumCulled = false;
   fire.castShadow = false; fire.receiveShadow = false;
-  const red = ctx.materials.color('brightRed'), orange = ctx.materials.color('brightOrange'), yellow = ctx.materials.color('brightYellow');
+  const red = ctx.materials.color('brightRed');
   fire.setColorAt(0, red); fire.setColorAt(1, red);
-  fire.instanceColor.setUsage(THREE.DynamicDrawUsage);
   fire.count = 2;
   group.add(body, fire);
+  // the breath is the building fires' flame shader; without the buildings module it is simply not drawn
+  const buildings = ctx.modules.get('buildings');
+  const breath = buildings?.status === 'ok' && typeof buildings.api?.createFlameMesh === 'function' ? buildings.api.createFlameMesh(FLAMES + 1, 'kaiju:breath') : null;
+  if (breath) group.add(breath);
+  const breathParam = breath ? breath.userData.param.array : null;
 
   // the flame table is seeded once; the stream itself is animated by time, like the funnel's spin
   const flames = [];
@@ -118,7 +125,7 @@ export function createKaijuVisuals(ctx, rng) {
 
   const _m = new THREE.Matrix4(), _bodyM = new THREE.Matrix4(), _headM = new THREE.Matrix4(), _jawM = new THREE.Matrix4(), _t = new THREE.Matrix4();
   const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _d = new THREE.Vector3(), _n = new THREE.Vector3();
-  const UP = new THREE.Vector3(0, 1, 0), FWD = new THREE.Vector3(1, 0, 0), _c = new THREE.Color();
+  const UP = new THREE.Vector3(0, 1, 0), FWD = new THREE.Vector3(1, 0, 0);
   const _tail = [];
   const _qz45 = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 4);
 
@@ -232,32 +239,49 @@ export function createKaijuVisuals(ctx, rng) {
       _m.compose(_p.set(11.8, 51.5, (e ? 1 : -1) * 3.55), _q.identity(), _s.set(1.7, 1.2, 0.35)).premultiply(_headM);
       fire.setMatrixAt(e, _m);
     }
-    // fire breath: boxes streaming from the mouth down to the ground ahead
-    if (bt > 0) {
+    fire.instanceMatrix.needsUpdate = true;
+
+    // fire breath: tongues of flame streaming from the mouth down to the ground ahead, a glow where they land
+    if (breath && bt > 0) {
       const front = Math.min(1, bt * 3.5), back = Math.max(0, (bt - 0.8) / 0.2);
       const m0 = _a.set(K_MOUTH_FWD + 1, K_MOUTH_Y - 0.5, 0).applyMatrix4(_headM);
+      const env = ctx.modules.get('environment');
+      const night = env?.status === 'ok' && Number.isFinite(env.api?.state?.night) ? Math.max(0, Math.min(1, env.api.state.night)) : 0;
+      const u0 = breath.material.uniforms;
+      u0.uTime.value = time; u0.uGlow.value = 2.6 + 0.8 * night; u0.uHalo.value = 0.25 + 0.75 * night;
+      _q.identity();
+      let n = 0;
       for (let i = 0; i < FLAMES; i++) {
         const f = flames[i];
         const u = (f.phase + time * 1.1 * f.speed) % 1;
-        if (u > front || u < back) { fire.setMatrixAt(2 + i, _m.makeScale(0, 0, 0)); continue; }
+        if (u > front || u < back) continue;
         const reach = u * FLAME_REACH, wide = reach * Math.tan(FLAME_SPREAD);
         const fall = Math.pow(u, 0.85);
-        _p.set(m0.x + reach, m0.y * (1 - fall) + 1.5 + f.up * wide * 0.25 * (1 - u), m0.z + f.side * wide);
-        _q.setFromEuler(_e.set(time * f.spin, time * f.spin * 0.7 + i, u * 3));
-        _s.setScalar((1 + 4 * u) * f.size);
-        fire.setMatrixAt(2 + i, _m.compose(_p, _q, _s));
-        if (u < 0.45) _c.copy(yellow).lerp(orange, u / 0.45); else _c.copy(orange).lerp(red, Math.min(1, (u - 0.45) / 0.45));
-        fire.setColorAt(2 + i, _c);
+        const size = (3.5 + 6.5 * u) * f.size;
+        _p.set(m0.x + reach, m0.y * (1 - fall) + 1.5 + size * 0.3 + f.up * wide * 0.25 * (1 - u), m0.z + f.side * wide);
+        breath.setMatrixAt(n, _m.compose(_p, _q, _s.set(size, size * 1.5, 1)));
+        // a tongue reddens as it leaves the mouth; the jet stays dense right to where it lands
+        const o = n * 4;
+        breathParam[o] = u * 0.7; breathParam[o + 1] = f.phase; breathParam[o + 2] = 1; breathParam[o + 3] = 0;
+        n++;
       }
-      fire.count = 2 + FLAMES;
-      fire.instanceColor.needsUpdate = true;
-    } else fire.count = 2;
-    fire.instanceMatrix.needsUpdate = true;
+      // the glow on the ground where the jet lands
+      if (front > 0.6) {
+        const hs = 28 * Math.min(1, (front - 0.6) / 0.4) * (1 - back);
+        breath.setMatrixAt(n, _m.compose(_p.set(m0.x + FLAME_REACH * 0.9, 4, m0.z), _q, _s.set(hs, hs, 1)));
+        const o = n * 4;
+        breathParam[o] = 0; breathParam[o + 1] = 0.5; breathParam[o + 2] = 1; breathParam[o + 3] = 1;
+        n++;
+      }
+      breath.count = n; breath.visible = n > 0;
+      breath.instanceMatrix.needsUpdate = true; breath.userData.param.needsUpdate = true;
+    } else if (breath) { breath.count = 0; breath.visible = false; }
   }
 
   function dispose() {
     group.remove(body, fire);
     body.dispose(); fire.dispose();
+    if (breath) { group.remove(breath); breath.dispose(); }
     geo.dispose();
   }
 

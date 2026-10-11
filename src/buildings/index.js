@@ -3,7 +3,7 @@ import { generateBuilding } from './generator.js';
 import { BuildingBatcher } from './batching.js';
 import { BuildingStudField } from './studfield.js';
 import { UnservedIndicators, FireDrones, BurglaryIndicators, PatrolCars } from './indicators.js';
-import { BuildingFires } from './fire.js';
+import { BuildingFires, createFlameMesh } from './fire.js';
 import { stageDefault, stageLevels, stageNight, stageFacade, stageHouses } from './showcase.js';
 
 // buildings — procedurally generates and renders Blox-style buildings for world.buildings records, and (in the
@@ -220,6 +220,9 @@ const api = {
     S.batcher.flush();
     return true;
   },
+  /** An InstancedMesh of up to `n` flame quads drawn with the building fires' shader, for another module's fire
+   * (the kaiju's breath); the caller owns and animates it. See createFlameMesh in fire.js for the contract. */
+  createFlameMesh(n, name) { return createFlameMesh(n, name); },
   /** Read-only description of a building's generated parts, for effects that take it apart (disasters):
    * { gen, baseY, height, kind, cx, cz, parts: [{ index, mat, min:[x,y,z], max:[x,y,z], liner, hidden }] } or null.
    * `gen` changes whenever the building is regenerated (level-up, repair): part indices are only valid for the

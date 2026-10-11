@@ -577,24 +577,25 @@ try {
   // the fire is drawn only while it breathes
   const flames = await page.evaluate(async () => {
     const c = window.__city, ctx = c.ctx, d = ctx.modules.get('disasters').api;
-    const fire = ctx.scene.getObjectByName('kaiju:fire');
+    const fire = ctx.scene.getObjectByName('kaiju:fire'), breath = ctx.scene.getObjectByName('kaiju:breath');
     c.setTimeScale(2);
     const breathing = () => { const k = d.getKaiju(); return !!k && k.breathUntil > k.age; };
+    const drawn = (m) => (m.visible ? m.count : 0);
     let n = 0;
     while (breathing() && n++ < 600) await c.frames(1);
     await c.frames(2);
-    const idle = fire.count;
+    const idle = drawn(fire) + drawn(breath), eyes = drawn(fire);
     n = 0;
     while (!breathing() && d.getKaiju() && n++ < 1500) await c.frames(1);
     await c.frames(4);
-    const lit = breathing() ? fire.count : -1;
+    const lit = breathing() ? drawn(fire) + drawn(breath) : -1, eyesLit = drawn(fire);
     c.pause();
     await c.frames(2);
     const bf = ctx.scene.getObjectByName('buildings:fire-flames');
-    return { idle, lit, burning: ctx.modules.get('simulation').api.getBurningBuildings().filter((id) => ctx.modules.get('buildings').api.getParts(id)).length, drawn: bf.visible ? bf.count : 0 };
+    return { idle, lit, eyes, eyesLit, burning: ctx.modules.get('simulation').api.getBurningBuildings().filter((id) => ctx.modules.get('buildings').api.getParts(id)).length, drawn: bf.visible ? bf.count : 0 };
   });
-  check(flames.burning > 0 ? flames.drawn > 0 : flames.drawn === 0, `the buildings it set alight are drawn burning (${flames.burning} burning, ${flames.drawn} flame bricks)`);
-  check(flames.idle === 2 && flames.lit > 2, `kaiju:fire draws the eyes only (${flames.idle} boxes) until it breathes (${flames.lit} boxes)`);
+  check(flames.burning > 0 ? flames.drawn > 0 : flames.drawn === 0, `the buildings it set alight are drawn burning (${flames.burning} burning, ${flames.drawn} flame quads)`);
+  check(flames.idle === 2 && flames.eyes === 2 && flames.eyesLit === 2 && flames.lit > 2, `kaiju:fire draws the eyes only (${flames.idle} instances) until kaiju:breath streams (${flames.lit} instances)`);
 
   // chase it: a fixed camera relative to its live position, at noon and dusk
   for (const [tod, name] of [[12, 'kaiju-chase-day'], [17.7, 'kaiju-chase-dusk']]) {
@@ -624,7 +625,7 @@ try {
     await c.frames(6);
     const live = c.stats().drawCalls;
     const state = d.getState();
-    const meshes = ['kaiju:body', 'kaiju:fire', 'bricks:2x4', 'bricks:box'].map((name) => { const m = ctx.scene.getObjectByName(name); return `${name}${m?.visible && m.count ? '' : ' (off)'}`; });
+    const meshes = ['kaiju:body', 'kaiju:fire', 'kaiju:breath', 'bricks:2x4', 'bricks:box'].map((name) => { const m = ctx.scene.getObjectByName(name); return `${name}${m?.visible && m.count ? '' : ' (off)'}`; });
     d.clear();
     await c.frames(6);
     const idle = c.stats().drawCalls;
@@ -632,7 +633,7 @@ try {
     await c.frames(2);
     return { live, idle, flying: st.bricks.live, lying: st.bricks.rubble, back: !!d.getKaiju(), meshes };
   });
-  check(kcost.live - kcost.idle <= 10 && kcost.flying + kcost.lying > 0, `the kaiju adds at most 10 draw calls to the whole frame (${kcost.idle} without, ${kcost.live} with ${kcost.flying} bricks flying and ${kcost.lying} lying; ${kcost.meshes.join(', ')})`);
+  check(kcost.live - kcost.idle <= 11 && kcost.flying + kcost.lying > 0, `the kaiju adds at most 11 draw calls to the whole frame (${kcost.idle} without, ${kcost.live} with ${kcost.flying} bricks flying and ${kcost.lying} lying; ${kcost.meshes.join(', ')})`);
   check(kcost.back, 'clear() then loadState(getState()) brings the kaiju back');
 
   // the city fights back: a police station and a fire department behind it shorten the rampage
