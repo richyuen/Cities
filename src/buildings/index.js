@@ -294,7 +294,8 @@ const api = {
     const bs = S.batcher ? S.batcher.stats() : { draws: 0, tris: 0 };
     return { count, byZone, byLevel, drawCalls: bs.draws, triangles: bs.tris,
       // batcher re-merge backlog (a removed building stays drawn until its chunk's buckets are re-merged)
-      dirtyChunks: S.batcher ? S.batcher.dirtyChunks.size : 0, rebuilding: !!S.batcher?._rebuild };
+      dirtyChunks: S.batcher ? S.batcher.dirtyChunks.size : 0, rebuilding: !!S.batcher?._rebuild,
+      lazyChunks: S.batcher ? S.batcher.lazyChunks.size : 0 };
   },
 };
 

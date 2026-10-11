@@ -25,6 +25,7 @@ import { SP_TYPES, clampSize, heroCamera, authorSetPiece } from './setpieces.js'
 const KIND_SET = new Set(KIND_NAMES);
 const LOD_NEAR = 170, LOD_FAR = 220, LOD_MOVE = 6;
 const LIGHT_POOL_SIZE = 14;
+const LAZY_REBUILD_MS = 2000;       // re-layout delay after removals that were already hidden (see hideProps)
 const LIGHT_REFRESH = 0.4; // s
 const TRAFFIC_CYCLE = { green: 5.0, yellow: 1.5, red: 5.5 };
 const TRAFFIC_TOTAL = TRAFFIC_CYCLE.green + TRAFFIC_CYCLE.yellow + TRAFFIC_CYCLE.red;
@@ -78,7 +79,7 @@ const S = {
   roleTable: null,        // Map role -> { geometry, material, instanceColor, castShadow, receiveShadow, mesh, dynamic }
   roleInstances: null,    // Map role -> [{ pos:Vector3, base:Matrix4, color:THREE.Color|null }]
   instIndex: new Map(),   // prop id -> [{ role, k }] its instances in roleInstances (filled by rebuild())
-  dirty: true, lastEvent: 0,
+  dirty: true, lastEvent: 0, lazyDirtyAt: 0,
   fountains: [],          // { points, geometry, basePos:{x,y,z} }
   lightPool: [], lightPoolTimer: 0,
   trafficPhase: 0, trafficPhaseName: null, wasNight: null,
@@ -1066,6 +1067,7 @@ function rebuild() {
   S.instIndex = instIndex;
 
   S.dirty = false;
+  S.lazyDirtyAt = 0;
   applyLod(true);
   updateLightPool(true);
   ctx.log(`[props] rebuilt ${world.props.size} props across ${S.roleTable.size} roles`);
@@ -1116,6 +1118,14 @@ function propParts(id) {
     });
   }
   return out;
+}
+
+/** Is every drawn piece of this prop already hidden? (false for a prop with no drawn pieces) */
+function propHidden(id) {
+  const refs = S.instIndex?.get(id);
+  if (!refs || !refs.length || !S.roleInstances) return false;
+  for (const { role, k } of refs) if (!S.roleInstances.get(role)?.[k]?.hidden) return false;
+  return true;
 }
 
 /** Stop drawing some props now (see api.hideProps). */
@@ -1641,7 +1651,9 @@ export default {
       // The deck is the set-piece: once it is gone (clearContent on a new city / a save being applied, or an
       // explicit removal) the whole set-piece and its registry entry go with it, so no stale rect survives.
       if (prop.kind === 'sp_deck' && prop.sp && S.setPieces.get(prop.sp)?.props[0] === prop.id) removeSetPiece(prop.sp, 'deck removed');
-      markDirty();
+      // A prop that hideProps() already stopped drawing changes nothing on screen when it leaves the world, so its
+      // re-layout can wait (a storm removes props and yard dressing every second; each full re-layout is a hitch).
+      if (propHidden(prop.id)) { if (!S.lazyDirtyAt) S.lazyDirtyAt = performance.now(); } else markDirty();
     }));
     S.unsub.push(ctx.events.on('building:spawned', onBuildingSpawned));
     S.unsub.push(ctx.events.on('building:removed', onBuildingRemoved));
@@ -1686,6 +1698,7 @@ export default {
     S.live = true;
     flushSignals();
     if (S.dirty && performance.now() - S.lastEvent > 30) rebuild();
+    else if (S.lazyDirtyAt && performance.now() - S.lazyDirtyAt > LAZY_REBUILD_MS) rebuild();
     if (S.parkDirty.size && performance.now() > S.parkFlushAt) flushParkClusters();
     applyLod(false);
     S.lightPoolTimer -= dt;

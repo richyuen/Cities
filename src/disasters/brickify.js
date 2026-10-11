@@ -142,12 +142,14 @@ export function brickify(parts, colorOf, rng, { maxBricks = 600 } = {}) {
 }
 
 /**
- * Release order for progressive stripping: indices of the brickable parts, highest first (then smallest first),
+ * Release order for progressive stripping: indices of every part but the liners, highest first (then smallest first),
  * leaving out the body: the largest part of the building and every other part that is both tall and wide enough
  * to be a wall section (those go when the building is destroyed).
  */
 export function shedOrder(parts) {
-  const list = parts.filter(isBrickable);
+  // glow overlays and hairline parts yield no brick but are released with the rest (a lit pane must not hang in
+  // the air where its window used to be)
+  const list = parts.filter((p) => !p.liner);
   if (!list.length) return [];
   let maxVol = 0;
   for (const p of list) maxVol = Math.max(maxVol, partVolume(p));

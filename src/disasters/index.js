@@ -274,6 +274,13 @@ function updateShedding() {
     S.shedding.delete(id);
     S.destroyed++; S.totalDestroyed++;
     crashSound(b);
+    // its yard dressing leaves the world with it (props does that on building:removed): throw what is still
+    // standing now, so nothing is left behind for a frame and props can put off its re-layout
+    const props = modApi('props');
+    if (props && typeof props.detailProps === 'function' && typeof props.hideProps === 'function') {
+      const yard = props.detailProps(id).map((p) => p.id).filter((pid) => !S.propTaken.has(pid));
+      if (yard.length) takeProps(props, yard, sh.rng);
+    }
     if (b.zone) for (let j = b.j; j < b.j + b.d; j++) for (let i = b.i; i < b.i + b.w; i++) S.regrow.push({ i, j });
     world.removeBuilding(id);
   }
@@ -311,23 +318,8 @@ function sweepLoose(t) {
       taken.push(p.id);
     }
     if (taken.length) {
-      const rng = S.rng.fork(`props:${t.id}:${S.propsTaken}`);
-      for (const id of taken) {
-        const parts = props.getPropParts(id) || [];
-        const step = Math.max(1, Math.ceil(parts.length / PROP_PARTS_MAX));
-        for (let k = 0; k < parts.length; k += step) {
-          const pt = parts[k];
-          if (!(pt.size[0] > 0.04 && pt.size[1] > 0.04 && pt.size[2] > 0.04)) continue;
-          S.bricks.spawn({
-            kind: 'box', x: pt.center[0], y: pt.center[1], z: pt.center[2],
-            sx: Math.max(0.25, pt.size[0]), sy: Math.max(0.25, pt.size[1]), sz: Math.max(0.25, pt.size[2]), rotY: pt.rotY, color: pt.color,
-          }, kick(pt.center[0], pt.center[2], rng, 1.2), rng);
-        }
-        S.propTaken.add(id);
-        S.propQueue.push(id);
-      }
-      props.hideProps(taken);
-      S.propsTaken += taken.length;
+      takeProps(props, taken, S.rng.fork(`props:${t.id}:${S.propsTaken}`));
+      for (const id of taken) S.propQueue.push(id);
     }
   }
   const traffic = modApi('traffic');
@@ -343,6 +335,25 @@ function sweepLoose(t) {
       S.carsTaken += cars.length;
     }
   }
+}
+
+/** Throw these props' pieces into the air and stop drawing them. The caller decides when they leave the world. */
+function takeProps(props, ids, rng) {
+  for (const id of ids) {
+    const parts = props.getPropParts(id) || [];
+    const step = Math.max(1, Math.ceil(parts.length / PROP_PARTS_MAX));
+    for (let k = 0; k < parts.length; k += step) {
+      const pt = parts[k];
+      if (!(pt.size[0] > 0.04 && pt.size[1] > 0.04 && pt.size[2] > 0.04)) continue;
+      S.bricks.spawn({
+        kind: 'box', x: pt.center[0], y: pt.center[1], z: pt.center[2],
+        sx: Math.max(0.25, pt.size[0]), sy: Math.max(0.25, pt.size[1]), sz: Math.max(0.25, pt.size[2]), rotY: pt.rotY, color: pt.color,
+      }, kick(pt.center[0], pt.center[2], rng, 1.2), rng);
+    }
+    S.propTaken.add(id);
+  }
+  props.hideProps(ids);
+  S.propsTaken += ids.length;
 }
 
 /** Picked-up props leave the world here, in one batch (every removal re-lays the whole props layer). */

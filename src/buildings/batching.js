@@ -27,6 +27,8 @@ export class BuildingBatcher {
   // individual merge call, and so every per-frame flushIncremental() budget check, well clear of a 16ms frame
   // even for the single most-reused palette colour's bucket in the most densely-built chunk.
   static SLICE_GEOMS = 48;
+  // How long a chunk whose only pending change is the removal of already-hidden buildings waits for its re-merge.
+  static LAZY_MS = 4000;
 
   constructor(ctx, group, dynMats, studField) {
     this.ctx = ctx;
@@ -45,6 +47,9 @@ export class BuildingBatcher {
     // update() can spread a big chunk's rebuild across many frames instead of paying it all in one.
     this._rebuild = null; // { key, chunk, entries: [[matKey, { geoms, refs }], ...], idx, seen: Set, cur }
     this._gen = 0;        // bumped on every set(): tells a caller its part indices went stale (level-up, repair)
+    // chunkKey -> time of the last removal of a fully hidden building (see remove()): chunks that only need a
+    // re-merge to drop triangles nobody can see. Promoted to dirtyChunks once they have been quiet for LAZY_MS.
+    this.lazyChunks = new Map();
   }
 
   chunkKeyFor(i, j) { return `${Math.floor(i / CHUNK_CELLS)}_${Math.floor(j / CHUNK_CELLS)}`; }
@@ -72,7 +77,26 @@ export class BuildingBatcher {
     for (const g of b.parts) g.geom.dispose();
     this.buildings.delete(id);
     this.studField?.remove(id);
+    if (b.allHidden) {
+      // Nothing of it is drawn any more (hide(id, 'all') squashed every triangle, in the drawn mesh and in its own
+      // parts, which an in-flight rebuild may still hold: they merge as zero-area triangles). Re-merging a whole
+      // chunk for each such removal is what makes a storm stutter, so the chunk is only queued; the dead vertices
+      // are dropped by the next re-merge, whenever something visible changes or the chunk has been quiet a while.
+      if (!this.dirtyChunks.has(b.chunkKey)) this.lazyChunks.set(b.chunkKey, performance.now());
+      return;
+    }
     this._markChunkDirty(b.chunkKey);
+  }
+
+  /** Move lazily queued chunks (see remove()) into the dirty set: all of them, or those quiet for `olderThanMs`. */
+  _promoteLazy(olderThanMs = 0) {
+    if (!this.lazyChunks.size) return;
+    const now = performance.now();
+    for (const [key, at] of this.lazyChunks) {
+      if (olderThanMs > 0 && now - at < olderThanMs && !this.dirtyChunks.has(key)) continue;
+      this.lazyChunks.delete(key);
+      this.dirtyChunks.add(key);
+    }
   }
 
   get(id) { return this.buildings.get(id); }
@@ -122,6 +146,7 @@ export class BuildingBatcher {
       }
       this.studField?.remove(id);
       rec.liveStuds = [];
+      rec.allHidden = true;
     } else if (fresh.length && this.studField && rec.studs?.length) {
       // studs standing on a part that just went (roof tiles, sills, awning tops) go with it
       let studs = rec.liveStuds || rec.studs;
@@ -160,6 +185,7 @@ export class BuildingBatcher {
    * which uses flushIncremental() instead to avoid a multi-hundred-millisecond main-thread stall. */
   flush() {
     this._rebuild = null; // discard any partial incremental work; we're about to redo it all synchronously anyway
+    this._promoteLazy();
     if (!this.dirtyChunks.size) return;
     for (const key of this.dirtyChunks) this._rebuildChunkFully(key);
     this.dirtyChunks.clear();
@@ -169,6 +195,7 @@ export class BuildingBatcher {
    * stopping once `timeBudgetMs` has elapsed and resuming on the next call (tracked via this._rebuild). Call
    * this every frame from update(); it's a no-op once nothing is dirty. */
   flushIncremental(timeBudgetMs = 4) {
+    this._promoteLazy(BuildingBatcher.LAZY_MS);
     const deadline = performance.now() + timeBudgetMs;
     while (performance.now() < deadline) {
       if (!this._rebuild) {
@@ -334,6 +361,7 @@ export class BuildingBatcher {
     for (const b of this.buildings.values()) for (const g of b.parts) g.geom.dispose();
     this.buildings.clear();
     this.dirtyChunks.clear();
+    this.lazyChunks.clear();
     this.studField?.clear();
     this._rebuild = null;
   }
