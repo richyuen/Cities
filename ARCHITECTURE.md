@@ -110,6 +110,8 @@ World {
 Mutators (all emit events, all deterministic): `setHeight(i,j,h)`, `getHeight(x,z)` (bilinear, meters), `setCell(i,j,patch)`,
 `addRoad(a:{x,z}, b:{x,z}, kind, {bridge?, snapNodes?, oneway?})` → edgeId, `removeRoad(edgeId)`,
 `planRoadEdit(a, b, kind)` → read-only `{ edges, length, coverage, blocked } | null` (the drag-over upgrade verdict),
+`previewRoadRoute(a, b, kind, {bridge?})` → read-only `[{x,z}]` (the centreline an interactive `addRoad` would run
+through, existing junctions within reach included; the tools' road ghost draws it),
 `upgradeRoad(a, b, kind, {oneway?})` → `{ edges, length, kindChanged, dirChanged } | null` (in-place kind/width/
 direction edit of the existing road the drag follows; emits `road:changed` per edge), `setZone(i,j,zone,density)` (returns `true` when the cell
 changed; `false` no-op for road/water cells and for cells claimed by a building — a built cell's type is owned by its
