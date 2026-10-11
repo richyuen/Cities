@@ -25,12 +25,12 @@ const INSTANCE_COLOR_ROLES = new Set([
   'hedge-block', 'sign-face', 'tree-leaves', 'tree-top', 'flowerbed-base', 'flowerbed-flower',
   // C2 detail layer.
   'fence-picket', 'garden-soil', 'garden-crop', 'laundry-cloth', 'picnic-table',
-  'crate-stack', 'crate-single', 'bike-frame', 'figure-legs', 'figure-torso', 'figure-head',
+  'crate-stack', 'crate-single', 'bike-frame',
   // LOOP cycle 5 set-pieces: generic per-instance-coloured shapes (they share the C2 plastic material).
   'sp-box', 'sp-brick', 'sp-tile', 'sp-stud', 'sp-cyl', 'sp-oct', 'sp-wedge', 'sp-qpipe', 'sp-cap', 'sp-hat',
   'sp-leaf', 'sp-wheat', 'sp-corn',
-  // fix round 1: minifig parts for set-piece figures
-  'sp-legs', 'sp-legsit', 'sp-torso', 'sp-arm', 'sp-head', 'sp-hair',
+  // fix round 1: minifig parts (every figure in the city; sp-hip + sp-leg are the walking build's legs)
+  'sp-legs', 'sp-legsit', 'sp-torso', 'sp-arm', 'sp-head', 'sp-hair', 'sp-hip', 'sp-leg',
 ]);
 // Foliage roles get a matte, low-clearcoat material tuned specifically so leaf/hedge clusters read as Blox
 // foliage rather than the shared glossy-plastic look used by hardware roles (sign-face etc.). Only the hedge

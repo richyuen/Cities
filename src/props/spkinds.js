@@ -192,8 +192,8 @@ export function buildSpRoleGeometry(ctx) {
   }
   // Printed face / torso patch (c6 B2): see print.js. Owns its own geometry (uv + per-instance aTile).
   G['sp-print'] = buildPrintGeometry();
-  // ---- minifig roles (fix round 1): set-piece figures get their own parts so the city's 3-box pedestrians are
-  // untouched. Figure space: feet at y 0, hip top 0.72, torso to 1.30, neck, head 1.34-1.64 + stud, forward +z.
+  // ---- minifig roles (fix round 1; since the people pass every figure in the city is built from them).
+  // Figure space: feet at y 0, hip top 0.72, torso to 1.30, neck, head 1.34-1.64 + stud, forward +z.
   {
     // hip block + two legs with forward feet and a centre slit
     const legs = [xf(UNIT_BOX, mat(0, 0.6, 0, 0, 0, 0, 0.42, 0.12, 0.24))];
@@ -202,6 +202,13 @@ export function buildSpRoleGeometry(ctx) {
       legs.push(xf(UNIT_BOX, mat(x, 0, 0.02, 0, 0, 0, 0.198, 0.09, 0.3)));
     }
     G['sp-legs'] = merge(legs);
+    // walking figures: the same hip block and legs as separate roles, so each leg swings about the hip axis
+    // (leg origin = the hip axis at y 0.61, like the arm's shoulder pivot); sp-legs stays for the posed figures
+    G['sp-hip'] = xf(UNIT_BOX, mat(0, 0.6, 0, 0, 0, 0, 0.42, 0.12, 0.24));
+    G['sp-leg'] = merge([
+      xf(UNIT_BOX, mat(0, 0.08 - 0.61, -0.01, 0, 0, 0, 0.198, 0.53, 0.22)),
+      xf(UNIT_BOX, mat(0, -0.61, 0.02, 0, 0, 0, 0.198, 0.09, 0.3)),
+    ]);
     // seated legs (seat surface at y 0): hip block, thighs forward, shins hanging, feet forward
     const sit = [xf(UNIT_BOX, mat(0, 0, -0.02, 0, 0, 0, 0.42, 0.12, 0.24))];
     for (const x of [-0.106, 0.106]) {
@@ -277,11 +284,16 @@ const wrapPi = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 const BELTS = ['black', 'reddishBrown', 'darkStoneGrey', '#3A2A1E'];
 const HELMETS = ['brightRed', 'brightBlue', 'white', 'black', 'brightYellow', TEAL, 'brightGreen'];
 
-/** Minifig parts in a pose. Origin = feet (stand, work, skate) or the seat surface (sit). `hat`: 'cap' | 'capback' |
- * 'helmet' | 'straw' | 'none' (hair). LOOP c6 (B1/B2): printed face + torso graphic (sp-print), a belt, raised
- * headgear so the face shows, and - when the set-piece author passes `look` (the figure's local yaw) - a head
- * turned toward the set-piece front, the side both hero cameras look from. */
-function figureParts(prng, pose, hat, opts = {}) {
+/** Minifig parts in a pose. Origin = feet (stand, walk, work, skate) or the seat surface (sit). `hat`: 'cap' |
+ * 'capback' | 'helmet' | 'straw' | 'none' (hair). LOOP c6 (B1/B2): printed face + torso graphic (sp-print), a belt,
+ * raised headgear so the face shows, and - when the set-piece author passes `look` (the figure's local yaw) - a head
+ * turned toward the set-piece front, the side both hero cameras look from.
+ * 'walk' is the stand pose built from sp-hip + two sp-leg (the city's pedestrians and the stop riders).
+ * Every part carries the `joint` it moves with ('root' | 'body' | 'head' | 'armP' | 'armN' | 'legP' | 'legN',
+ * P/N = the +x/-x side) and the list carries `rig`, the joint frames people.js animates about. The existing poses
+ * draw from `prng` exactly as before, so the authored set-pieces keep their colours and poses. */
+export function figureParts(prng, pose, hat, opts = {}) {
+  const walk = pose === 'walk';
   const legs = opts.legs || pick(prng, LEGS);
   const shirt = opts.shirt || pick(prng, SHIRTS);
   const skin = pick(prng, SKIN);
@@ -305,27 +317,38 @@ function figureParts(prng, pose, hat, opts = {}) {
     legM = new THREE.Matrix4();
     bodyM = new THREE.Matrix4().multiplyMatrices(mat(0, 0.72, 0, 0.5, 0, 0), mat(0, -0.72, 0));
   } else {
-    legM = mat(0, 0, 0, 0, prng.range(-0.1, 0.1), 0);
+    const twist = prng.range(-0.1, 0.1);
+    legM = walk ? new THREE.Matrix4() : mat(0, 0, 0, 0, twist, 0);
     bodyM = new THREE.Matrix4();
     if (opts.lean) bodyM = new THREE.Matrix4().multiplyMatrices(mat(0, 0.72, 0, opts.lean, 0, 0), mat(0, -0.72, 0));
   }
-  const torsoM = new THREE.Matrix4().multiplyMatrices(bodyM, mat(0, 0, 0, 0, yaw, 0));
-  let headM = new THREE.Matrix4().multiplyMatrices(bodyM, mat(0, 0, 0, 0, headYaw, 0));
+  const torsoM = new THREE.Matrix4().multiplyMatrices(bodyM, mat(0, 0, 0, 0, walk ? 0 : yaw, 0));
+  let headM = new THREE.Matrix4().multiplyMatrices(bodyM, mat(0, 0, 0, 0, walk ? headYaw * 0.5 : headYaw, 0));
   // c6: a bent-over worker looks up from the work (head tipped back about the neck), so the face is not pointed at
   // the ground from a hero camera
   if (pose === 'work') {
     const tip = new THREE.Matrix4().multiplyMatrices(mat(0, 1.31, 0, -0.45, 0, 0), mat(0, -1.31, 0));
     headM = new THREE.Matrix4().multiplyMatrices(bodyM, new THREE.Matrix4().multiplyMatrices(tip, mat(0, 0, 0, 0, headYaw, 0)));
   }
-  const parts = [
-    { role: legRole, local: legM, color: legs },
-    { role: 'sp-torso', local: torsoM, color: shirt },
-    { role: 'sp-head', local: headM, color: skin },
-  ];
-  const on = (m, part) => { part.local = new THREE.Matrix4().multiplyMatrices(m, part.local); parts.push(part); };
+  const legFrames = [1, -1].map((side) => new THREE.Matrix4().multiplyMatrices(legM, mat(side * 0.106, 0.61, 0)));
+  const parts = walk ? [
+    { role: 'sp-hip', local: legM, color: legs, joint: 'root' },
+    { role: 'sp-leg', local: legFrames[0].clone(), color: legs, joint: 'legP' },
+    { role: 'sp-leg', local: legFrames[1].clone(), color: legs, joint: 'legN' },
+  ] : [{ role: legRole, local: legM, color: legs, joint: 'root' }];
+  parts.push(
+    { role: 'sp-torso', local: torsoM, color: shirt, joint: 'body' },
+    { role: 'sp-head', local: headM, color: skin, joint: 'head' },
+  );
+  const on = (m, part, joint) => {
+    part.local = new THREE.Matrix4().multiplyMatrices(m, part.local);
+    part.joint = joint;
+    parts.push(part);
+  };
   // posed arms: [pitch (negative = forward), splay] per side
   let arms;
-  if (pose === 'skate') arms = [[-0.2, 1.05], [0.15, 1.15]];
+  if (walk) arms = [[0, 0.12], [0, 0.12]];
+  else if (pose === 'skate') arms = [[-0.2, 1.05], [0.15, 1.15]];
   else if (sitPose === 'sit' || sitPose === 'sitflat') arms = [[-0.75, 0.12], [-0.7, 0.12]];
   else if (pose === 'work') arms = [[-1.05, 0.1], [-0.85, 0.15]];
   else if (pose === 'farmer') arms = [[-0.1, 0.12], [0.05, 0.62]];
@@ -340,41 +363,57 @@ function figureParts(prng, pose, hat, opts = {}) {
     const side = s === 0 ? 1 : -1;
     const [pitch, splay] = arms[s];
     const armM = new THREE.Matrix4().multiplyMatrices(torsoM, mat(side * 0.225, 1.235, 0, pitch, 0, side * splay));
-    parts.push({ role: 'sp-arm', local: armM, color: shirt });
-    on(armM, P('sp-cyl', skin, 0, -0.5, 0.02, 0, 0, 0, 0.055, 0.1, 0.055));
+    parts.push({ role: 'sp-arm', local: armM, color: shirt, joint: s === 0 ? 'armP' : 'armN' });
+    on(armM, P('sp-cyl', skin, 0, -0.5, 0.02, 0, 0, 0, 0.055, 0.1, 0.055), s === 0 ? 'armP' : 'armN');
   }
   // headgear: caps (forward / backward), helmets (stepped octagonal dome + stripe band), straw hat or hair
   let longHair = false;
   if (!hat || hat === 'none') {
     const hair = opts.hair || pick(prng, gearFor(skin, HAIR));
-    on(headM, P('sp-hair', hair, 0, 0, 0));
-    if (prng.chance(0.35)) { longHair = true; on(headM, box(hair, 0, 1.18, -0.16, 0.32, 0.24, 0.08)); } // long hair down the back
+    on(headM, P('sp-hair', hair, 0, 0, 0), 'head');
+    if (prng.chance(0.35)) { longHair = true; on(headM, box(hair, 0, 1.18, -0.16, 0.32, 0.24, 0.08), 'head'); } // long hair down the back
   } else if (hat === 'cap' || hat === 'capback') {
     const capM = hat === 'capback' ? new THREE.Matrix4().multiplyMatrices(headM, mat(0, 0, 0, 0, Math.PI, 0)) : headM.clone();
-    parts.push({ role: 'sp-cap', local: capM, color: opts.cap || pick(prng, gearFor(skin, CAPS)) });
+    parts.push({ role: 'sp-cap', local: capM, color: opts.cap || pick(prng, gearFor(skin, CAPS)), joint: 'head' });
   } else if (hat === 'helmet') {
     // c6 fix 3: a shell that encloses the head's back and sides down to y 1.47 (squashed octagon pushed back, so its
     // front face stays at z ~0.05, behind the printed eyes), a stepped octagonal dome on top, and a stripe band that is
     // an octagon tier of the SAME radius as the bottom tier (the square band's corners read as a plate under a hat)
     const c = pick(prng, gearFor(skin, HELMETS));
     const band = c === 'black' ? 'white' : 'black';
-    on(headM, P('sp-oct', c, 0, 1.47, -0.07, 0, 0, 0, 0.19, 0.1, 0.13));
-    on(headM, P('sp-oct', c, 0, 1.556, -0.02, 0, 0, 0, 0.19, 0.05, 0.19));
-    on(headM, P('sp-oct', band, 0, 1.606, -0.02, 0, 0, 0, 0.19, 0.022, 0.19));
-    on(headM, P('sp-oct', c, 0, 1.628, -0.02, 0, 0, 0, 0.168, 0.045, 0.168));
-    on(headM, P('sp-oct', c, 0, 1.673, -0.02, 0, 0, 0, 0.12, 0.032, 0.12));
+    on(headM, P('sp-oct', c, 0, 1.47, -0.07, 0, 0, 0, 0.19, 0.1, 0.13), 'head');
+    on(headM, P('sp-oct', c, 0, 1.556, -0.02, 0, 0, 0, 0.19, 0.05, 0.19), 'head');
+    on(headM, P('sp-oct', band, 0, 1.606, -0.02, 0, 0, 0, 0.19, 0.022, 0.19), 'head');
+    on(headM, P('sp-oct', c, 0, 1.628, -0.02, 0, 0, 0, 0.168, 0.045, 0.168), 'head');
+    on(headM, P('sp-oct', c, 0, 1.673, -0.02, 0, 0, 0, 0.12, 0.032, 0.12), 'head');
   } else if (hat === 'straw') {
-    parts.push({ role: 'sp-hat', local: headM.clone(), color: pick(prng, ['brickYellow', 'tan', '#E8C77A']) });
+    parts.push({ role: 'sp-hat', local: headM.clone(), color: pick(prng, ['brickYellow', 'tan', '#E8C77A']), joint: 'head' });
   }
   // printed face and torso graphic (one sp-print instance each; tile picked per figure)
   const face = longHair ? pick(prng, FACE_FEM) : pick(prng, FACE_PLAIN);
-  parts.push({ role: 'sp-print', local: new THREE.Matrix4().multiplyMatrices(headM, HEAD_PRINT_M), color: skin, tile: face });
-  const set = TORSO_SETS[pose === 'skate' ? 'skate' : pose === 'farmer' ? 'farmer' : pose === 'work' ? 'work' : sitPose === 'stand' ? 'stand' : 'sit'] || TORSO_SETS.stand;
+  parts.push({ role: 'sp-print', local: new THREE.Matrix4().multiplyMatrices(headM, HEAD_PRINT_M), color: skin, tile: face, joint: 'head' });
+  const set = TORSO_SETS[pose === 'skate' ? 'skate' : pose === 'farmer' ? 'farmer' : pose === 'work' ? 'work' : sitPose === 'stand' || walk ? 'stand' : 'sit'] || TORSO_SETS.stand;
   const torso = opts.print ?? pick(prng, shirt === 'white' ? TORSO_ON_WHITE : set);
-  parts.push({ role: 'sp-print', local: new THREE.Matrix4().multiplyMatrices(torsoM, TORSO_PRINT_M), color: shirt, tile: TORSO_TILE0 + torso });
+  parts.push({ role: 'sp-print', local: new THREE.Matrix4().multiplyMatrices(torsoM, TORSO_PRINT_M), color: shirt, tile: TORSO_TILE0 + torso, joint: 'body' });
   // belt line around the torso's bottom edge (wraps the sides, so it reads from any angle)
-  on(torsoM, box(pick(prng, BELTS), 0, 0.715, 0, 0.452, 0.05, 0.252));
+  on(torsoM, box(pick(prng, BELTS), 0, 0.715, 0, 0.452, 0.05, 0.252), 'body');
+  // joint frames (figure space): body about the hip line, head about the neck, arms about the shoulders, legs about
+  // the hip axis. people.js rotates each joint's parts in its frame.
+  parts.rig = {
+    pose: walk ? 'walk' : sitPose,
+    body: new THREE.Matrix4().multiplyMatrices(bodyM, mat(0, 0.72, 0)),
+    head: new THREE.Matrix4().multiplyMatrices(headM, mat(0, 1.31, 0)),
+    arms: [1, -1].map((side) => new THREE.Matrix4().multiplyMatrices(torsoM, mat(side * 0.225, 1.235, 0))),
+    legs: walk ? legFrames : null,
+    armPitch: [arms[0][0], arms[1][0]],
+  };
   return parts;
+}
+
+/** The rig of a figure whose parts were placed with under(m, ...). */
+function rigUnder(m, rig) {
+  const pre = (f) => new THREE.Matrix4().multiplyMatrices(m, f);
+  return { ...rig, body: pre(rig.body), head: pre(rig.head), arms: rig.arms.map(pre), legs: rig.legs && rig.legs.map(pre) };
 }
 
 /** Skateboard along local x. `lean` (c6): stood on its tail and leaned back against a wall behind it (-z), wheels
@@ -1424,7 +1463,10 @@ export function buildSpKindParts(kind, prng, prop = {}) {
       // rider faces +z, side-on to a board that rolls along x (regular stance); c6: helmets / backward caps / hair
       const r = prng.float();
       const hat = prop.hat || (r < 0.4 ? 'helmet' : r < 0.75 ? 'capback' : 'none');
-      parts.push(...under(mat(0, 0.1, 0), figureParts(prng, 'skate', hat, { ...prop, lean: prng.range(-0.15, 0.15) })));
+      const lift = mat(0, 0.1, 0);
+      const rider = under(lift, figureParts(prng, 'skate', hat, { ...prop, lean: prng.range(-0.15, 0.15) }));
+      parts.push(...rider);
+      parts.rig = rigUnder(lift, rider.rig);
       return parts;
     }
     default: return [];

@@ -4,7 +4,7 @@
 // a plain Y rotation that turns +Z into the world facing direction — see geo.dirToRot).
 import * as THREE from 'three';
 import { UNIT_CYL, UNIT_ICO, UNIT_SPHERE, UNIT_BOX, UNIT_WHEEL, mat, xf, merge } from './geo.js';
-import { SP_KIND_NAMES, buildSpRoleGeometry, buildSpKindParts } from './spkinds.js';
+import { SP_KIND_NAMES, buildSpRoleGeometry, buildSpKindParts, figureParts } from './spkinds.js';
 
 export const KIND_NAMES = [
   'streetlamp', 'bench', 'tree_small', 'tree_medium', 'tree_large', 'hedge', 'hydrant', 'trash_bin',
@@ -30,9 +30,6 @@ export const CLOTH_COLORS = ['brightRed', 'brightBlue', 'brightYellow', 'brightG
 export const TABLE_COLORS = ['tan', 'brickYellow', 'reddishBrown'];
 export const CRATE_COLORS = ['tan', 'reddishBrown', 'tan'];
 export const BIKE_COLORS = ['brightRed', 'mediumAzur', 'brightBlue', 'brightYellow', 'brightGreen', 'black'];
-export const FIGURE_LEG_COLORS = ['darkStoneGrey', 'mediumStoneGrey', 'darkAzur', 'sandBlue', 'reddishBrown', 'black'];
-export const FIGURE_SHIRT_COLORS = ['brightRed', 'brightBlue', 'brightYellow', 'brightGreen', 'brightOrange', 'white', 'mediumLilac', 'mediumAzur', 'darkRed', 'sandGreen'];
-export const FIGURE_SKIN_COLORS = ['brightYellow', 'brightYellow', 'tan', 'brickYellow'];
 
 // Height (prop-local, from the ground) of the fountain's water surface — kept as a constant so index.js's
 // spray particle FX can start its animation flush with the bowl rather than recomputing the geometry math.
@@ -252,23 +249,6 @@ export function buildRoleGeometry(ctx) {
     G['bike-wheels'] = merge([wheel(0.45), wheel(-0.45)]);
   }
 
-  // -- figure: minifig-scale pedestrian (legs / torso+arms / head+hair), ~1.7 m tall, instance-coloured -------
-  {
-    G['figure-legs'] = merge([
-      xf(UNIT_BOX, mat(-0.11, 0, 0, 0, 0, 0, 0.16, 0.72, 0.2)),
-      xf(UNIT_BOX, mat(0.11, 0, 0, 0, 0, 0, 0.16, 0.72, 0.2)),
-    ]);
-    G['figure-torso'] = merge([
-      xf(UNIT_BOX, mat(0, 0.72, 0, 0, 0, 0, 0.44, 0.6, 0.26)),
-      xf(UNIT_BOX, mat(-0.3, 0.74, 0, 0, 0, 0, 0.1, 0.5, 0.14)),
-      xf(UNIT_BOX, mat(0.3, 0.74, 0, 0, 0, 0, 0.1, 0.5, 0.14)),
-    ]);
-    G['figure-head'] = merge([
-      xf(UNIT_BOX, mat(0, 1.32, 0, 0, 0, 0, 0.3, 0.28, 0.28)),
-      xf(UNIT_BOX, mat(0, 1.6, -0.02, 0, 0, 0, 0.32, 0.1, 0.3)),
-    ]);
-  }
-
   // LOOP cycle 5: the set-piece roles (generic instance-coloured box/brick/tile/stud/cylinder/wedge/quarter-pipe,
   // plant shapes, water, glass, hats) — see spkinds.js.
   Object.assign(G, buildSpRoleGeometry(ctx));
@@ -337,16 +317,9 @@ export function buildKindParts(kind, prng, prop) {
       return parts;
     }
     case 'bike': return [{ role: 'bike-frame', color: prng.pick(BIKE_COLORS) }, { role: 'bike-wheels' }];
-    case 'figure': {
-      // Static pose: a seeded lean/twist on top of the placement yaw, so a crowd never reads as one repeated
-      // sprite. The parts share the prop's ground-contact origin, so a small local yaw rotates each part alone.
-      const yaw = prng.range(-0.22, 0.22);
-      return [
-        { role: 'figure-legs', local: mat(0, 0, 0, 0, prng.range(-0.14, 0.14), 0), color: prng.pick(FIGURE_LEG_COLORS) },
-        { role: 'figure-torso', local: mat(0, 0, 0, 0, yaw, 0), color: prng.pick(FIGURE_SHIRT_COLORS) },
-        { role: 'figure-head', local: mat(0, 0, 0, 0, yaw + prng.range(-0.2, 0.2), 0), color: prng.pick(FIGURE_SKIN_COLORS) },
-      ];
-    }
+    // The city's pedestrians are the set-pieces' minifig (spkinds.js figureParts) in the walking build: separate
+    // legs, a printed face and torso, hair or a cap. people.js walks them along their sidewalk or idles them.
+    case 'figure': return figureParts(prng, 'walk', prng.chance(0.3) ? 'cap' : 'none');
     // LOOP cycle 5 set-piece kinds (deck/skate/garden/farm/posed figures); [] for anything unknown.
     default: return buildSpKindParts(kind, prng, prop);
   }

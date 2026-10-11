@@ -365,8 +365,11 @@ function sweepLooseAt(x, z, r, hid, origin = null) {
   const props = modApi('props');
   if (props && typeof props.getPropParts === 'function' && typeof props.hideProps === 'function') {
     const taken = [];
+    const drawn = typeof props.getDrawnPosition === 'function';
     for (const p of world.props.values()) {
-      const dx = p.x - x, dz = p.z - z;
+      // a pedestrian is picked up where it is walking, not at the spot it was placed
+      const at = (drawn && p.kind === 'figure' && props.getDrawnPosition(p.id)) || p;
+      const dx = at.x - x, dz = at.z - z;
       if (dx * dx + dz * dz > r2 || S.propTaken.has(p.id)) continue;
       // authored set-pieces and junction signals stay (a signal-less junction would stop traffic for good)
       if ((typeof p.id === 'string' && p.id.startsWith('sp:')) || p.nodeId != null || p.kind === 'traffic_light') continue;

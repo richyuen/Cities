@@ -19,7 +19,8 @@ import {
   populateYard, populateCivicEntrance, populateServiceBack, populatePedestrians, FIGURE_CAP,
 } from './populate.js';
 import { stageStreet, stagePark, stageYards, stageSetPieces, PRESETS } from './showcase.js';
-import { SP_FIGURE_KINDS, SP_NOFADE_KINDS } from './spkinds.js';
+import { SP_FIGURE_KINDS, SP_NOFADE_KINDS, figureParts } from './spkinds.js';
+import { makeFigure, makeRoute, walkState, poseFigure, partMatrix, JOINT_INDEX } from './people.js';
 import { SP_TYPES, clampSize, heroCamera, authorSetPiece } from './setpieces.js';
 
 const KIND_SET = new Set(KIND_NAMES);
@@ -74,6 +75,30 @@ function variationKey(p) {
  * the 0.17 m terrain studs inside the plinth with margin. */
 const SP_DECK_RAISE = 0.26;
 
+// ---- people (see people.js) ----------------------------------------------------------------------------------
+const WALK_KINDS = new Set(['street', 'avenue']);
+const WALK_LANE = 0.8;        // walking lane: metres outside the carriageway edge (between the curb and the lamp line)
+const WALK_END_CLEAR = 1.6;   // a beat stops this short of the junction trims (signal poles stand at trim + 0.7)
+const WALK_GAP = 0.6;         // half the gap two neighbouring walkers' beats keep between them
+const WALK_BEAT_MIN = 6;      // a sidewalk figure with less room than this stands and idles
+const PATH_LANE = 0.6;        // park strollers keep this far to one side of a path's centreline
+const PATH_REACH = 7;         // a park figure this close to a path strolls along it
+const PATH_SURFACE = 0.15;    // path surface above the road bed (roads/network.js Y.surface)
+const PEOPLE_LIMB_RANGE = 90; // beyond this a figure travels but its limbs hold the baked pose
+const PEOPLE_SLOW_RANGE = 110; // beyond this a figure is rewritten every 4th frame
+const GUEST_MAX = 384;        // guest figures other modules may queue (transit: 64 stops x 6 riders)
+/** Roles a guest figure can use, with how many instances of each one figure needs at most. */
+const GUEST_ROLES = {
+  'sp-hip': 1, 'sp-leg': 2, 'sp-torso': 1, 'sp-head': 1, 'sp-arm': 2, 'sp-cyl': 2, 'sp-hair': 1, 'sp-cap': 1,
+  'sp-print': 2, 'sp-box': 2,
+};
+/** Body radius of the things a walker has to stop short of (anything unlisted: 0.7 m). */
+const BODY_R = {
+  streetlamp: 0.25, traffic_light: 0.25, road_sign: 0.2, hydrant: 0.3, trash_bin: 0.35, tree_small: 0.25,
+  tree_medium: 0.3, tree_large: 0.4, bench: 0.5, park_bench: 0.5, bike: 0.5, flower_bed: 0.6, hedge: 0.6,
+};
+const IDENT4 = new THREE.Matrix4();
+
 const S = {
   ctx: null, group: null, rng: null, unsub: [],
   roleTable: null,        // Map role -> { geometry, material, instanceColor, castShadow, receiveShadow, mesh, dynamic }
@@ -114,6 +139,14 @@ const S = {
   // road/building/park events stays quiet until endReplay() re-adopts the restored world.
   replaying: false,
   live: false,            // set by the first update(): city generation is over, edits from here on are the player's
+  // People: every drawn minifig (prop figures + guests), posed each frame by writePeople(). `time` is animation
+  // time (game seconds, stopped by the clock's pause, zeroed with the presentation clock); at time 0 every figure
+  // is drawn at its record in its baked pose.
+  people: {
+    figs: [], byId: new Map(), guests: new Map(), guestFigs: [], anchors: [], touched: new Set(),
+    time: 0, lastElapsed: 0, frame: 0, force: true, routesDirty: false, netGen: 0, off: false, lastMs: 0,
+    cam: new THREE.Vector3(Infinity, Infinity, Infinity),
+  },
   signalDirty: new Set(), // node ids whose arm set changed by a road removal (signals re-placed in update())
 };
 
@@ -230,7 +263,7 @@ const TERRACE_MAX_STEPS = 14;
  * half-width and bed heights at the nodes. Same rejection maths as roads.api.snapToRoad(dist < half + 0.4), but
  * O(1) rebuilds per road/terrain phase instead of one full lane-network rebuild per candidate (the fix round's
  * 790 ms boot hot spot). Refreshed on road/terrain events and per staging. */
-function markRoadSnapshotDirty() { S.roadSnapDirty = true; }
+function markRoadSnapshotDirty() { S.roadSnapDirty = true; S.people.routesDirty = true; S.people.netGen++; }
 
 function roadSnapshot() {
   if (S.roadSnap && !S.roadSnapDirty) return S.roadSnap;
@@ -1010,15 +1043,15 @@ function updateFountains(dt) {
 }
 
 function rebuild() {
-  const ctx = S.ctx, world = ctx.world;
+  const ctx = S.ctx, world = ctx.world, P = S.people;
   const buckets = new Map();
   for (const role of S.roleTable.keys()) buckets.set(role, []);
   for (const f of S.fountains) disposeFountainFx(f);
   S.fountains.length = 0;
   const instIndex = new Map();
+  const figs = [], byId = new Map();
 
-  for (const prop of world.props.values()) {
-    if (!KIND_SET.has(prop.kind)) continue;
+  const lay = (prop) => {
     const mine = [];
     instIndex.set(prop.id, mine);
     // Per-instance variation seed: kind+position for C2 props (stable even if ids churn and across restages),
@@ -1026,6 +1059,10 @@ function rebuild() {
     const prng = S.rng.fork(variationKey(prop));
     const base = mat(prop.x, prop.y, prop.z, 0, prop.rot || 0, 0);
     const parts = buildKindParts(prop.kind, prng, prop);
+    // A minifig: its animation parameters come from their own fork, so the colours above never depend on them.
+    const fig = parts.rig ? makeFigure(parts.rig, S.rng.fork(`anim:${variationKey(prop)}`), {
+      id: prop.id, kind: prop.kind, x: prop.x, y: prop.y, z: prop.z, rot: prop.rot || 0,
+    }) : null;
     // Tall set-piece landmarks (windmill/barn/silo) and the deck plates are exempt from the distance fade.
     const noFade = SP_NOFADE_KINDS.has(prop.kind);
     for (const part of parts) {
@@ -1036,18 +1073,41 @@ function rebuild() {
       const color = part.color ? ctx.materials.color(part.color) : null;
       const inst = noFade ? { pos, base: world4, color, noFade } : { pos, base: world4, color };
       if (part.tile !== undefined) inst.tile = part.tile; // LOOP c6: print-atlas tile (sp-print role)
+      if (fig) {
+        inst.fig = fig;
+        fig.parts.push({ def: S.roleTable.get(part.role), k: list.length, j: JOINT_INDEX[part.joint] || 0, local: part.local || IDENT4, inst });
+      }
       mine.push({ role: part.role, k: list.length });
       list.push(inst);
     }
+    if (fig) { figs.push(fig); byId.set(prop.id, fig); }
     if (prop.kind === 'flower_bed') addFlowerHeads(base, prng, buckets, ctx);
     if (prop.kind === 'fountain') addFountainFx(prop);
-  }
+  };
+  // Figures first: their instances are then a prefix of every role they use, which is the only part of each
+  // instance buffer the per-frame people pass has to upload (applyLod() owns the rest).
+  for (const prop of world.props.values()) if (KIND_SET.has(prop.kind) && isFigureKind(prop.kind)) lay(prop);
+  const prefix = new Map();
+  for (const [role, list] of buckets) prefix.set(role, list.length);
+  for (const prop of world.props.values()) if (KIND_SET.has(prop.kind) && !isFigureKind(prop.kind)) lay(prop);
+
+  // Walkers get their beats before the meshes are filled: a walker's baked pose is mid-stride at its record.
+  const prev = P.byId;
+  P.figs = figs;
+  P.byId = byId;
+  buildRoutes(prev);
 
   for (const [role, def] of S.roleTable) {
     if (def.mesh) { S.group.remove(def.mesh); def.mesh.dispose(); def.mesh = null; }
     const list = buckets.get(role);
     const n = list.length;
-    const mesh = new THREE.InstancedMesh(def.geometry, def.material, Math.max(1, n));
+    const reserve = (GUEST_ROLES[role] || 0) * GUEST_MAX; // guest figures are appended after the props' instances
+    const mesh = new THREE.InstancedMesh(def.geometry, def.material, Math.max(1, n + reserve));
+    def.n = n;                      // instances that belong to props
+    def.pn = prefix.get(role) || 0; // ... of which this many (the first ones) belong to figures
+    def.tail = 0;                   // guest instances after them (layoutGuests())
+    def.full = false;               // someone other than the people pass wrote this buffer: upload all of it
+    if (def.pn || reserve) mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     mesh.count = n;
     mesh.visible = n > 0;
     mesh.castShadow = def.castShadow;
@@ -1060,7 +1120,7 @@ function rebuild() {
     }
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    if (def.tiled) setTileAttribute(def.geometry, list);
+    if (def.tiled) setTileAttribute(def.geometry, list, n + reserve);
     S.group.add(mesh);
     def.mesh = mesh;
   }
@@ -1070,11 +1130,16 @@ function rebuild() {
   for (const id of S.hiddenProps) {
     if (!world.props.has(id)) { S.hiddenProps.delete(id); continue; }
     for (const { role, k } of instIndex.get(id) || []) { const inst = buckets.get(role)?.[k]; if (inst) inst.hidden = true; }
+    const fig = byId.get(id);
+    if (fig) fig.hidden = true;
   }
+  layoutGuests();
 
   S.dirty = false;
   S.lazyDirtyAt = 0;
   applyLod(true);
+  P.force = false;
+  writePeople(true, false);
   updateLightPool(true);
   ctx.log(`[props] rebuilt ${world.props.size} props across ${S.roleTable.size} roles`);
 }
@@ -1082,11 +1147,11 @@ function rebuild() {
 /** LOOP c6: per-instance atlas tile for the sp-print role. The geometry is shared by every rebuild's mesh, so the
  * attribute is kept and grown by doubling (never re-created per rebuild: a replaced attribute's GPU buffer is only
  * freed with the geometry). */
-function setTileAttribute(geometry, list) {
+function setTileAttribute(geometry, list, capacity = list.length) {
   let attr = geometry.getAttribute('aTile');
-  if (!attr || attr.count < list.length) {
+  if (!attr || attr.count < capacity) {
     let cap = attr ? attr.count : 256;
-    while (cap < list.length) cap *= 2;
+    while (cap < capacity) cap *= 2;
     attr = new THREE.InstancedBufferAttribute(new Float32Array(cap), 1);
     attr.setUsage(THREE.DynamicDrawUsage);
     geometry.setAttribute('aTile', attr);
@@ -1101,20 +1166,26 @@ const _zeroM = new THREE.Matrix4().makeScale(0, 0, 0);
 const _box = new THREE.Box3();
 const _v3 = new THREE.Vector3();
 const _sz = new THREE.Vector3();
+const _partM = new THREE.Matrix4();
 
-/** One prop's drawn pieces (see api.getPropParts). */
+/** One prop's drawn pieces (see api.getPropParts). A figure's pieces are where it is drawn now, not at its record. */
 function propParts(id) {
   const out = [];
   const refs = S.instIndex.get(id);
   if (!refs || !S.roleInstances) return out;
-  for (const { role, k } of refs) {
+  // refs and fig.parts are filled together in rebuild(), so they index the same pieces
+  const fig = S.people.time !== 0 ? S.people.byId.get(id) : null;
+  if (fig && !fig.hidden) poseFigure(fig, S.people.time, true);
+  for (let i = 0; i < refs.length; i++) {
+    const { role, k } = refs[i];
     const def = S.roleTable.get(role);
     const inst = S.roleInstances.get(role)?.[k];
     if (!def || !inst || inst.hidden) continue;
     const g = def.geometry;
     if (!g.boundingBox) g.computeBoundingBox();
-    const e = inst.base.elements;
-    _box.copy(g.boundingBox).getCenter(_v3).applyMatrix4(inst.base);
+    const m = fig ? partMatrix(fig, i, _partM) : inst.base;
+    const e = m.elements;
+    _box.copy(g.boundingBox).getCenter(_v3).applyMatrix4(m);
     g.boundingBox.getSize(_sz);
     const sx = Math.hypot(e[0], e[1], e[2]), sy = Math.hypot(e[4], e[5], e[6]), sz = Math.hypot(e[8], e[9], e[10]);
     const c = inst.color || def.material?.color || null;
@@ -1138,6 +1209,7 @@ function propHidden(id) {
 function hideProps(ids) {
   let n = 0;
   const touched = new Set();
+  for (const id of ids) { const fig = S.people.byId.get(id); if (fig) fig.hidden = true; }
   for (const id of ids) {
     const refs = S.instIndex.get(id);
     if (!refs || !S.roleInstances) continue;
@@ -1147,13 +1219,20 @@ function hideProps(ids) {
       if (!def?.mesh || !inst || inst.hidden) continue;
       inst.hidden = true;
       def.mesh.setMatrixAt(k, _zeroM);
-      touched.add(def.mesh);
+      touched.add(def);
     }
     if (S.ctx.world.props.has(id)) S.hiddenProps.add(id);
     n++;
   }
-  for (const mesh of touched) mesh.instanceMatrix.needsUpdate = true;
+  for (const def of touched) uploadAll(def);
   return n;
+}
+
+/** Upload the whole instance buffer of a role on the next render (the people pass only uploads its own ranges). */
+function uploadAll(def) {
+  def.full = true;
+  def.mesh.instanceMatrix.clearUpdateRanges();
+  def.mesh.instanceMatrix.needsUpdate = true;
 }
 
 function applyLod(force) {
@@ -1166,7 +1245,8 @@ function applyLod(force) {
     const list = S.roleInstances.get(role);
     const exempt = FADE_EXEMPT(role);
     let changed = false;
-    for (let k = 0; k < list.length; k++) {
+    // the first def.pn instances are figures: writePeople() owns their matrices (pose, travel and the same fade)
+    for (let k = def.pn || 0; k < list.length; k++) {
       const inst = list[k];
       if (inst.hidden) { def.mesh.setMatrixAt(k, _zeroM); changed = true; continue; } // hideProps(): stays gone
       const f = exempt || inst.noFade ? 1 : fadeFactor(inst.pos.distanceTo(camPos));
@@ -1176,8 +1256,330 @@ function applyLod(force) {
       }
       changed = true;
     }
-    if (changed) def.mesh.instanceMatrix.needsUpdate = true;
+    if (changed) uploadAll(def);
   }
+}
+
+// ---- people ---------------------------------------------------------------------------------------------------
+/** Is a walking lane point unusable? Water, a set-piece deck, a building, something standing on the pavement or a
+ * guest queue. Carriageways are not tested: a lane runs along its own edge's sidewalk between the junction trims. */
+function laneBlocked(x, z, selfId) {
+  const world = S.ctx.world;
+  const cell = world.cellAtWorld?.(x, z);
+  if (cell && cell.type === 'water') return true;
+  if (S.setPieces.size && setPieceAt(x, z, 0.3)) return true;
+  const bList = S.bIdx.get(idxOf(x, z));
+  if (bList) {
+    for (const bb of bList) if (x >= bb.minX - 0.3 && x <= bb.maxX + 0.3 && z >= bb.minZ - 0.3 && z <= bb.maxZ + 0.3) return true;
+  }
+  const ix = Math.floor(x / IDX), iz = Math.floor(z / IDX);
+  for (let dz = -1; dz <= 1; dz++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const list = S.pIdx.get(idxKey(ix + dx, iz + dz));
+      if (!list) continue;
+      for (const p of list) {
+        if (p.id === selfId) continue;
+        // other walkers keep to their own beats; a standing figure is an obstacle like any other
+        if (isFigureKind(p.kind) && S.people.byId.get(p.id)?.walks) continue;
+        const need = (isFigureKind(p.kind) ? 0.3 : BODY_R[p.kind] ?? 0.7) + 0.35;
+        const ddx = p.x - x, ddz = p.z - z;
+        if (ddx * ddx + ddz * ddz < need * need) return true;
+      }
+    }
+  }
+  for (const a of S.people.anchors) {
+    const ddx = a.x - x, ddz = a.z - z;
+    if (ddx * ddx + ddz * ddz < a.r * a.r) return true;
+  }
+  return false;
+}
+
+/** Position of a figure record on an edge frame: { s, lat } (metres along / to the right of A->B). */
+function onFrame(f, x, z) {
+  const rx = x - f.ax, rz = z - f.az;
+  return { s: rx * f.d.x + rz * f.d.z, lat: rx * f.right.x + rz * f.right.z };
+}
+
+/** Where a figure may walk: { f, s, lat, lane, laneY, key } or null (it stands and idles).
+ *  - a figure standing on a street/avenue sidewalk plate paces that sidewalk;
+ *  - a park figure within reach of a path strolls along the path.
+ * Yard and civic-entrance figures stay where they were placed. */
+function walkSpot(prop, net) {
+  if (prop.kind !== 'figure' || prop.yardOf != null) return null;
+  if (prop.park) {
+    let best = null;
+    for (const f of net.edges.values()) {
+      if (f.kind !== 'path') continue;
+      const { s, lat } = onFrame(f, prop.x, prop.z);
+      if (s < f.s0 + 1 || s > f.s1 - 1 || Math.abs(lat) > PATH_REACH) continue;
+      if (!best || Math.abs(lat) < Math.abs(best.lat)) best = { f, s, lat };
+    }
+    if (!best) return null;
+    const side = best.lat >= 0 ? 1 : -1;
+    return { ...best, lane: side * PATH_LANE, laneY: PATH_SURFACE, key: `${best.f.id}:${side}`, clear: 1 };
+  }
+  const test = (f) => {
+    if (!f || !WALK_KINDS.has(f.kind)) return null;
+    const { s, lat } = onFrame(f, prop.x, prop.z);
+    const a = Math.abs(lat);
+    if (s < f.s0 || s > f.s1 || a < f.w + 0.5 || a > f.w + f.sw + 0.3) return null;
+    const side = lat >= 0 ? 1 : -1;
+    return { f, s, lat, lane: side * (f.w + WALK_LANE), laneY: null, key: `${f.id}:${side}`, clear: WALK_END_CLEAR };
+  };
+  // the edgeId tag is only a hint: it goes stale when a road is split, and a save re-points it to the nearest road
+  const tagged = test(net.edges.get(prop.edgeId));
+  if (tagged) return tagged;
+  for (const f of net.edges.values()) { const hit = test(f); if (hit) return hit; }
+  return null;
+}
+
+/** The free stretch of a lane around `s0` inside [lo, hi]: [sA, sB], or null when `s0` itself is taken. `grace`
+ * metres around s0 are not tested (a walker that is already there keeps walking out of it). */
+function scanBeat(f, lane, s0, lo, hi, selfId, grace = 0) {
+  if (s0 < lo || s0 > hi) return null;
+  const blocked = (s) => Math.abs(s - s0) >= grace && laneBlocked(f.ax + f.d.x * s + f.right.x * lane, f.az + f.d.z * s + f.right.z * lane, selfId);
+  if (blocked(s0)) return null;
+  let sA = s0, sB = s0;
+  while (sB + 1 <= hi && !blocked(sB + 1)) sB += 1;
+  if (hi - sB < 1 && !blocked(hi)) sB = hi;
+  while (sA - 1 >= lo && !blocked(sA - 1)) sA -= 1;
+  if (sA - lo < 1 && !blocked(lo)) sA = lo;
+  return [sA, sB];
+}
+
+/**
+ * Give every walking figure its beat. Walkers that share one side of one edge split it into exclusive stretches (cut
+ * half-way between neighbours' records), so no two ever meet; each stretch is then cut back to the free pavement
+ * around the figure. A figure's baked pose (inst.base) is always the t = 0 pose of the beat it has from its record.
+ * `prev` is the figure map from before a re-layout: a walker whose beat changed mid-walk (a lamp fell, a road was
+ * edited) joins its new beat from where it is drawn now, so nobody jumps.
+ */
+function buildRoutes(prev) {
+  const P = S.people;
+  const world = S.ctx.world;
+  const net = S.roadsApi && typeof S.roadsApi.getNetwork === 'function' ? S.roadsApi.getNetwork() : null;
+  const groups = new Map();
+  for (const fig of P.figs) {
+    fig.walks = false;
+    const old = prev?.get(fig.id)?.route || null;
+    fig.oldRoute = old;
+    fig.route = null;
+    const prop = world.props.get(fig.id);
+    const spot = net && prop ? walkSpot(prop, net) : null;
+    if (!spot) continue;
+    spot.fig = fig;
+    fig.walks = true; // provisional: laneBlocked() must not count fellow candidates as obstacles
+    let g = groups.get(spot.key);
+    if (!g) groups.set(spot.key, (g = []));
+    g.push(spot);
+  }
+  const t = P.time;
+  for (const g of groups.values()) {
+    g.sort((a, b) => a.s - b.s);
+    for (let i = 0; i < g.length; i++) {
+      const c = g[i], f = c.f, fig = c.fig;
+      const lo = i > 0 ? (g[i - 1].s + c.s) / 2 + WALK_GAP : f.s0 + c.clear;
+      const hi = i < g.length - 1 ? (c.s + g[i + 1].s) / 2 - WALK_GAP : f.s1 - c.clear;
+      let beat = scanBeat(f, c.lane, c.s, lo, hi, fig.id);
+      // a park stroller first crosses the grass to its path: that stretch has to be free too
+      for (let lat = c.lat; beat && Math.abs(lat - c.lane) > 0.7; lat += lat > c.lane ? -0.7 : 0.7) {
+        if (lat !== c.lat && laneBlocked(f.ax + f.d.x * c.s + f.right.x * lat, f.az + f.d.z * c.s + f.right.z * lat, fig.id)) beat = null;
+      }
+      if (!beat || beat[1] - beat[0] < WALK_BEAT_MIN) { fig.walks = false; continue; }
+      const key = `${P.netGen}:${f.id}:${c.lane}:${beat[0].toFixed(2)}:${beat[1].toFixed(2)}`;
+      const dir = Math.cos(fig.rot - Math.atan2(f.d.x, f.d.z)) >= 0 ? 1 : -1;
+      const home = makeRoute(f, { sA: beat[0], sB: beat[1], lane: c.lane, laneY: c.laneY },
+        { t: 0, s: c.s, lat: c.lat, y: fig.y, dir, yaw: fig.rot, phi: fig.prm.phi0 }, fig.prm);
+      home.key = key;
+      fig.route = home;
+      // baked pose = the walker at its record, mid-stride
+      poseFigure(fig, 0, true);
+      for (let k = 0; k < fig.parts.length; k++) {
+        const inst = fig.parts[k].inst;
+        partMatrix(fig, k, inst.base);
+        inst.pos.setFromMatrixPosition(inst.base);
+      }
+      const old = fig.oldRoute;
+      if (!old || t === 0) continue;
+      if (old.key === key) { fig.route = old; continue; } // nothing changed for this walker
+      // mid-walk and the beat changed: join the new one from where the walker is drawn
+      const w = walkState(old, t);
+      const now = onFrame(f, w.x, w.z);
+      const s = Math.min(hi, Math.max(lo, now.s));
+      const live = scanBeat(f, c.lane, s, lo, hi, fig.id, 1.5) || [s, s];
+      fig.route = makeRoute(f, { sA: live[0], sB: live[1], lane: c.lane, laneY: c.laneY },
+        { t, s, lat: now.lat, y: w.y, dir: w.dir, yaw: w.yaw, phi: w.phi }, fig.prm);
+      fig.route.key = key;
+    }
+  }
+  for (const fig of P.figs) {
+    fig.oldRoute = null;
+    fig.cur.x = fig.x; fig.cur.y = fig.y; fig.cur.z = fig.z;
+    if (fig.route && t !== 0) { const w = walkState(fig.route, t); fig.cur.x = w.x; fig.cur.y = w.y; fig.cur.z = w.z; }
+  }
+}
+
+/** Append the guest figures (api.setGuestFigures) after the props' own instances of the roles they use. Guests are
+ * not world props: no record, no save, no census; they only exist as instances. */
+function layoutGuests() {
+  const P = S.people;
+  for (const [role, def] of S.roleTable) if (GUEST_ROLES[role]) def.tail = 0;
+  P.guestFigs = [];
+  if (!S.roleTable.get('sp-torso')?.mesh) return;
+  const white = S.ctx.materials.color('white');
+  for (const [owner, g] of P.guests) {
+    for (const spec of g.list) {
+      if (P.guestFigs.length >= GUEST_MAX) break;
+      const name = `guest:${owner}:${spec.key}`;
+      const prng = S.rng.fork(name);
+      const parts = figureParts(prng, 'walk', prng.chance(0.3) ? 'cap' : 'none', { look: spec.look });
+      const fig = makeFigure(parts.rig, S.rng.fork(`anim:${name}`), {
+        id: name, kind: 'guest', x: spec.x, y: spec.y, z: spec.z, rot: spec.rot || 0, clip: spec.pose === 'queue' ? 'queue' : undefined,
+      });
+      const base = mat(spec.x, spec.y, spec.z, 0, spec.rot || 0, 0);
+      for (const part of parts) {
+        const def = S.roleTable.get(part.role);
+        if (!def?.mesh || !GUEST_ROLES[part.role] || def.n + def.tail >= def.mesh.instanceMatrix.count) continue;
+        const k = def.n + def.tail++;
+        const world4 = new THREE.Matrix4().multiplyMatrices(base, part.local);
+        fig.parts.push({ def, k, j: JOINT_INDEX[part.joint] || 0, local: part.local, inst: { base: world4, fig } });
+        def.mesh.setColorAt(k, part.color ? S.ctx.materials.color(part.color) : white);
+        if (def.tiled) def.geometry.getAttribute('aTile').array[k] = part.tile || 0;
+      }
+      P.guestFigs.push(fig);
+    }
+  }
+  for (const [role, def] of S.roleTable) {
+    if (!GUEST_ROLES[role] || !def.mesh) continue;
+    def.mesh.count = def.n + def.tail;
+    def.mesh.visible = def.mesh.count > 0;
+    if (def.mesh.instanceColor) def.mesh.instanceColor.needsUpdate = true;
+    if (def.tiled) def.geometry.getAttribute('aTile').needsUpdate = true;
+  }
+  P.force = true;
+}
+
+/** Replace one owner's guest figures. Returns the keys of the ones that are drawn. */
+function setGuests(owner, figures, anchors) {
+  const P = S.people;
+  const list = [];
+  for (const g of figures || []) {
+    if (![g.x, g.y, g.z].every(Number.isFinite)) continue;
+    // never stand a guest inside something that is already there (a lamp beside the stop)
+    let clash = false;
+    const ix = Math.floor(g.x / IDX), iz = Math.floor(g.z / IDX);
+    for (let dz = -1; dz <= 1 && !clash; dz++) {
+      for (let dx = -1; dx <= 1 && !clash; dx++) {
+        for (const p of S.pIdx.get(idxKey(ix + dx, iz + dz)) || []) {
+          if (isFigureKind(p.kind)) continue; // sidewalk figures give way: the queue is an anchor on their lane
+          if (Math.hypot(p.x - g.x, p.z - g.z) < 0.5) { clash = true; break; }
+        }
+      }
+    }
+    if (!clash) list.push({ key: String(g.key), x: g.x, y: g.y, z: g.z, rot: g.rot || 0, pose: g.pose || 'queue', look: g.look });
+  }
+  const anc = (anchors || []).filter((a) => Number.isFinite(a.x) && Number.isFinite(a.z)).map((a) => ({ x: a.x, z: a.z, r: a.r || 2 }));
+  const sig = JSON.stringify([list, anc], (k, v) => (typeof v === 'number' ? Math.round(v * 100) / 100 : v));
+  const had = P.guests.get(owner);
+  if (had && had.sig === sig) return had.list.map((g) => g.key);
+  const anchorsChanged = !had || JSON.stringify(had.anchors) !== JSON.stringify(anc);
+  if (list.length || anc.length) P.guests.set(owner, { list, anchors: anc, sig }); else P.guests.delete(owner);
+  if (anchorsChanged) {
+    P.anchors = [];
+    for (const g of P.guests.values()) P.anchors.push(...g.anchors);
+    P.routesDirty = true;
+  }
+  if (S.roleInstances && !S.dirty) layoutGuests();
+  return list.map((g) => g.key);
+}
+
+/** Write one figure's instances: its pose at animation time `t`, scaled by the distance fade `f`. */
+function writeFigure(fig, t, f, limbs) {
+  const exact = t === 0; // the baked pose, bit for bit
+  if (!exact) poseFigure(fig, t, limbs);
+  const touched = S.people.touched;
+  for (let i = 0; i < fig.parts.length; i++) {
+    const part = fig.parts[i];
+    const mesh = part.def.mesh;
+    if (!mesh) continue;
+    let m = exact ? part.inst.base : partMatrix(fig, i, _outM);
+    if (f < 0.999) m = _outM.copy(m).multiply(_scaleM.makeScale(f, f, f));
+    m.toArray(mesh.instanceMatrix.array, part.k * 16);
+    touched.add(part.def);
+  }
+}
+
+/** The per-frame people pass. `force`: write everybody (after a re-layout, a pause change or a rewind);
+ * `advanced`: animation time moved this frame. Standing still under a still camera it does nothing. */
+function writePeople(force, advanced) {
+  const P = S.people;
+  if (!S.roleTable || !S.roleInstances) return;
+  const cam = S.ctx.camera.position;
+  const camMoved = P.cam.distanceToSquared(cam) > 1;
+  if (!force && !advanced && !camMoved) return;
+  const t0 = performance.now();
+  P.cam.copy(cam);
+  const t = P.time;
+  const frame = P.frame++;
+  P.touched.clear();
+  let n = 0;
+  for (const list of [P.figs, P.guestFigs]) {
+    for (const fig of list) {
+      n++;
+      if (fig.hidden) {
+        if (force) { for (const part of fig.parts) { if (part.def.mesh) { _zeroM.toArray(part.def.mesh.instanceMatrix.array, part.k * 16); P.touched.add(part.def); } } }
+        continue;
+      }
+      if (fig.route && (advanced || force)) {
+        if (t === 0) { fig.cur.x = fig.x; fig.cur.y = fig.y; fig.cur.z = fig.z; } else {
+          const w = walkState(fig.route, t);
+          fig.cur.x = w.x; fig.cur.y = w.y; fig.cur.z = w.z;
+        }
+      }
+      const d = Math.hypot(fig.cur.x - cam.x, fig.cur.y - cam.y, fig.cur.z - cam.z);
+      const wasFar = fig.far;
+      if (d >= LOD_FAR) {
+        if (force || !wasFar) writeFigure(fig, t, 0.02, false);
+        fig.far = true;
+        continue;
+      }
+      fig.far = false;
+      if (!force && !wasFar && d > PEOPLE_SLOW_RANGE && ((frame + n) & 3)) continue;
+      writeFigure(fig, t, fadeFactor(d), d < PEOPLE_LIMB_RANGE);
+    }
+  }
+  for (const def of P.touched) {
+    const attr = def.mesh.instanceMatrix;
+    attr.clearUpdateRanges();
+    if (def.full) def.full = false; else {
+      if (def.pn) attr.addUpdateRange(0, def.pn * 16);
+      if (def.tail) attr.addUpdateRange(def.n * 16, def.tail * 16);
+    }
+    attr.needsUpdate = true;
+  }
+  P.lastMs = performance.now() - t0;
+}
+
+/** Advance animation time (game seconds: stopped by the clock's pause, scaled by the game speed) and pose everybody.
+ * A rewind of the presentation clock (__city.resetPresentation) puts every figure back at its record. */
+function peopleTick(dt) {
+  const P = S.people, clock = S.ctx.clock;
+  let force = P.force;
+  P.force = false;
+  if (clock.elapsed < P.lastElapsed) { peopleSetTime(0, false); force = true; }
+  P.lastElapsed = clock.elapsed;
+  if (P.routesDirty && !S.dirty) { P.routesDirty = false; buildRoutes(P.byId); force = true; }
+  const adv = clock.paused || P.off ? 0 : dt * clock.timeScale;
+  if (adv > 0) P.time += adv;
+  writePeople(force, adv > 0);
+}
+
+/** Jump animation time. 0 = everybody at their record in the baked pose, on the beat they have from there. */
+function peopleSetTime(t, write = true) {
+  const P = S.people;
+  P.time = Math.max(0, Number(t) || 0);
+  if (P.time === 0) buildRoutes(null);
+  if (write) writePeople(true, false);
 }
 
 function updateLightPool(force) {
@@ -1500,10 +1902,55 @@ const api = {
    * [{ role, matrix:number[16], color:[r,g,b], size:[x,y,z], center:[x,y,z], rotY }] in world space (size and
    * centre are the role geometry's box under the instance matrix). [] until the props layer has been laid out. */
   getPropParts(id) { return propParts(id); },
+  /** Which instances draw one prop: [{ role, k }] = instance k of the mesh named `props-<role>` (tools/checks). */
+  getPropInstances(id) { return (S.instIndex.get(id) || []).map(({ role, k }) => ({ role, k })); },
   /** Stop drawing these props this frame, ahead of their removal from the world (world.removeProp re-lays the whole
    * layer after a debounce; until then a removed prop would still be standing). A hidden prop stays hidden until
    * it is removed; nothing about it is saved. Returns how many of the ids were known. */
   hideProps(ids) { return hideProps(Array.isArray(ids) ? ids : [ids]); },
+  /** Where a figure prop is drawn right now ({ x, y, z }): a pedestrian walks away from its record. Null for
+   * anything that is not a figure (those are drawn at their record). */
+  getDrawnPosition(id) {
+    const fig = S.people.byId.get(id);
+    return fig ? { x: fig.cur.x, y: fig.cur.y, z: fig.cur.z } : null;
+  },
+  /** Draw `figures` ([{ key, x, y, z, rot, pose: 'queue', look? }]) as minifigs on behalf of module `owner`,
+   * replacing the ones it set before (transit queues its stop riders here). Guests are drawn and animated like
+   * the city's own figures but are not world props: nothing is saved, counted or capped against FIGURE_CAP.
+   * `opts.anchors` ([{ x, z, r }]) are spots sidewalk walkers stop short of. An unchanged list is a no-op; a
+   * figure that would stand inside an existing prop is left out. Returns the keys of the figures drawn. */
+  setGuestFigures(owner, figures, opts = {}) { return setGuests(String(owner), figures, opts.anchors); },
+  clearGuestFigures(owner) { return setGuests(String(owner), [], []); },
+  /** People layer numbers: { figures, walkers, guests, time, lastMs, anim }. */
+  peopleStats() {
+    const P = S.people;
+    let walkers = 0;
+    for (const fig of P.figs) if (fig.route) walkers++;
+    return { figures: P.figs.length, walkers, guests: P.guestFigs.length, time: P.time, lastMs: Math.round(P.lastMs * 100) / 100, anim: !P.off };
+  },
+  /** Every drawn person: [{ id, kind, walks, edge, guest, hidden, x, y, z }] at the current animation time; `edge`
+   * is the road edge a walker's beat runs along (tools/checks). */
+  people() {
+    const P = S.people;
+    const row = (fig, guest) => ({ id: fig.id, kind: fig.kind, walks: !!fig.route, edge: fig.route ? fig.route.edgeId : null, guest, hidden: !!fig.hidden, x: fig.cur.x, y: fig.cur.y, z: fig.cur.z });
+    return [...P.figs.map((f) => row(f, false)), ...P.guestFigs.map((f) => row(f, true))];
+  },
+  /** One guest figure's drawn pieces, like getPropParts (tools/checks). */
+  getGuestParts(id) {
+    const fig = S.people.guestFigs.find((g) => g.id === id);
+    if (!fig) return [];
+    poseFigure(fig, S.people.time, true);
+    return fig.parts.map((part, i) => {
+      const g = part.def.geometry;
+      if (!g.boundingBox) g.computeBoundingBox();
+      const m = partMatrix(fig, i, _partM);
+      _box.copy(g.boundingBox).applyMatrix4(m);
+      return { min: _box.min.toArray(), max: _box.max.toArray() };
+    });
+  },
+  /** Tooling: set the people's animation time in game seconds and pose everybody at it (0 = everybody back at
+   * their record). Time keeps running from there unless the clock is paused. */
+  peopleSetTime(t) { peopleSetTime(t); return S.people.time; },
   /** Populate streetlamps + occasional bins/benches/signs along one road edge (tools calls this after an
    * interactive road placement; the module also calls it itself on every `road:added` in the full game). */
   populateAlongRoad(edgeId) { return furnishEdge(edgeId); },
@@ -1610,6 +2057,8 @@ export default {
     S.rng = ctx.rng.fork('props');
     S.c2Off = ctx.params?.get('noc2') === '1'; // verification flag: full game without the C2 layer
     S.spOff = ctx.params?.get('nosp') === '1'; // verification flag: placeSetPiece() disabled (A/B attribution)
+    // verification flag: ?peopleanim=0 holds everybody in the baked pose at their record (the still A/B)
+    Object.assign(S.people, { time: 0, lastElapsed: 0, frame: 0, force: true, routesDirty: false, off: ctx.params?.get('peopleanim') === '0' });
     S.setPieces.clear(); S.spEvict.length = 0; S.spSettle = null; S.spPlacing = false; S.spResettle = false;
     S.detailMs = 0; S.detailSettle = null; S.detailSettledOnce = false;
     S.roadSnap = null; S.roadSnapDirty = true;
@@ -1709,6 +2158,7 @@ export default {
     else if (S.lazyDirtyAt && performance.now() - S.lazyDirtyAt > LAZY_REBUILD_MS) rebuild();
     if (S.parkDirty.size && performance.now() > S.parkFlushAt) flushParkClusters();
     applyLod(false);
+    peopleTick(dt);
     S.lightPoolTimer -= dt;
     updateLightPool(false);
     updateTrafficPhase(dt);
@@ -1752,5 +2202,7 @@ export default {
     S.roadSnap = null; S.roadSnapDirty = true; S.detailSettle = null; S.detailSettledOnce = false;
     S.setPieces.clear(); S.spEvict.length = 0; S.spSettle = null; S.spPlacing = false; S.spResettle = false;
     S.replaying = false; S.live = false; S.signalDirty.clear();
+    const P = S.people;
+    P.figs = []; P.byId = new Map(); P.guests.clear(); P.guestFigs = []; P.anchors = []; P.touched.clear();
   },
 };

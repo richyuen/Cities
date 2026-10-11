@@ -11,5 +11,5 @@ Module contract: `ARCHITECTURE.md`. Improvement loop and gates: `docs/LOOP.md`. 
   a cycle (LOOP.md E5).
 - **Every push deploys.** `.github/workflows/deploy.yml` publishes `main` to GitHub Pages on push, so a commit
   goes live. Run the check scripts the change touches before committing (`node tools/check-playtest.mjs`,
-  `check-detail.mjs`, `check-transit.mjs`, `check-disasters.mjs`, `road-audit.mjs`) and gate the commit on
+  `check-detail.mjs`, `check-transit.mjs`, `check-disasters.mjs`, `check-people.mjs`, `road-audit.mjs`) and gate the commit on
   them with `&&`, never `;`.

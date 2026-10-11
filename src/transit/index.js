@@ -29,7 +29,7 @@ const RIDER_COLORS = ['brightRed', 'brightBlue', 'brightGreen', 'brightOrange', 
 
 const S = {
   ctx: null, rng: null, group: null, router: null,
-  stops: new Map(), lines: new Map(), nextStopId: 1, nextLineId: 1,
+  stops: new Map(), lines: new Map(), nextStopId: 1, nextLineId: 1, riders: [],
   draft: null, hoverStopId: null,
   coverage: 0, ridership: 0, upkeep: 0, fareRevenue: 0, busCount: 0,
   coverageDirty: true, routesDirty: false, lastRoadEvent: 0, lastCoverageAt: 0,
@@ -405,32 +405,53 @@ function refreshStops() {
   refreshRiders();
 }
 
-/** Queue visuals (C5): deterministic minifig blocks on the sidewalk behind each stop, count scaling with the stop's
- *  share of ridership (1 block ≈ RIDERS_PER_BLOCK riders/day, cap RIDER_MAX). No agent sim, no rng — colours pick
- *  from the stop id, positions from the stop's rot. */
+/** Queue visuals (C5): riders waiting on the sidewalk at each stop, count scaling with the stop's share of ridership
+ *  (1 rider ~ RIDERS_PER_BLOCK riders/day, cap RIDER_MAX). No agent sim, no rng: positions come from the stop's rot.
+ *  With the props module loaded the riders are its minifigs (props.api.setGuestFigures: drawn, animated and budgeted
+ *  there, and sidewalk walkers stop short of the queue); without it (the transit showcase) they are the pooled
+ *  blocks of this module's own rider mesh. */
 function refreshRiders() {
   const mesh = S.riderMesh;
   if (!mesh || !S.stopMeshes) return;
+  const rec = S.ctx.modules.get('props');
+  const props = rec?.status === 'ok' && typeof rec.api?.setGuestFigures === 'function' ? rec.api : null;
   const perLine = S.lines.size ? S.ridership / S.lines.size : 0;
+  const guests = [], anchors = [];
+  S.riders = [];
   let n = 0;
   for (const s of S.stops.values()) {
     let share = 0;
     for (const id of s.lineIds) { const line = S.lines.get(id); if (line) share += perLine / Math.max(1, line.stopIds.length); }
     const count = Math.max(0, Math.min(RIDER_MAX, Math.round(share / RIDERS_PER_BLOCK)));
+    const a = s.rot || 0;
+    // walkers keep clear of the pole and of the whole queue (it reaches 2.05 m either side of the pole)
+    anchors.push({ x: s.x, z: s.z, r: 2.7 });
     for (let k = 0; k < count; k++) {
-      const a = s.rot || 0;
-      // line the queue along the stop's local X (parallel to the carriageway, on the pavement) instead of behind it
-      const lx = (0.3 + 0.24 * Math.floor(k / 2)) * (k % 2 ? 1 : -1), lz = -0.12;
+      // the queue runs along the stop's local X (parallel to the carriageway, on the pavement), riders facing the road
+      const side = k % 2 ? 1 : -1, rank = Math.floor(k / 2);
+      const lx = props ? (0.75 + 0.65 * rank) * side : (0.3 + 0.24 * rank) * side;
+      const lz = props ? -0.35 : -0.12;
       const x = s.x + lx * Math.cos(a) + lz * Math.sin(a);
       const z = s.z - lx * Math.sin(a) + lz * Math.cos(a);
+      if (props) {
+        // local +X is where this side's traffic comes from: most riders watch for the bus, some look across the road
+        guests.push({ key: `${s.id}:${k}`, stopId: s.id, x, y: s.y, z, rot: a, pose: 'queue', look: (s.id + k) % 3 ? -0.6 : -0.1 });
+        continue;
+      }
       _pos.set(x, s.y, z);
       _q.setFromAxisAngle(_upAxis, a);
       _mat4.compose(_pos, _q, _one);
       mesh.setMatrixAt(n, _mat4);
       _col.set(colorOf(RIDER_COLORS[(s.id * 7 + k) % RIDER_COLORS.length]));
       mesh.setColorAt(n, _col);
+      S.riders.push({ stopId: s.id, x, y: s.y, z });
       n++;
     }
+  }
+  if (props) {
+    // props leaves out a rider that would stand inside something already on the pavement (a lamp beside the stop)
+    const drawn = new Set(props.setGuestFigures('transit', guests, { anchors }));
+    for (const g of guests) if (drawn.has(g.key)) S.riders.push({ stopId: g.stopId, x: g.x, y: g.y, z: g.z });
   }
   mesh.count = n;
   mesh.instanceMatrix.needsUpdate = true;
@@ -571,6 +592,8 @@ const api = {
   getLines() {
     return [...S.lines.values()].map((l) => ({ id: l.id, name: l.name, color: l.color, stopIds: [...l.stopIds], keys: l.keys.length, buses: Math.max(1, Math.min(4, Math.round((safe(() => S.router.routeLength(l.keys), 0) || 0) / 320))) }));
   },
+  /** The riders queued at the stops right now: [{ stopId, x, y, z }] (drawn by props as minifigs in the full game). */
+  getRiders() { return S.riders.map((r) => ({ ...r })); },
   getStops() { return [...S.stops.values()].map((s) => ({ id: s.id, x: s.x, y: s.y, z: s.z, edgeId: s.edgeId, lineIds: [...s.lineIds] })); },
   /** The ordered lane/turn key loop of one line (debugging + tooling). */
   getLineKeys(id) { const l = S.lines.get(id); return l ? [...l.keys] : null; },
@@ -699,6 +722,8 @@ export default {
   },
 
   dispose() {
+    const props = S.ctx?.modules.get('props');
+    if (props?.status === 'ok' && typeof props.api?.clearGuestFigures === 'function') props.api.clearGuestFigures('transit');
     for (const off of S.unsub) off();
     S.unsub.length = 0;
     if (S.group) {

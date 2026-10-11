@@ -23,7 +23,8 @@ try {
     const transit = C.modules.get('transit')?.api;
     const traffic = C.modules.get('traffic')?.api;
     const face = C.scene.getObjectByName('transit-stop-face');
-    const riders = C.scene.getObjectByName('transit-riders');
+    // riders are props' guest minifigs in the full game (transit's own rider blocks only draw without props)
+    const propsApi = C.modules.get('props')?.api;
     const uvAttr = face?.geometry?.getAttribute?.('aUvOffset');
     const first = transit?.getStops?.()[0] || null;
     const uvValues = [];
@@ -34,7 +35,9 @@ try {
       ridership: transit?.getRidership?.() || 0,
       faceMap: !!face?.material?.map, faceW: face?.material?.map?.image?.width || 0,
       tileCount: uvValues.length, uvValues,
-      riders: riders?.count ?? -1,
+      riders: transit?.getRiders?.().length ?? -1,
+      riderFigures: propsApi?.peopleStats?.().guests ?? -1,
+      riderBlocks: C.scene.getObjectByName('transit-riders')?.count ?? -1,
       pop: C.world.stats.population || 0,
     };
   });
@@ -63,7 +66,8 @@ try {
   check(fare.perDay > 0, `fare income shows per day ($${Math.round(fare.perDay)}/day)`);
 
   // ---- rider queues ------------------------------------------------------------------------------
-  check(base.riders > 0, `queued rider blocks are placed from ridership (${base.riders})`);
+  check(base.riders > 0 && base.riderFigures === base.riders && base.riderBlocks === 0,
+    `queued riders are placed from ridership and drawn as props minifigs (${base.riders} queued, ${base.riderFigures} drawn, ${base.riderBlocks} blocks)`);
 
   // ---- repeated-stop boarding (figure-eight fix) -------------------------------------------------
   const placed = await page.evaluate(() => {
