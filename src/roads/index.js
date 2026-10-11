@@ -395,11 +395,11 @@ async function makeMaterials(ctx) {
     white: ctx.materials.plastic('white', { roughness: 0.5, clearcoat: 0.3 }),
     yellow: ctx.materials.plastic('brightYellow', { roughness: 0.5, clearcoat: 0.3 }),
   };
-  // surface sits under the markings: push it back a hair so nothing z-fights at grazing angles; the print itself
-  // is 2 cm above the surface, which can fall under depth precision at distance, so pull it toward the camera
-  // with the opposite offset sign — otherwise lane lines shimmer as 1-pixel hairlines on the deck.
-  mats.surface.polygonOffset = true; mats.surface.polygonOffsetFactor = 1; mats.surface.polygonOffsetUnits = 1;
-  mats.path.polygonOffset = true; mats.path.polygonOffsetFactor = 1; mats.path.polygonOffsetUnits = 1;
+  // The print is 2 cm above the surface, which can fall under depth precision at distance, so pull it toward the
+  // camera — otherwise lane lines shimmer as 1-pixel hairlines on the deck. Only the print carries an offset: the
+  // surface and the paths must NOT be pushed back. They sit 0.15 m above terrain that is still drawn under them,
+  // and an offset factor moves a flat sheet by one pixel of depth slope, which outgrows that gap beyond ~200 m
+  // and turns every far road terrain-green.
   mats.white.polygonOffset = true; mats.white.polygonOffsetFactor = -1; mats.white.polygonOffsetUnits = -1;
   mats.yellow.polygonOffset = true; mats.yellow.polygonOffsetFactor = -1; mats.yellow.polygonOffsetUnits = -1;
   return mats;
