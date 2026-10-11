@@ -41,9 +41,10 @@ ranked issue list. Up to 2 in-cycle fix rounds; otherwise the cycle is parked wi
 with only the images and the structured template. The critic audits reason-image consistency and byte/seed
 provenance **before** verdicts are banked. Inconsistent reasons → that pair is re-judged by fresh judges.
 
-**E5 — Bank.** Acceptance passed + all gates green → commit to `main` (local only; no `git push` without
-owner approval) + update STATUS + this scoreboard + backlog. Failed → revert to the last green commit or
-park the branch state, record the negative result here.
+**E5 — Bank.** Acceptance passed + all gates green → commit to `main` and push (`git push origin main`; every
+push deploys to GitHub Pages, see `CLAUDE.md`) + update STATUS + this scoreboard + backlog. Failed → revert to
+the last green commit or park the uncommitted state (stash or a `docs/reviews` note), record the negative result
+here.
 
 **E6 — Replan.** Re-rank the backlog from the new evidence. Apply plateau rules (§6).
 
