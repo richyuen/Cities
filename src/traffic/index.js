@@ -66,6 +66,8 @@ function ensureActive(count) {
   const n = Math.min(count, MAX_POOL);
   for (let i = 0; i < n; i++) {
     const car = S.pool[i];
+    // a car a storm picked up (api.pluckVehicles) stays off the road until its time is up
+    if (!car.active && car.pluckedUntil > S.simTime) continue;
     if (!car.active || !S.graph.getPath(car.currentKey)) spawnCar(car, S.graph, S.carRng, S.pool);
   }
   S.carActive = n;
@@ -460,6 +462,28 @@ const api = {
     }
     return out;
   },
+  /** Take every moving car within `r` of (x, z) off the road (route buses and a showcase's frozen hero car stay)
+   * and return what was taken: [{ x, y, z, heading, length, width, height, color:[r,g,b], specIdx }]. The cars
+   * come back on fresh lanes `holdSec` traffic-seconds later; those respawns draw from the car rng, so the traffic
+   * that follows a storm differs from a run without one. */
+  pluckVehicles(x, z, r, holdSec = 20) {
+    const out = [];
+    const r2 = r * r;
+    for (let i = 0; i < S.carActive; i++) {
+      const c = S.pool[i];
+      if (!c.active || c.route || c._heroFrozen) continue;
+      const dx = c.pos.x - x, dz = c.pos.z - z;
+      if (dx * dx + dz * dz > r2) continue;
+      out.push({
+        x: c.pos.x, y: c.pos.y, z: c.pos.z, heading: c.heading, length: c.spec.length,
+        width: c.spec.width ?? 1.9, height: c.spec.height ?? 1.5, color: [c.color.r, c.color.g, c.color.b], specIdx: c.specIdx,
+      });
+      c.active = false;
+      c.pluckedUntil = S.simTime + holdSec;
+    }
+    if (out.length) { syncActive(); writeInstances(S.ctx); S.pluckWake = Math.max(S.pluckWake || 0, S.simTime + holdSec); }
+    return out;
+  },
   /** Replace the whole transit network. `lines`: [{ id, color, keys: [laneKey|turnKey...], stops: [{x,z}] }].
    * Returns { routes, buses, failed } — failed holds line ids whose keys no longer exist. */
   setTransitLines(lines) {
@@ -560,7 +584,7 @@ export default {
     }
     S.density = 1; S.activeCount = 0; S.carActive = 0; S.busActive = 0; S.activeList = [];
     S.transitDefs = []; S.routes = [];
-    S.paused = false; S.simTime = 0; S.bounds = null; S.heroShot = null;
+    S.paused = false; S.simTime = 0; S.bounds = null; S.heroShot = null; S.pluckWake = 0;
     S.congestion = new Float32Array(ctx.world.size.w * ctx.world.size.h);
     S.congestionAt = -1; S.congestionDirty = true;
     const bump = () => markDirty();
@@ -580,6 +604,8 @@ export default {
     // must not keep driving; the views congestion layer then legitimately holds its last sample.
     if (ctx.clock?.paused) return;
     S.simTime += dt;
+    // cars a storm picked up (api.pluckVehicles) are put back on the road once the last of them is due
+    if (S.pluckWake && S.simTime >= S.pluckWake) { S.pluckWake = 0; ensureActive(Math.round(S.maxCars * S.density)); }
     resolveGaps(S.activeList, S.graph);
     // Transit priority: a route bus within a stop-line's reach holds its arm green (see LaneGraph.requestPriority).
     for (const car of S.activeList) {

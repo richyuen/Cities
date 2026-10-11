@@ -1,14 +1,14 @@
 import * as THREE from 'three';
 
-// D2 tornado visuals: a Blox funnel (one instanced column of small boxes), a ground debris ring and a translucent
-// dust disc. Three draw calls while a tornado is active, zero when idle (the group is hidden). Everything is
-// deterministic: instance layout comes from the module rng fork; per-frame animation is time-based.
+// Tornado visuals: a Blox funnel (one instanced column of small boxes) and a translucent dust disc. Two draw calls
+// while a tornado is active, zero when idle (the group is hidden). Everything is deterministic: instance layout
+// comes from the module rng fork; per-frame animation is time-based. What the storm throws around (its own ring of
+// grey bricks and everything it tears loose) is drawn by bricks.js.
 //
 // The funnel is built as stacked rings (6 boxes at the ground growing to 15 at the top) so the silhouette reads as
 // one twisted column: dense where it is narrow, spread where it is wide.
 
 const FUNNEL_RINGS = 20;
-const DEBRIS_N = 54;
 const HEIGHT = 62;           // funnel top above the ground
 const TOP_R = 14;            // top ring radius
 const FUNNEL_COLORS = ['darkStoneGrey', 'mediumStoneGrey', 'earthBlue'];
@@ -37,11 +37,6 @@ export function createTornadoVisuals(ctx, rng) {
       });
     }
   }
-  const debrisTab = [];
-  for (let i = 0; i < DEBRIS_N; i++) {
-    const t = i / (DEBRIS_N - 1);
-    debrisTab.push({ t, phase: rng.range(0, Math.PI * 2), speed: rng.range(0.8, 1.5), r: 7 + t * 18, y: rng.range(0.4, 6.5), scale: rng.range(0.6, 1.4) });
-  }
 
   // ---- meshes ----
   // a faint self-lit tint keeps the column readable at night (there is no per-tornado light source)
@@ -50,11 +45,6 @@ export function createTornadoVisuals(ctx, rng) {
   const funnel = inst(funnelGeo, mats[0], funnelTab.length);
   funnel.name = 'tornado:funnel';
   group.add(funnel);
-
-  const debrisGeo = new THREE.BoxGeometry(0.9, 0.9, 0.9);
-  const debris = inst(debrisGeo, mats[1], DEBRIS_N);
-  debris.name = 'tornado:debris';
-  group.add(debris);
 
   const dustMat = ctx.materials.plastic('mediumStoneGrey', { roughness: 0.9, clearcoat: 0.05 }).clone();
   dustMat.transparent = true;
@@ -92,23 +82,13 @@ export function createTornadoVisuals(ctx, rng) {
       funnel.setMatrixAt(i, _m.compose(_p, _q, _s));
     }
     funnel.instanceMatrix.needsUpdate = true;
-    for (let i = 0; i < DEBRIS_N; i++) {
-      const d = debrisTab[i];
-      const a = spin * 2.4 * d.speed + d.phase;
-      _p.set(Math.cos(a) * d.r * (0.5 + 0.5 * st), d.y * st + 0.6, Math.sin(a) * d.r * (0.5 + 0.5 * st));
-      _e.set(a * 2.2, a, a * 1.7);
-      _q.setFromEuler(_e);
-      _s.setScalar(d.scale * st);
-      debris.setMatrixAt(i, _m.compose(_p, _q, _s));
-    }
-    debris.instanceMatrix.needsUpdate = true;
     dust.scale.setScalar(0.6 + 0.4 * st);
     dust.material.opacity = 0.14 + 0.20 * st;
   }
 
   function dispose() {
-    group.remove(funnel, debris, dust);
-    funnelGeo.dispose(); debrisGeo.dispose(); dust.geometry.dispose();
+    group.remove(funnel, dust);
+    funnelGeo.dispose(); dust.geometry.dispose();
     dustMat.dispose();
   }
 

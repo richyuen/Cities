@@ -244,6 +244,22 @@ const api = {
     regenerateBuilding(S.ctx, b);
     return true;
   },
+  /** Put zoned, empty lots ([{ i, j }]) at the front of the growth queue, as if the player had just zoned them: the
+   * growth pass builds on such land first and does not wait for demand to clear GROWTH_DEMAND_GATE (it still needs
+   * demand above zero and a road next to the lot). Used after a disaster so a mature city, whose demand idles
+   * below the gate and which has plenty of other empty land, rebuilds what it lost. Returns the lots accepted. */
+  requestRegrowth(cells) {
+    const world = S.ctx?.world;
+    if (!world || !Array.isArray(cells)) return 0;
+    let n = 0;
+    for (const { i, j } of cells) {
+      const c = world.cellAt(i, j);
+      if (!c || !c.zone || c.buildingId || c.type !== 'zone') continue;
+      S.zonedAt.set(j * world.size.w + i, ++S.zoneSeq);
+      n++;
+    }
+    return n;
+  },
   /** Boot/warm-up only: apply simulation's current level-up candidates and flush the batcher synchronously, so
    * the first drawn frame is the finished city instead of a multi-second post-`ready` fill-in. The demo city
    * calls this at the end of its 600-tick warm-up, while the boot screen is still up (see docs/reviews/demo-r2.md).

@@ -77,6 +77,7 @@ const S = {
   ctx: null, group: null, rng: null, unsub: [],
   roleTable: null,        // Map role -> { geometry, material, instanceColor, castShadow, receiveShadow, mesh, dynamic }
   roleInstances: null,    // Map role -> [{ pos:Vector3, base:Matrix4, color:THREE.Color|null }]
+  instIndex: new Map(),   // prop id -> [{ role, k }] its instances in roleInstances (filled by rebuild())
   dirty: true, lastEvent: 0,
   fountains: [],          // { points, geometry, basePos:{x,y,z} }
   lightPool: [], lightPoolTimer: 0,
@@ -1012,9 +1013,12 @@ function rebuild() {
   for (const role of S.roleTable.keys()) buckets.set(role, []);
   for (const f of S.fountains) disposeFountainFx(f);
   S.fountains.length = 0;
+  const instIndex = new Map();
 
   for (const prop of world.props.values()) {
     if (!KIND_SET.has(prop.kind)) continue;
+    const mine = [];
+    instIndex.set(prop.id, mine);
     // Per-instance variation seed: kind+position for C2 props (stable even if ids churn and across restages),
     // the prop id for everything else (which C2 props never shift — see variationKey(), fix round issue 2).
     const prng = S.rng.fork(variationKey(prop));
@@ -1030,6 +1034,7 @@ function rebuild() {
       const color = part.color ? ctx.materials.color(part.color) : null;
       const inst = noFade ? { pos, base: world4, color, noFade } : { pos, base: world4, color };
       if (part.tile !== undefined) inst.tile = part.tile; // LOOP c6: print-atlas tile (sp-print role)
+      mine.push({ role: part.role, k: list.length });
       list.push(inst);
     }
     if (prop.kind === 'flower_bed') addFlowerHeads(base, prng, buckets, ctx);
@@ -1058,6 +1063,7 @@ function rebuild() {
     def.mesh = mesh;
   }
   S.roleInstances = buckets;
+  S.instIndex = instIndex;
 
   S.dirty = false;
   applyLod(true);
@@ -1083,6 +1089,56 @@ function setTileAttribute(geometry, list) {
 
 const _scaleM = new THREE.Matrix4();
 const _outM = new THREE.Matrix4();
+const _zeroM = new THREE.Matrix4().makeScale(0, 0, 0);
+const _box = new THREE.Box3();
+const _v3 = new THREE.Vector3();
+const _sz = new THREE.Vector3();
+
+/** One prop's drawn pieces (see api.getPropParts). */
+function propParts(id) {
+  const out = [];
+  const refs = S.instIndex.get(id);
+  if (!refs || !S.roleInstances) return out;
+  for (const { role, k } of refs) {
+    const def = S.roleTable.get(role);
+    const inst = S.roleInstances.get(role)?.[k];
+    if (!def || !inst || inst.hidden) continue;
+    const g = def.geometry;
+    if (!g.boundingBox) g.computeBoundingBox();
+    const e = inst.base.elements;
+    _box.copy(g.boundingBox).getCenter(_v3).applyMatrix4(inst.base);
+    g.boundingBox.getSize(_sz);
+    const sx = Math.hypot(e[0], e[1], e[2]), sy = Math.hypot(e[4], e[5], e[6]), sz = Math.hypot(e[8], e[9], e[10]);
+    const c = inst.color || def.material?.color || null;
+    out.push({
+      role, matrix: Array.from(e), color: c ? [c.r, c.g, c.b] : [0.6, 0.6, 0.6],
+      size: [_sz.x * sx, _sz.y * sy, _sz.z * sz], center: [_v3.x, _v3.y, _v3.z], rotY: Math.atan2(e[8], e[0]),
+    });
+  }
+  return out;
+}
+
+/** Stop drawing some props now (see api.hideProps). */
+function hideProps(ids) {
+  let n = 0;
+  const touched = new Set();
+  for (const id of ids) {
+    const refs = S.instIndex.get(id);
+    if (!refs || !S.roleInstances) continue;
+    for (const { role, k } of refs) {
+      const def = S.roleTable.get(role);
+      const inst = S.roleInstances.get(role)?.[k];
+      if (!def?.mesh || !inst || inst.hidden) continue;
+      inst.hidden = true;
+      def.mesh.setMatrixAt(k, _zeroM);
+      touched.add(def.mesh);
+    }
+    n++;
+  }
+  for (const mesh of touched) mesh.instanceMatrix.needsUpdate = true;
+  return n;
+}
+
 function applyLod(force) {
   const ctx = S.ctx;
   const camPos = ctx.camera.position;
@@ -1095,6 +1151,7 @@ function applyLod(force) {
     let changed = false;
     for (let k = 0; k < list.length; k++) {
       const inst = list[k];
+      if (inst.hidden) { def.mesh.setMatrixAt(k, _zeroM); changed = true; continue; } // hideProps(): stays gone
       const f = exempt || inst.noFade ? 1 : fadeFactor(inst.pos.distanceTo(camPos));
       if (f >= 0.999) { def.mesh.setMatrixAt(k, inst.base); } else {
         _outM.copy(inst.base).multiply(_scaleM.makeScale(f, f, f));
@@ -1422,6 +1479,14 @@ const api = {
     return S.ctx.world.addProp({ x, y, z, rot, kind });
   },
   removeProp(id) { return S.ctx.world.removeProp(id); },
+  /** The drawn pieces of one prop, for effects that throw it around (disasters):
+   * [{ role, matrix:number[16], color:[r,g,b], size:[x,y,z], center:[x,y,z], rotY }] in world space (size and
+   * centre are the role geometry's box under the instance matrix). [] until the props layer has been laid out. */
+  getPropParts(id) { return propParts(id); },
+  /** Stop drawing these props this frame, ahead of their removal from the world (world.removeProp re-lays the whole
+   * layer after a debounce; until then a removed prop would still be standing). Not saved: a hidden prop that is
+   * never removed comes back with the next layout. Returns how many of the ids were known. */
+  hideProps(ids) { return hideProps(Array.isArray(ids) ? ids : [ids]); },
   /** Populate streetlamps + occasional bins/benches/signs along one road edge (tools calls this after an
    * interactive road placement; the module also calls it itself on every `road:added` in the full game). */
   populateAlongRoad(edgeId) { return furnishEdge(edgeId); },

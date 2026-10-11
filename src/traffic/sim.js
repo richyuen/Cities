@@ -42,6 +42,7 @@ export class Car {
     this._aheadGap = Infinity;
     this._frontOfBucket = false;
     this._heroFrozen = false; // true only for the showcase's traffic:closeup subject — see index.js update()
+    this.pluckedUntil = 0;    // traffic time until which a storm-plucked car stays off the road (index.js)
     this.route = null;        // transit route script: { keys, keyStart, total, stops, i, routeS, nextStop, dwell }
   }
 }

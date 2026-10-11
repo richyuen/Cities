@@ -11,7 +11,7 @@ export const LAYER_DEFS = [
   { id: 'rumble', label: 'rumble', color: '#B39DDB' },
 ];
 
-export const SFX_NAMES = ['click', 'place', 'road', 'bulldoze', 'zone', 'error', 'levelup', 'cash'];
+export const SFX_NAMES = ['click', 'place', 'road', 'bulldoze', 'zone', 'error', 'levelup', 'cash', 'crash'];
 
 const TC = 0.12; // setTargetAtTime time constant (s) — smooths the 10 Hz updates
 
@@ -393,6 +393,16 @@ export class AudioEngine {
     for (let i = 0; i < 5; i++) {
       const dt = 0.03 + this.rng.range(0, 0.22);
       this._burst(t + dt, out, { dur: 0.02, peak: 0.25, f0: this.rng.range(1500, 3500), q: 2 });
+    }
+  }
+
+  /** A building coming apart: a low thud, a falling rumble and a scatter of plastic clatter. */
+  _sfx_crash(t, out) {
+    this._burst(t, out, { dur: 0.55, peak: 0.7, type: 'lowpass', f0: 1400, f1: 120, q: 0.6, a: 0.008 });
+    this._tone(t, out, { type: 'triangle', f0: 70, f1: 30, dur: 0.45, peak: 0.45, a: 0.008 });
+    for (let i = 0; i < 9; i++) {
+      const dt = 0.04 + this.rng.range(0, 0.5);
+      this._burst(t + dt, out, { dur: 0.025, peak: 0.22, f0: this.rng.range(1800, 5200), q: 3 });
     }
   }
 
