@@ -24,7 +24,7 @@ import { openApp } from './shot.mjs';
 
 const OUT = 'shots/disasters/d3';
 fs.mkdirSync(OUT, { recursive: true });
-for (const f of fs.readdirSync(OUT)) if (/^(before|after|storm-|aimed-|kaiju-|summary)/.test(f)) fs.rmSync(path.join(OUT, f), { force: true });
+for (const f of fs.readdirSync(OUT)) if (/^(before|after|storm-|aimed-|kaiju-|building-|summary)/.test(f)) fs.rmSync(path.join(OUT, f), { force: true });
 const results = [];
 let failed = 0;
 const check = (ok, msg) => { results.push({ ok: !!ok, msg }); console.log(`${ok ? 'ok  ' : 'FAIL'} ${msg}`); if (!ok) failed++; };
@@ -589,8 +589,11 @@ try {
     await c.frames(4);
     const lit = breathing() ? fire.count : -1;
     c.pause();
-    return { idle, lit };
+    await c.frames(2);
+    const bf = ctx.scene.getObjectByName('buildings:fire-flames');
+    return { idle, lit, burning: ctx.modules.get('simulation').api.getBurningBuildings().filter((id) => ctx.modules.get('buildings').api.getParts(id)).length, drawn: bf.visible ? bf.count : 0 };
   });
+  check(flames.burning > 0 ? flames.drawn > 0 : flames.drawn === 0, `the buildings it set alight are drawn burning (${flames.burning} burning, ${flames.drawn} flame bricks)`);
   check(flames.idle === 2 && flames.lit > 2, `kaiju:fire draws the eyes only (${flames.idle} boxes) until it breathes (${flames.lit} boxes)`);
 
   // chase it: a fixed camera relative to its live position, at noon and dusk
@@ -714,6 +717,66 @@ try {
   check(!!other.tornado && other.kaiju === null && !other.live, 'spawnKaiju is refused while a tornado is on the ground');
   const weatherEnd = await weather();
   check(sameWeather(weatherEnd, weather0), `and the sky is the one the session started with (${weatherEnd.kind} ${weatherEnd.intensity})`);
+
+  // a burning building is drawn: flame and smoke bricks over it, at once (no simulation tick), and gone with the fire
+  const bfire = await page.evaluate(async () => {
+    const c = window.__city, ctx = c.ctx, sim = ctx.modules.get('simulation').api, B = ctx.modules.get('buildings').api;
+    const world = ctx.world, cs = world.cellSize;
+    const flames = ctx.scene.getObjectByName('buildings:fire-flames'), smoke = ctx.scene.getObjectByName('buildings:fire-smoke');
+    const drawn = () => ({ flames: flames.visible ? flames.count : 0, smoke: smoke.visible ? smoke.count : 0 });
+    const burnOut = async () => {
+      for (const id of sim.getBurningBuildings()) { const b = world.buildings.get(id); if (b) b.fireElapsed = b.fireDuration; }
+      sim.tick(true);
+      await c.frames(2);
+    };
+    c.pause();
+    c.setCamera('aerial'); c.setTime(12);
+    await burnOut();
+    const idle = drawn(), idleBurning = sim.getBurningBuildings().length;
+    await c.frames(4);
+    const draws0 = c.stats().drawCalls;
+    let b = null;
+    for (const x of world.buildings.values()) { if (x.zone && !x.onFire && !(x.damage > 0) && B.getParts(x.id) && (!b || x.w * x.d > b.w * b.d)) b = x; }
+    if (!b) return { idle, idleBurning, none: true };
+    const damage0 = b.damage || 0;
+    const lit = sim.igniteBuilding(b.id);
+    await c.frames(40);   // paused: no tick runs
+    const now = drawn(), draws1 = c.stats().drawCalls;
+    // where the flame bricks are: all within the lot (a little over its edge for window flames), above the ground
+    const x0 = world.minX + b.i * cs, x1 = x0 + b.w * cs, z0 = world.minZ + b.j * cs, z1 = z0 + b.d * cs;
+    const parts = B.getParts(b.id), m = new c.THREE.Matrix4(), v = new c.THREE.Vector3();
+    let inside = 0, above = 0;
+    for (let i = 0; i < flames.count; i++) {
+      flames.getMatrixAt(i, m); v.setFromMatrixPosition(m);
+      if (v.x > x0 - 4 && v.x < x1 + 4 && v.z > z0 - 4 && v.z < z1 + 4) inside++;
+      if (v.y > parts.baseY + 1) above++;
+    }
+    const gy = parts.baseY, r = Math.max(b.w, b.d) * cs;
+    c.setCamera({ pos: [parts.cx - 60 - r, gy + parts.height + 70, parts.cz + 70 + r], target: [parts.cx, gy + parts.height * 0.6 + 8, parts.cz], fov: 45 });
+    return { idle, idleBurning, lit, elapsed: b.fireElapsed, now, inside, above, draws: draws1 - draws0, id: b.id, damage0, w: b.w, d: b.d };
+  });
+  check(bfire.idleBurning === 0 && bfire.idle.flames === 0 && bfire.idle.smoke === 0, `with nothing burning no fire is drawn (${bfire.idle.flames} flame and ${bfire.idle.smoke} smoke bricks)`);
+  check(!bfire.none && bfire.lit && bfire.elapsed === 0 && bfire.now.flames > 0 && bfire.now.smoke > 0,
+    `a building lit while the clock is paused burns at once, before any tick: ${bfire.now?.flames} flame and ${bfire.now?.smoke} smoke bricks on a ${bfire.w}x${bfire.d} lot`);
+  check(bfire.now && bfire.inside === bfire.now.flames && bfire.above === bfire.now.flames, `every flame brick is on that building (${bfire.inside} of ${bfire.now?.flames} over its lot, ${bfire.above} above the ground)`);
+  check(bfire.draws <= 2, `the fire adds at most 2 draw calls (${bfire.draws})`);
+  {
+    const log = await app.capture(path.join(OUT, 'building-fire.png'), { settle: 8, sampleMs: 300 });
+    captureErrors.push(...log.errors);
+    check(log.gpuMs <= 20, `full-game building-fire GPU time ${log.gpuMs} ms <= 20 (${log.drawCalls} draws)`);
+  }
+  const bout = await page.evaluate(async ({ id, damage0 }) => {
+    const c = window.__city, ctx = c.ctx, sim = ctx.modules.get('simulation').api;
+    const flames = ctx.scene.getObjectByName('buildings:fire-flames'), smoke = ctx.scene.getObjectByName('buildings:fire-smoke');
+    const b = ctx.world.buildings.get(id);
+    if (b) b.fireElapsed = b.fireDuration;
+    sim.tick(true);
+    await c.frames(2);
+    if (b) b.damage = damage0;   // leave no scar behind
+    c.setCamera('aerial');
+    return { burning: sim.getBurningBuildings().length, flames: flames.visible ? flames.count : 0, smoke: smoke.visible ? smoke.count : 0 };
+  }, { id: bfire.id, damage0: bfire.damage0 });
+  check(bout.burning === 0 && bout.flames === 0 && bout.smoke === 0, `and stops being drawn when the fire is out (${bout.flames} flame, ${bout.smoke} smoke bricks)`);
 
   const runtimeErrors = await page.evaluate(() => window.__city.stats().errors);
   check(runtimeErrors.length === 0, `no runtime errors (${runtimeErrors.length}${runtimeErrors.length ? ': ' + runtimeErrors[0] : ''})`);

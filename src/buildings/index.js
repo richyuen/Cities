@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import { generateBuilding } from './generator.js';
 import { BuildingBatcher } from './batching.js';
 import { BuildingStudField } from './studfield.js';
-import { UnservedIndicators, FireIndicators, FireDrones, BurglaryIndicators, PatrolCars } from './indicators.js';
+import { UnservedIndicators, FireDrones, BurglaryIndicators, PatrolCars } from './indicators.js';
+import { BuildingFires } from './fire.js';
 import { stageDefault, stageLevels, stageNight, stageFacade, stageHouses } from './showcase.js';
 
 // buildings — procedurally generates and renders Blox-style buildings for world.buildings records, and (in the
@@ -47,7 +48,7 @@ const REBUILD_BUDGET_MS = 2.5;
 const LEVEL_UP_BUDGET_MS = 2;
 
 const S = {
-  ctx: null, group: null, batcher: null, studField: null, indicators: null, fireIndicators: null, fireDrones: null,
+  ctx: null, group: null, batcher: null, studField: null, indicators: null, fires: null, stagedFires: null, fireDrones: null,
   burglaryIndicators: null, patrolCars: null, dynMats: null, rng: null, unsub: [],
   pendingDirty: false, lastEvent: 0, growthAcc: 0, growthTick: 0, growthRng: null,
   growthLive: false, zoneSeq: 0, zonedAt: new Map(), // cell index -> order it was zoned in during live play
@@ -428,7 +429,7 @@ export default {
   deps: ZONING_PRESENT ? ['terrain', 'roads', 'zoning'] : ['terrain', 'roads'],
   order: 40,
   api,
-  showcaseVariants: ['default', 'levels', 'night', 'facade', 'houses'],
+  showcaseVariants: ['default', 'levels', 'night', 'facade', 'houses', 'fire'],
   presets: {
     'buildings:default': defaultPreset,
     'buildings:closeup': closeupPreset,
@@ -451,8 +452,9 @@ export default {
     S.batcher = new BuildingBatcher(ctx, S.group, S.dynMats, S.studField);
     S.indicators = new UnservedIndicators();
     S.group.add(S.indicators.group);
-    S.fireIndicators = new FireIndicators();
-    S.group.add(S.fireIndicators.group);
+    S.fires = new BuildingFires(ctx, S.rng.fork('fire'));
+    S.group.add(S.fires.group);
+    S.stagedFires = null;
     S.fireDrones = new FireDrones();
     S.group.add(S.fireDrones.group);
     S.burglaryIndicators = new BurglaryIndicators();
@@ -480,7 +482,6 @@ export default {
       }
       if (sim?.status === 'ok' && typeof sim.api?.getBurningBuildings === 'function') {
         const burning = sim.api.getBurningBuildings() || [];
-        S.fireIndicators.sync(burning, S.batcher);
         S.fireDrones.sync(burning, sim.api.getFireDispatch, S.batcher);
       }
       if (sim?.status === 'ok' && typeof sim.api?.getBurglaries === 'function') {
@@ -522,7 +523,13 @@ export default {
     }
     S.studField?.update(ctx.camera);
     updateTweens(dt);
-    S.fireIndicators?.update(dt);
+    if (S.fires) {
+      // every frame, not on sim:tick: a fire lit while the clock is paused has to show at once
+      const sim = ctx.modules.get('simulation');
+      const burning = sim?.status === 'ok' && typeof sim.api?.getBurningBuildings === 'function' ? sim.api.getBurningBuildings() || [] : S.stagedFires || [];
+      S.fires.sync(burning, S.batcher);
+      S.fires.update(dt);
+    }
     S.fireDrones?.update(dt, ctx);
     S.burglaryIndicators?.update(dt);
     S.patrolCars?.update(dt, ctx);
@@ -547,8 +554,8 @@ export default {
     S.studField = null;
     S.indicators?.dispose();
     S.indicators = null;
-    S.fireIndicators?.dispose();
-    S.fireIndicators = null;
+    S.fires?.dispose();
+    S.fires = null;
     S.fireDrones?.dispose();
     S.fireDrones = null;
     S.burglaryIndicators?.dispose();
@@ -573,6 +580,19 @@ export default {
     S.facadeRow = result.row || null;
     S.houseRow = result.houses || null;
     S.batcher.flush();
+    S.stagedFires = null;
+    if (variant === 'fire') {
+      // The simulation is not loaded in this showcase, so the fire state it would keep is written on the staged
+      // records directly: every fourth building, at a spread of severities and stages of the burn.
+      S.stagedFires = [];
+      result.placed.forEach((p, n) => {
+        if (n % 4 !== 1) return;
+        const b = ctx.world.buildings.get(p.id);
+        if (!b) return;
+        b.onFire = true; b.fireDuration = 100; b.fireElapsed = rng.int(20, 80); b.fireSeverity = rng.range(0.15, 0.75);
+        S.stagedFires.push(p.id);
+      });
+    }
     // Pick the tallest by actual generated height (not zone `level` - industrial stays low-rise at every
     // level, so a level+footprint-area heuristic here previously chose a wide shed over an actual skyscraper).
     let tallestInfo = null, tallestRec = null;

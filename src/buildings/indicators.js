@@ -81,92 +81,10 @@ export class UnservedIndicators {
 
 /** Deterministic [0, 2π) phase from a building id — decorrelates flicker/bob without Math.random() (see
  * simulation/model.js's own "no randomness beyond a per-building hash" convention). */
-function phaseFromId(id) {
+export function phaseFromId(id) {
   let h = 0; const s = String(id);
   for (let k = 0; k < s.length; k++) h = (Math.imul(h, 31) + s.charCodeAt(k)) | 0;
   return ((h >>> 0) % 10000 / 10000) * Math.PI * 2;
-}
-
-function buildFlameTexture() {
-  const c = document.createElement('canvas');
-  c.width = c.height = ICON_PX;
-  const g = c.getContext('2d');
-  g.beginPath();
-  g.moveTo(32, 4);
-  g.bezierCurveTo(18, 20, 12, 32, 17, 46);
-  g.bezierCurveTo(20, 56, 32, 61, 32, 61);
-  g.bezierCurveTo(32, 61, 44, 56, 47, 46);
-  g.bezierCurveTo(52, 32, 46, 20, 32, 4);
-  g.closePath();
-  g.fillStyle = '#E3342F';
-  g.fill();
-  g.beginPath();
-  g.moveTo(32, 20);
-  g.bezierCurveTo(25, 30, 23, 37, 27, 46);
-  g.bezierCurveTo(28.5, 51, 32, 54, 32, 54);
-  g.bezierCurveTo(32, 54, 35.5, 51, 37, 46);
-  g.bezierCurveTo(41, 37, 39, 30, 32, 20);
-  g.closePath();
-  g.fillStyle = '#F7C948';
-  g.fill();
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
-}
-
-/** A small pooled billboard flame over any building currently on fire (simulation.getBurningBuildings()). */
-export class FireIndicators {
-  constructor() {
-    this.texture = buildFlameTexture();
-    this.material = new THREE.SpriteMaterial({ map: this.texture, transparent: true, depthWrite: false });
-    this.group = new THREE.Group();
-    this.group.name = 'buildings-fire-indicators';
-    this.pool = [];
-    this.active = new Map(); // building id -> { sprite, phase }
-  }
-
-  _acquire() {
-    const sprite = this.pool.pop() || new THREE.Sprite(this.material);
-    if (!sprite.parent) this.group.add(sprite);
-    sprite.visible = true;
-    return sprite;
-  }
-
-  _release(sprite) {
-    sprite.visible = false;
-    this.pool.push(sprite);
-  }
-
-  /** ids: currently-burning building ids (simulation.getBurningBuildings()); batcher: buildings' BuildingBatcher. */
-  sync(ids, batcher) {
-    const wanted = new Set(ids);
-    for (const [id, entry] of this.active) {
-      if (!wanted.has(id)) { this._release(entry.sprite); this.active.delete(id); }
-    }
-    for (const id of ids) {
-      const info = batcher.get(id);
-      if (!info) continue;
-      let entry = this.active.get(id);
-      if (!entry) { entry = { sprite: this._acquire(), phase: phaseFromId(id) }; this.active.set(id, entry); }
-      entry.sprite.position.set(info.cx, info.baseY + info.height + 2.5, info.cz);
-    }
-  }
-
-  update(dt) {
-    for (const entry of this.active.values()) {
-      entry.phase += dt * 9;
-      const flick = 1 + Math.sin(entry.phase) * 0.12 + Math.sin(entry.phase * 2.3) * 0.06;
-      entry.sprite.scale.set(2.2 * flick, 2.6 * flick, 1);
-    }
-  }
-
-  dispose() {
-    for (const sprite of this.group.children.slice()) this.group.remove(sprite);
-    this.pool.length = 0;
-    this.active.clear();
-    this.material.dispose();
-    this.texture.dispose();
-  }
 }
 
 function buildBurglaryTexture() {
