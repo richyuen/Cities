@@ -79,6 +79,7 @@ const S = {
   roleTable: null,        // Map role -> { geometry, material, instanceColor, castShadow, receiveShadow, mesh, dynamic }
   roleInstances: null,    // Map role -> [{ pos:Vector3, base:Matrix4, color:THREE.Color|null }]
   instIndex: new Map(),   // prop id -> [{ role, k }] its instances in roleInstances (filled by rebuild())
+  hiddenProps: new Set(), // prop ids hideProps() stopped drawing, until they leave the world (re-applied by rebuild())
   dirty: true, lastEvent: 0, lazyDirtyAt: 0,
   fountains: [],          // { points, geometry, basePos:{x,y,z} }
   lightPool: [], lightPoolTimer: 0,
@@ -1065,6 +1066,11 @@ function rebuild() {
   }
   S.roleInstances = buckets;
   S.instIndex = instIndex;
+  // props hidden ahead of their removal stay hidden through a re-layout somebody else triggered
+  for (const id of S.hiddenProps) {
+    if (!world.props.has(id)) { S.hiddenProps.delete(id); continue; }
+    for (const { role, k } of instIndex.get(id) || []) { const inst = buckets.get(role)?.[k]; if (inst) inst.hidden = true; }
+  }
 
   S.dirty = false;
   S.lazyDirtyAt = 0;
@@ -1143,6 +1149,7 @@ function hideProps(ids) {
       def.mesh.setMatrixAt(k, _zeroM);
       touched.add(def.mesh);
     }
+    if (S.ctx.world.props.has(id)) S.hiddenProps.add(id);
     n++;
   }
   for (const mesh of touched) mesh.instanceMatrix.needsUpdate = true;
@@ -1494,8 +1501,8 @@ const api = {
    * centre are the role geometry's box under the instance matrix). [] until the props layer has been laid out. */
   getPropParts(id) { return propParts(id); },
   /** Stop drawing these props this frame, ahead of their removal from the world (world.removeProp re-lays the whole
-   * layer after a debounce; until then a removed prop would still be standing). Not saved: a hidden prop that is
-   * never removed comes back with the next layout. Returns how many of the ids were known. */
+   * layer after a debounce; until then a removed prop would still be standing). A hidden prop stays hidden until
+   * it is removed; nothing about it is saved. Returns how many of the ids were known. */
   hideProps(ids) { return hideProps(Array.isArray(ids) ? ids : [ids]); },
   /** Populate streetlamps + occasional bins/benches/signs along one road edge (tools calls this after an
    * interactive road placement; the module also calls it itself on every `road:added` in the full game). */
@@ -1654,6 +1661,7 @@ export default {
       // A prop that hideProps() already stopped drawing changes nothing on screen when it leaves the world, so its
       // re-layout can wait (a storm removes props and yard dressing every second; each full re-layout is a hitch).
       if (propHidden(prop.id)) { if (!S.lazyDirtyAt) S.lazyDirtyAt = performance.now(); } else markDirty();
+      S.hiddenProps.delete(prop.id);
     }));
     S.unsub.push(ctx.events.on('building:spawned', onBuildingSpawned));
     S.unsub.push(ctx.events.on('building:removed', onBuildingRemoved));
@@ -1738,7 +1746,7 @@ export default {
     for (const l of S.lightPool) S.group.remove(l);
     S.lightPool.length = 0;
     ctx.scene.remove(S.group);
-    S.group = null; S.roleTable = null; S.roleInstances = null;
+    S.group = null; S.roleTable = null; S.roleInstances = null; S.hiddenProps.clear(); S.instIndex = new Map();
     S.signaledNodes.clear(); S.nodeSignalProps.clear(); S.parkClusters.clear(); S.parkDirty.clear();
     S.pIdx.clear(); S.bIdx.clear(); S.yardByBuilding.clear(); S.pedEdges.clear(); S.figureCount = 0;
     S.roadSnap = null; S.roadSnapDirty = true; S.detailSettle = null; S.detailSettledOnce = false;

@@ -287,7 +287,7 @@ try {
   const colours = await page.evaluate(() => {
     const m = window.__city.ctx.scene.getObjectByName('bricks:2x4');
     const set = new Set(); const a = m.instanceColor.array;
-    for (let i = 40 * 3; i < m.count * 3; i += 3) set.add(`${a[i].toFixed(2)},${a[i + 1].toFixed(2)},${a[i + 2].toFixed(2)}`);
+    for (let i = 0; i < m.count * 3; i += 3) set.add(`${a[i].toFixed(2)},${a[i + 1].toFixed(2)},${a[i + 2].toFixed(2)}`);
     return { n: set.size, visible: m.visible, count: m.count };
   });
   check(colours.visible && colours.n >= 3, `bricks keep their buildings' colours (${colours.n} distinct colours on ${colours.count} bricks)`);

@@ -45,7 +45,7 @@ export class BuildingBatcher {
     // docs/core-requests/environment.md "## 2." perf note). flushIncremental() below processes one bucket's
     // merge at a time and yields back to the caller once a time budget is spent, so the full-game per-frame
     // update() can spread a big chunk's rebuild across many frames instead of paying it all in one.
-    this._rebuild = null; // { key, chunk, entries: [[matKey, { geoms, refs }], ...], idx, seen: Set, cur }
+    this._rebuild = null; // { key, chunk, entries: [[matKey, { geoms, runs }], ...], idx, seen: Set, cur }
     this._gen = 0;        // bumped on every set(): tells a caller its part indices went stale (level-up, repair)
     // chunkKey -> time of the last removal of a fully hidden building (see remove()): chunks that only need a
     // re-merge to drop triangles nobody can see. Promoted to dirtyChunks once they have been quiet for LAZY_MS.
@@ -124,6 +124,7 @@ export class BuildingBatcher {
     const list = all ? rec.parts.map((_, k) => k) : which;
     let n = 0;
     const fresh = [];
+    const mats = new Set(); // drawn bucket meshes holding the parts hidden by this call
     for (const idx of list) {
       const part = rec.parts[idx];
       if (!part || rec.hidden.has(idx)) continue;
@@ -134,15 +135,28 @@ export class BuildingBatcher {
       n++;
       if (all || !chunk) continue;
       const mesh = chunk.meshes.get(part.mat);
-      const refs = mesh?.userData.byId?.get(id);
-      if (!refs) continue; // not merged into the drawn mesh yet: the pending re-merge picks the squashed part up
-      for (const r of refs) if (r.partIdx === idx && r.gen === rec.gen) this._collapseDrawn(mesh, r);
+      if (mesh) mats.add(mesh);
+    }
+    if (!all && fresh.length && mats.size) {
+      // one pass over this building's ranges in each drawn bucket it just lost parts from. A bucket that has not
+      // merged it yet has no ranges for it: the pending re-merge picks the squashed parts up instead.
+      const want = new Set(fresh);
+      for (const mesh of mats) {
+        const runs = mesh.userData.byId?.get(id);
+        if (!runs) continue;
+        for (const run of runs) {
+          if (run.gen !== rec.gen) continue;
+          const it = run.items;
+          for (let q = 0; q < it.length; q += 3) if (want.has(it[q])) this._collapseDrawn(mesh, it[q + 1], it[q + 2]);
+        }
+      }
     }
     if (all) {
       // every range this id owns in the drawn meshes, including a previous generation's (see set())
       if (chunk) for (const mesh of chunk.meshes.values()) {
-        const refs = mesh.userData.byId?.get(id);
-        if (refs) for (const r of refs) this._collapseDrawn(mesh, r);
+        const runs = mesh.userData.byId?.get(id);
+        if (!runs) continue;
+        for (const run of runs) { const it = run.items; for (let q = 0; q < it.length; q += 3) this._collapseDrawn(mesh, it[q + 1], it[q + 2]); }
       }
       this.studField?.remove(id);
       rec.liveStuds = [];
@@ -161,13 +175,13 @@ export class BuildingBatcher {
     return n;
   }
 
-  _collapseDrawn(mesh, r) {
+  _collapseDrawn(mesh, start, count) {
     const attr = mesh.geometry.attributes.position;
-    if (r.start + r.count > attr.count) {
-      this.ctx.error?.(`[buildings] hide: vertex range ${r.start}+${r.count} is outside ${mesh.name} (${attr.count})`);
+    if (start + count > attr.count) {
+      this.ctx.error?.(`[buildings] hide: vertex range ${start}+${count} is outside ${mesh.name} (${attr.count})`);
       return;
     }
-    collapseRange(attr, r.start, r.count, true);
+    collapseRange(attr, start, count, true);
   }
 
   // If a chunk currently being incrementally rebuilt (see flushIncremental) gets touched again by a building
@@ -227,12 +241,16 @@ export class BuildingBatcher {
       for (let k = 0; k < b.parts.length; k++) {
         const p = b.parts[k];
         let bucket = buckets.get(p.mat);
-        if (!bucket) { bucket = { geoms: [], refs: [], verts: 0 }; buckets.set(p.mat, bucket); }
+        if (!bucket) { bucket = { geoms: [], runs: [], last: null, verts: 0 }; buckets.set(p.mat, bucket); }
         // mergeGeometries() concatenates in input order, so this part's vertices are [start, start+count) of the
         // bucket's merged position attribute (see hide()).
         const count = p.geom.attributes.position.count;
         bucket.geoms.push(p.geom);
-        bucket.refs.push({ rec: b, partIdx: k, start: bucket.verts, count });
+        // One run per (bucket, building): a building's parts of one material are consecutive in the bucket. The
+        // ranges are plain numbers (partIdx, start, count triples), so this scan allocates per building, not per part.
+        let run = bucket.last;
+        if (!run || run.rec !== b) { run = { rec: b, gen: b.gen, items: [] }; bucket.runs.push(run); bucket.last = run; }
+        run.items.push(k, bucket.verts, count);
         bucket.verts += count;
       }
     }
@@ -270,7 +288,7 @@ export class BuildingBatcher {
     while (state.idx < entries.length) {
       if (!state.cur) {
         const [matKey, bucket] = entries[state.idx];
-        state.cur = { matKey, geoms: bucket.geoms, refs: bucket.refs, verts: bucket.verts, subIdx: 0, partials: [] };
+        state.cur = { matKey, geoms: bucket.geoms, runs: bucket.runs, verts: bucket.verts, subIdx: 0, partials: [] };
       }
       const cur = state.cur;
       while (cur.subIdx < cur.geoms.length) {
@@ -301,11 +319,15 @@ export class BuildingBatcher {
           // squashing somebody else's triangles
           this.ctx.error?.(`[buildings] merged vertex count ${merged.attributes.position.count} != ${cur.verts} for mat="${cur.matKey}"`);
         } else {
-          for (const r of cur.refs) {
-            let list = byId.get(r.rec.id);
-            if (!list) { list = []; byId.set(r.rec.id, list); }
-            list.push({ partIdx: r.partIdx, gen: r.rec.gen, start: r.start, count: r.count });
-            if (r.rec.hidden.has(r.partIdx)) collapseRange(merged.attributes.position, r.start, r.count, false);
+          const pos = merged.attributes.position;
+          for (const run of cur.runs) {
+            const id = run.rec.id;
+            const list = byId.get(id);
+            if (list) list.push(run); else byId.set(id, [run]);
+            const hidden = run.rec.hidden;
+            if (!hidden.size) continue;
+            const it = run.items;
+            for (let q = 0; q < it.length; q += 3) if (hidden.has(it[q])) collapseRange(pos, it[q + 1], it[q + 2], false);
           }
         }
         let mesh = chunk.meshes.get(cur.matKey);

@@ -3,9 +3,11 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { BRICK_W, BRICK_L, COURSE } from './brickify.js';
 
 // Brick particles: everything a tornado tears loose is drawn here, as two instanced meshes.
-//   bricks:2x4  studded 2x4 bricks (building shells), plus the storm's own ring of grey bricks
+//   bricks:2x4  studded 2x4 bricks (building shells)
 //   bricks:box  loose pieces sized per instance (window units, slabs, tree and street-prop parts, cars)
-// Two draw calls while anything is in the air or lying as rubble, none otherwise. A particle is `live` (integrated
+// Two draw calls while anything is in the air or lying as rubble, none otherwise. The storm's own ring of grey
+// bricks is a third, small mesh (bricks:storm) with the funnel's faint self-lit tint, so the column still reads at
+// night; it is shown only while a tornado is active. A particle is `live` (integrated
 // every frame), `rubble` (at rest, not integrated), `fading` (shrinking away) or free. Spawning is deterministic
 // (positions and colours come from the caller, the launch jitter from the rng fork it passes); the flight itself
 // integrates the frame's game dt, so only the spawn set is reproducible between boots, not where a brick lands.
@@ -25,7 +27,7 @@ const RESTITUTION = 0.3;
 const FRICTION = 0.6;
 const SETTLE_SPEED = 0.8;
 const RELIFT_PULL = 0.45;              // rubble inside this pull is picked up again
-const AMBIENT_N = 40;                  // the funnel's own orbiting bricks (first instances of bricks:2x4)
+const AMBIENT_N = 40;                  // the funnel's own orbiting bricks (bricks:storm)
 const FUNNEL_H = 62;
 const MAX_STEP = 1 / 30;
 
@@ -106,10 +108,18 @@ export function createBrickPool(ctx, rng) {
   const boxGeo = new THREE.BoxGeometry(1, 1, 1).toNonIndexed();
   boxGeo.deleteAttribute('uv');
   const pools = {
-    b2x4: makePool('bricks:2x4', brickGeo, material, POOL_2X4, AMBIENT_N, true),
+    b2x4: makePool('bricks:2x4', brickGeo, material, POOL_2X4, 0, true),
     box: makePool('bricks:box', boxGeo, material, POOL_BOX, 0, false),
   };
-  group.add(pools.b2x4.mesh, pools.box.mesh);
+  // same faint tint as the funnel boxes (visuals.js): there is no light source on a tornado
+  const stormMat = ctx.materials.plastic('white', { instanceColor: true, roughness: 0.75, clearcoat: 0.05, emissive: 'earthBlue', emissiveIntensity: 0.22 });
+  const storm = new THREE.InstancedMesh(brickGeo, stormMat, AMBIENT_N);
+  storm.name = 'bricks:storm';
+  storm.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  storm.frustumCulled = false;
+  storm.castShadow = false; storm.receiveShadow = true;
+  storm.visible = false;
+  group.add(pools.b2x4.mesh, pools.box.mesh, storm);
 
   // the storm's own bricks: a fixed, seeded table (no rng at runtime), animated by time like the funnel
   const ambient = [];
@@ -295,16 +305,13 @@ export function createBrickPool(ctx, rng) {
   }
 
   function updateAmbient(f, time) {
-    const P = pools.b2x4;
-    if (!f || f.strength <= 0.01) {
-      if (ambientShown) { for (let i = 0; i < AMBIENT_N; i++) P.mesh.setMatrixAt(i, ZERO); P.dirty = true; ambientShown = false; }
-      return;
-    }
+    if (!f || f.strength <= 0.01) { storm.visible = false; ambientShown = false; return; }
     if (!ambientShown) {
-      for (let i = 0; i < AMBIENT_N; i++) P.mesh.setColorAt(i, ctx.materials.color(ambient[i].color));
-      P.colorDirty = true;
+      for (let i = 0; i < AMBIENT_N; i++) storm.setColorAt(i, ctx.materials.color(ambient[i].color));
+      storm.instanceColor.needsUpdate = true;
       ambientShown = true;
     }
+    storm.visible = true;
     const st = f.strength, spin = time * 2.6;
     for (let i = 0; i < AMBIENT_N; i++) {
       const d = ambient[i];
@@ -314,9 +321,9 @@ export function createBrickPool(ctx, rng) {
       _e.set(a * 2.2, a, a * 1.7);
       _q.setFromEuler(_e);
       _s.setScalar(d.scale * st);
-      P.mesh.setMatrixAt(i, _m.compose(_p, _q, _s));
+      storm.setMatrixAt(i, _m.compose(_p, _q, _s));
     }
-    P.dirty = true;
+    storm.instanceMatrix.needsUpdate = true;
   }
 
   /** `f`: the live funnel { x, z, gy, vx, vz, strength, outerR } or null. `gdt` is game time (0 while paused). */
@@ -334,9 +341,8 @@ export function createBrickPool(ctx, rng) {
     }
     for (const P of [pools.b2x4, pools.box]) {
       const used = P.live + P.rubble + P.fading;
-      const show = used > 0 || (P.reserved > 0 && ambientShown);
-      P.mesh.count = used > 0 ? P.high : P.reserved;
-      P.mesh.visible = show;
+      P.mesh.count = used > 0 ? P.high : 0;
+      P.mesh.visible = used > 0;
       if (P.dirty) { P.mesh.instanceMatrix.needsUpdate = true; P.dirty = false; }
       if (P.colorDirty) { P.mesh.instanceColor.needsUpdate = true; P.colorDirty = false; }
     }
@@ -349,7 +355,7 @@ export function createBrickPool(ctx, rng) {
       P.live = P.rubble = P.fading = 0;
       P.mesh.count = 0; P.mesh.visible = false; P.mesh.instanceMatrix.needsUpdate = true; P.dirty = false;
     }
-    ambientShown = false;
+    ambientShown = false; storm.visible = false;
     stats.spawned = 0; stats.dropped = 0; stats.recycled = 0; stats.hash = 0x811c9dc5;
   }
 
@@ -364,8 +370,8 @@ export function createBrickPool(ctx, rng) {
   }
 
   function dispose() {
-    group.remove(pools.b2x4.mesh, pools.box.mesh);
-    pools.b2x4.mesh.dispose(); pools.box.mesh.dispose();
+    group.remove(pools.b2x4.mesh, pools.box.mesh, storm);
+    pools.b2x4.mesh.dispose(); pools.box.mesh.dispose(); storm.dispose();
     brickGeo.dispose(); boxGeo.dispose();
   }
 
