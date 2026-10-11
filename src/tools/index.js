@@ -193,10 +193,7 @@ function roadGhostGeom(ctx, kind, a, b) {
   const roads = ctx.modules.get('roads');
   let width = FALLBACK_WIDTH[kind] || 8;
   if (roads?.status === 'ok' && typeof roads.api?.footprintWidth === 'function') { try { width = roads.api.footprintWidth(kind); } catch (_) { /* keep fallback */ } }
-  const midx = (a.x + b.x) / 2, midz = (a.z + b.z) / 2;
-  let midy;
-  if (roads?.status === 'ok' && typeof roads.api?.heightAt === 'function') { try { midy = roads.api.heightAt(midx, midz); } catch (_) { midy = ctx.world.getHeight(midx, midz); } }
-  else midy = ctx.world.getHeight(midx, midz);
+  let points = [a, b];
   const oneway = S.oneWay && kind !== 'path';
   const label = `${oneway ? 'One-way ' : ''}${ROAD_LABEL[kind] || kind}`;
   const plan = roadEditPlan(ctx, a, b, kind);
@@ -220,13 +217,73 @@ function roadGhostGeom(ctx, kind, a, b) {
   } else {
     const crossing = roadCrossingInfo(ctx, a, b);
     const buildingBlocked = roadBuildingBlocked(ctx, a, b, kind);
+    // the road is built through any junction it passes within reach of: draw the ghost along that same route
+    if (typeof ctx.world.previewRoadRoute === 'function') points = safeCall(() => ctx.world.previewRoadRoute(a, b, kind, { bridge: crossing.crossesWater }), points);
     valid = crossing.ok && !buildingBlocked && !ctx.world.roadOverlapBlocked(a, b, kind);
     cost = Math.round(length * (PRICE_PER_M[kind] ?? 100) * (crossing.crossesWater ? BRIDGE_COST_MULTIPLIER : 1));
     if (valid && currentMoney(ctx) < cost) { valid = false; status = `Insufficient funds — need $${cost.toLocaleString()}`; }
     else status = `${label}: ${Math.round(length)} m, ${priceText(ctx, cost)}`;
   }
-  // a rotation about Y turns the ribbon's long axis (+X) toward -Z, so the heading is atan2(-dz, dx)
-  return { length, width, mid: { x: midx, y: midy + 0.25, z: midz }, angle: Math.atan2(-dz, dx), valid, cost, mode, status };
+  return { length, width, points, valid, cost, mode, status };
+}
+
+const RIBBON_STEP = 8;       // metres between ghost cross-sections: one per cell, so the ribbon follows the ground
+const RIBBON_MAX_SAMPLES = 400;
+const RIBBON_BELOW = 0.05, RIBBON_ABOVE = 0.55; // the slab's bottom / top relative to the road surface
+
+/** Road-surface height for the ghost at (x,z): an existing road's own surface near one (so a ghost joining a
+ * raised road or running along a bridge sits on it), else the ground; never below the water. */
+function ghostSurfaceY(ctx, x, z) {
+  const roads = ctx.modules.get('roads');
+  let y = null;
+  if (roads?.status === 'ok' && typeof roads.api?.heightAt === 'function') y = safeCall(() => roads.api.heightAt(x, z), null);
+  if (!Number.isFinite(y)) y = ctx.world.getHeight(x, z);
+  const sea = Number.isFinite(ctx.world.seaLevel) ? ctx.world.seaLevel : 0;
+  return Math.max(y, sea);
+}
+
+/** Cross-section centres [{ x, y, z }] along the polyline `points`, at most RIBBON_STEP apart and always
+ * including the polyline's own vertices. */
+function ribbonSamples(ctx, points) {
+  const pts = [points[0]];
+  for (const p of points) { const q = pts[pts.length - 1]; if (Math.hypot(p.x - q.x, p.z - q.z) > 0.01) pts.push(p); }
+  if (pts.length < 2) pts.push({ x: pts[0].x + 0.05, z: pts[0].z }); // a press with no drag yet: a stub, as before
+  let total = 0;
+  for (let i = 1; i < pts.length; i++) total += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].z - pts[i - 1].z);
+  const step = Math.max(RIBBON_STEP, total / (RIBBON_MAX_SAMPLES - pts.length - 1));
+  const out = [];
+  const push = (x, z) => out.push({ x, y: ghostSurfaceY(ctx, x, z), z });
+  push(pts[0].x, pts[0].z);
+  for (let i = 1; i < pts.length; i++) {
+    const p = pts[i - 1], q = pts[i];
+    const n = Math.max(1, Math.ceil(Math.hypot(q.x - p.x, q.z - p.z) / step));
+    for (let k = 1; k <= n; k++) push(p.x + (q.x - p.x) * k / n, p.z + (q.z - p.z) * k / n);
+  }
+  return out.slice(0, RIBBON_MAX_SAMPLES);
+}
+
+/** The road ghost's geometry: a slab swept along a centreline, 8 vertices per cross-section (each face owns its
+ * pair, so faces shade flat) after the 8 of the two end caps. The index buffer is fixed; applyRibbon() rewrites
+ * the positions and moves the draw range. */
+function buildRibbonGeometry() {
+  const nVerts = 8 + RIBBON_MAX_SAMPLES * 8;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(nVerts * 3), 3).setUsage(THREE.DynamicDrawUsage));
+  geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(nVerts * 3), 3).setUsage(THREE.DynamicDrawUsage));
+  // caps: 0 LB, 1 RB, 2 RT, 3 LT at the start, 4..7 the same at the end
+  const idx = [0, 1, 2, 0, 2, 3, 4, 6, 5, 4, 7, 6];
+  // per cross-section: 0 LT 1 RT (top), 2 LB 3 RB (bottom), 4 LT 5 LB (left), 6 RT 7 RB (right)
+  for (let i = 0; i + 1 < RIBBON_MAX_SAMPLES; i++) {
+    const a = 8 + i * 8, b = a + 8;
+    idx.push(a, a + 1, b + 1, a, b + 1, b);                 // top
+    idx.push(a + 2, b + 3, a + 3, a + 2, b + 2, b + 3);     // bottom
+    idx.push(a + 5, b + 4, b + 5, a + 5, a + 4, b + 4);     // left
+    idx.push(a + 7, b + 7, b + 6, a + 7, b + 6, a + 6);     // right
+  }
+  geo.setIndex(idx);
+  geo.setDrawRange(0, 0);
+  geo.userData.samples = 0;
+  return geo;
 }
 
 function normRect(d) { return { i0: Math.min(d.i0, d.i1), i1: Math.max(d.i0, d.i1), j0: Math.min(d.j0, d.j1), j1: Math.max(d.j0, d.j1) }; }
@@ -486,9 +543,30 @@ function refreshGhostEmissiveForTime() {
 
 function applyRibbon(g, colorName) {
   const mesh = S.ghosts.ribbon;
-  mesh.position.set(g.mid.x, g.mid.y, g.mid.z);
-  mesh.rotation.set(0, g.angle, 0);
-  mesh.scale.set(Math.max(g.length, 0.05), 0.6, Math.max(g.width, 0.5));
+  const sm = ribbonSamples(S.ctx, g.points);
+  const geo = mesh.geometry, pos = geo.attributes.position.array, nor = geo.attributes.normal.array;
+  const hw = Math.max(g.width, 0.5) / 2;
+  const put = (v, x, y, z, nx, ny, nz) => { const o = v * 3; pos[o] = x; pos[o + 1] = y; pos[o + 2] = z; nor[o] = nx; nor[o + 1] = ny; nor[o + 2] = nz; };
+  for (let i = 0; i < sm.length; i++) {
+    const p = sm[i], prev = sm[Math.max(0, i - 1)], next = sm[Math.min(sm.length - 1, i + 1)];
+    const fl = Math.hypot(next.x - prev.x, next.z - prev.z) || 1;
+    const fx = (next.x - prev.x) / fl, fz = (next.z - prev.z) / fl;
+    const rx = -fz * hw, rz = fx * hw; // to the right of the heading: (x, z) -> (-z, x)
+    const yb = p.y - RIBBON_BELOW, yt = p.y + RIBBON_ABOVE;
+    const v = 8 + i * 8;
+    put(v, p.x - rx, yt, p.z - rz, 0, 1, 0); put(v + 1, p.x + rx, yt, p.z + rz, 0, 1, 0);
+    put(v + 2, p.x - rx, yb, p.z - rz, 0, -1, 0); put(v + 3, p.x + rx, yb, p.z + rz, 0, -1, 0);
+    put(v + 4, p.x - rx, yt, p.z - rz, fz, 0, -fx); put(v + 5, p.x - rx, yb, p.z - rz, fz, 0, -fx);
+    put(v + 6, p.x + rx, yt, p.z + rz, -fz, 0, fx); put(v + 7, p.x + rx, yb, p.z + rz, -fz, 0, fx);
+    if (i === 0 || i === sm.length - 1) {
+      const c = i === 0 ? 0 : 4, s = i === 0 ? -1 : 1;
+      put(c, p.x - rx, yb, p.z - rz, s * fx, 0, s * fz); put(c + 1, p.x + rx, yb, p.z + rz, s * fx, 0, s * fz);
+      put(c + 2, p.x + rx, yt, p.z + rz, s * fx, 0, s * fz); put(c + 3, p.x - rx, yt, p.z - rz, s * fx, 0, s * fz);
+    }
+  }
+  geo.attributes.position.needsUpdate = true; geo.attributes.normal.needsUpdate = true;
+  geo.setDrawRange(0, 12 + (sm.length - 1) * 24);
+  geo.userData.samples = sm.length;
   mesh.material = ghostMat(S.ctx, colorName || (g.valid ? 'lime' : 'transRed'));
   mesh.visible = true;
   S.ghosts.rect.visible = false; S.ghosts.point.visible = false;
@@ -1034,8 +1112,13 @@ function buildGhosts(ctx) {
   const boxGeo = new THREE.BoxGeometry(1, 1, 1);
   const cylGeo = new THREE.CylinderGeometry(1, 1, 1, 16);
   const mk = (geo, name) => { const m = new THREE.Mesh(geo, ctx.materials.glass('lime')); m.name = name; m.visible = false; m.renderOrder = 10; m.castShadow = false; m.receiveShadow = false; return m; };
+  // the road ghost owns a swept slab (see buildRibbonGeometry) written in world space, so it is never culled by
+  // the stale bounds of an earlier drag
+  const ribbonGeo = buildRibbonGeometry();
+  const ribbonMesh = mk(ribbonGeo, 'tools-ghost-road');
+  ribbonMesh.frustumCulled = false;
   return {
-    ribbon: mk(boxGeo, 'tools-ghost-road'), rect: mk(boxGeo, 'tools-ghost-rect'), point: mk(cylGeo, 'tools-ghost-point'),
+    ribbon: ribbonMesh, ribbonGeo, rect: mk(boxGeo, 'tools-ghost-rect'), point: mk(cylGeo, 'tools-ghost-point'),
     coverage: mk(boxGeo, 'tools-ghost-coverage'), boxGeo, cylGeo,
   };
 }
@@ -1058,13 +1141,21 @@ function showCoverageRing(ctx, b) {
   mesh.visible = true;
 }
 
-/** World-space end points of the road ghost as it is actually drawn (read back off the mesh transform, so a
- * check compares what is on screen rather than the inputs it was built from). Null when no ribbon is showing. */
+/** World-space centreline of the road ghost as it is actually drawn (the middle of each cross-section's top
+ * edge, read back off the mesh's vertices, so a check compares what is on screen rather than the inputs it was
+ * built from). Null when no ribbon is showing. */
 function ribbonPath() {
   const mesh = S.ghosts?.ribbon;
   if (!mesh?.visible) return null;
   mesh.updateMatrixWorld(true);
-  return [-0.5, 0.5].map((u) => { const p = mesh.localToWorld(new THREE.Vector3(u, 0, 0)); return { x: p.x, y: p.y, z: p.z }; });
+  const pos = mesh.geometry.attributes.position, out = [];
+  const l = new THREE.Vector3(), r = new THREE.Vector3();
+  for (let i = 0; i < mesh.geometry.userData.samples; i++) {
+    l.fromBufferAttribute(pos, 8 + i * 8); r.fromBufferAttribute(pos, 9 + i * 8);
+    const p = mesh.localToWorld(l.add(r).multiplyScalar(0.5));
+    out.push({ x: p.x, y: p.y, z: p.z });
+  }
+  return out;
 }
 
 // ---- public api -------------------------------------------------------------------------------------------
@@ -1161,7 +1252,7 @@ export default {
     for (const u of S.unsub) { try { u(); } catch (_) { /* ignore */ } }
     S.unsub.length = 0;
     if (S.showcaseExtra) { for (const g of S.showcaseExtra.geos) g.dispose(); if (S.showcaseExtra.group) S.group?.remove(S.showcaseExtra.group); S.showcaseExtra = null; }
-    if (S.ghosts) { S.ghosts.boxGeo.dispose(); S.ghosts.cylGeo.dispose(); }
+    if (S.ghosts) { S.ghosts.boxGeo.dispose(); S.ghosts.cylGeo.dispose(); S.ghosts.ribbonGeo.dispose(); }
     if (S.group) ctx.scene.remove(S.group);
     Object.assign(S, {
       ctx: null, group: null, ghosts: null, tool: null, drag: null, pointerId: null, clickStart: null, selectedBuildingId: null,

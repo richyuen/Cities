@@ -19,6 +19,7 @@
 // Road drag ghost (2026-10-11):
 //   L  a diagonal drag: the ghost ribbon ends on the drag's two ends and the street is built there; short of
 //      funds, the ghost says so before release and nothing is built
+//   M  a drag passing 3 m beside an existing street end: the ghost bends through that end, as the built street does
 // Exit 1 on any failed check.
 import { openApp, BASE_URL } from './shot.mjs';
 
@@ -669,6 +670,39 @@ let before = null;
         Math.max(off(built[0][0], g.drag.a), off(built[0][1], g.drag.b)),
         Math.max(off(built[0][0], g.drag.b), off(built[0][1], g.drag.a))) : Infinity;
       check(built.length === 1 && builtOff < 1, `L: the street is built where the ghost was (${built.length} edge, off by ${builtOff.toFixed(1)} m)`);
+
+      // M: a drag passing 3 m beside the end of an existing street is built through that end, and the ghost shows it
+      const rt = await page.evaluate(async () => {
+        const c = window.__city, w = c.world, H = window.__pt;
+        const o = H.openLand(10, 2);
+        if (!o) return { err: 'no open land' };
+        const cs = w.cellSize, X = w.minX + (o.i + 5) * cs, Z = w.minZ + (o.j + 3) * cs;
+        w.addRoad({ x: X, z: Z + 3 }, { x: X, z: Z + 43 }, 'street');
+        const y = w.getHeight(X, Z);
+        c.ctx.camera.position.set(X, y + 110, Z + 0.5);
+        c.ctx.controls.target.set(X, y, Z);
+        c.ctx.controls.update();
+        await H.frames(6);
+        const r = c.ctx.renderer.domElement.getBoundingClientRect();
+        const scr = (p) => { const v = new c.THREE.Vector3(p.x, w.getHeight(p.x, p.z), p.z).project(c.ctx.camera); return [r.left + (v.x + 1) / 2 * r.width, r.top + (1 - v.y) / 2 * r.height]; };
+        c.ctx.modules.get('ui').api.setTool('road:street');
+        return { a: scr({ x: X - 32, z: Z }), b: scr({ x: X + 32, z: Z }), node: { x: X, z: Z + 3 }, edges: [...w.roads.edges.keys()] };
+      });
+      if (rt.err) check(false, `M: ${rt.err}`);
+      else {
+        const m = await dragTo(rt.a, rt.b);
+        await page.mouse.up();
+        const laid = await page.evaluate(async (had) => {
+          const c = window.__city, w = c.world;
+          await window.__pt.frames(4);
+          c.ctx.modules.get('ui').api.setTool(null);
+          return [...w.roads.edges.values()].filter((e) => !had.includes(e.id)).map((e) => [w.roads.nodes.get(e.a), w.roads.nodes.get(e.b)].map((n) => ({ x: n.x, z: n.z })));
+        }, rt.edges);
+        const ghostAtNode = m.path ? Math.min(...m.path.map((p) => off(p, rt.node))) : Infinity;
+        const throughNode = laid.length === 2 && laid.every((e) => e.some((n) => off(n, rt.node) < 0.5));
+        check(ghostOff(m) < 1 && ghostAtNode < 0.5, `M: the ghost bends through a street end 3 m off the drag line (nearest ghost point ${ghostAtNode.toFixed(1)} m from it)`);
+        check(throughNode, `M: and the street is built through it (${laid.length} new edges)`);
+      }
     }
 
     // G: zone 6 road-adjacent cells in the mature city

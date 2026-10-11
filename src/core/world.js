@@ -792,22 +792,10 @@ export class World {
       // only sees a crossing in another edge's interior, so a road laid exactly through the shared end node of
       // two edges (an avenue built in two pieces, then a street across the seam) used to pass through it with no
       // junction at all: two roads overlapping at grade, cars of one driving under the other's plate.
-      {
-        const routeSnap = snapNodes ? ROUTE_SNAP : NODE_SNAP;
-        for (const n of this.roads.nodes.values()) {
-          if (n === na || n === nb) continue;
-          const dx = nb.x - na.x, dz = nb.z - na.z, l2 = dx * dx + dz * dz;
-          if (!(l2 > 1e-12)) continue;
-          const t = ((n.x - na.x) * dx + (n.z - na.z) * dz) / l2;
-          if (t <= 1e-6 || t >= 1 - 1e-6) continue;
-          const off = pointSegDist(n.x, n.z, na.x, na.z, nb.x, nb.z);
-          if (off > routeSnap) continue;
-          // an alley end beside the route is not on it; and outside interactive drags a path never splits a street
-          if ((off > NODE_SNAP || !snapNodes) && this._pathOnlyNode(n)) continue;
-          if (!snapNodes && !n.edges.some((id) => { const e = this.roads.edges.get(id); return e && !e.bridge && e.kind !== 'path'; })) continue;
-          const prev = junctionT.get(n.id);
-          if (prev === undefined || t < prev) junctionT.set(n.id, t);
-        }
+      for (const { node: n, t } of this._routeNodes(na, nb, snapNodes)) {
+        if (n === na || n === nb) continue;
+        const prev = junctionT.get(n.id);
+        if (prev === undefined || t < prev) junctionT.set(n.id, t);
       }
     }
 
@@ -827,6 +815,40 @@ export class World {
       if (id && first === null) first = id;
     }
     return first;
+  }
+
+  /** The existing nodes a road from `pa` to `pb` is routed through: [{ node, t }], `t` the node's position along
+   * the segment (unsorted). Interactive drags (`snapNodes`) take any node within ROUTE_SNAP of the segment, every
+   * other caller only a vehicle node lying ON it (NODE_SNAP). Read-only: addRoad builds through these, and the
+   * tools' ghost previews them, so the two cannot disagree. */
+  _routeNodes(pa, pb, snapNodes) {
+    const out = [];
+    const dx = pb.x - pa.x, dz = pb.z - pa.z, l2 = dx * dx + dz * dz;
+    if (!(l2 > 1e-12)) return out;
+    const routeSnap = snapNodes ? ROUTE_SNAP : NODE_SNAP;
+    for (const n of this.roads.nodes.values()) {
+      const t = ((n.x - pa.x) * dx + (n.z - pa.z) * dz) / l2;
+      if (t <= 1e-6 || t >= 1 - 1e-6) continue;
+      const off = pointSegDist(n.x, n.z, pa.x, pa.z, pb.x, pb.z);
+      if (off > routeSnap) continue;
+      // an alley end beside the route is not on it; and outside interactive drags a path never splits a street
+      if ((off > NODE_SNAP || !snapNodes) && this._pathOnlyNode(n)) continue;
+      if (!snapNodes && !n.edges.some((id) => { const e = this.roads.edges.get(id); return e && !e.bridge && e.kind !== 'path'; })) continue;
+      out.push({ node: n, t });
+    }
+    return out;
+  }
+
+  /** Read-only preview of an interactive road drag: the centreline points [{ x, z }] addRoad(a, b, kind,
+   * { snapNodes: true }) would run through, `a` and `b` included. Paths and bridges are never routed through
+   * nodes, so they come back as the straight segment. */
+  previewRoadRoute(a, b, kind = 'street', { bridge = false } = {}) {
+    const pts = [{ x: a.x, z: a.z }];
+    if (kind !== 'path' && !bridge) {
+      for (const { node } of this._routeNodes(a, b, true).sort((p, q) => p.t - q.t)) pts.push({ x: node.x, z: node.z });
+    }
+    pts.push({ x: b.x, z: b.z });
+    return pts;
   }
 
   /** Single-edge add with exact-node endpoints only (pedestrian paths, and the pre-junction callers). */
