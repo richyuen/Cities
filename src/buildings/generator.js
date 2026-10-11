@@ -43,6 +43,17 @@ function plainBox(parts, mat, w, h, d, x, y, z) {
   parts.push({ mat, geom: g });
 }
 
+/** plainBox turned about its own centre before it is placed (radians; rolled about Z, tipped about X, then turned
+ *  about the vertical): braces, rails, struts. */
+function plainBoxR(parts, mat, w, h, d, x, y, z, rx = 0, ry = 0, rz = 0) {
+  const g = unitBoxClone(Math.max(0.02, w), Math.max(0.02, h), Math.max(0.02, d));
+  if (rz) g.rotateZ(rz);
+  if (rx) g.rotateX(rx);
+  if (ry) g.rotateY(ry);
+  g.translate(x, y, z);
+  parts.push({ mat, geom: g });
+}
+
 // RoundedBoxGeometry (bevelBox) is inherently non-indexed (it duplicates vertices per-face for correct rounded
 // normals - see three/addons/geometries/RoundedBoxGeometry.js). CylinderGeometry/ConeGeometry ARE indexed by
 // default, and BufferGeometryUtils.mergeGeometries refuses to merge a bucket that mixes indexed and
@@ -51,6 +62,13 @@ function plainBox(parts, mat, w, h, d, x, y, z) {
 function cylinder(parts, mat, rTop, rBot, h, segs, x, y, z) {
   const g = new THREE.CylinderGeometry(rTop, rBot, h, segs).toNonIndexed();
   g.translate(x, y + h / 2, z);
+  parts.push({ mat, geom: g });
+}
+
+/** A faceted ball (80 triangles), centred on (x, y, z). Icosahedron geometry is non-indexed already. */
+function ball(parts, mat, r, x, y, z) {
+  const g = new THREE.IcosahedronGeometry(r, 1);
+  g.translate(x, y, z);
   parts.push({ mat, geom: g });
 }
 
@@ -1484,83 +1502,221 @@ function generateIndustrial(ctx, b, rng, halfW, halfD, cx, cz, groundY) {
   };
 }
 
-// Civic power plant: a squat industrial hall with two cooling towers, a glowing smokestack, and a small
-// transformer yard. Fixed composition (ignores b.level — utility buildings never grow) styled off
-// generateIndustrial's corrugated-body look so it reads as "the same city's" architecture.
+const PP_BODY = ['sandBlue', 'tan', 'lightStoneGrey'];
+
+/** A tall glazed bay on a wall: dark frame, blue glass, and a rows×cols grid of always-lit cool panes.
+ *  (x, y, z) is the bay's centre on the wall plane; `axis`/`sign` give the wall's outward normal. Layers sit
+ *  0.11 / 0.16 / 0.19 proud of the wall. */
+function tallWindow(parts, axis, sign, x, y, z, w, h, rows, cols) {
+  const at = (proud, t) => sign * (proud - t / 2);
+  if (axis === 'z') {
+    plainBox(parts, 'darkStoneGrey', w + 0.3, h + 0.3, 0.12, x, y, z + at(0.11, 0.12));
+    plainBox(parts, 'darkAzur', w, h, 0.06, x, y, z + at(0.16, 0.06));
+    litPaneGrid(parts, 'winCool', w - 0.3, h - 0.3, rows, cols, x, y, z + sign * 0.18, 'z');
+  } else {
+    plainBox(parts, 'darkStoneGrey', 0.12, h + 0.3, w + 0.3, x + at(0.11, 0.12), y, z);
+    plainBox(parts, 'darkAzur', 0.06, h, w, x + at(0.16, 0.06), y, z);
+    litPaneGrid(parts, 'winCool', w - 0.3, h - 0.3, rows, cols, x + sign * 0.18, y, z, 'x');
+  }
+}
+
+// Civic power plant on a 3x3 lot, split three ways so each piece reads from the street: a glazed turbine hall
+// with a red-and-white stack on one half, one hyperboloid cooling tower standing on the ground beside it with a
+// brick steam cloud over its mouth, and a fenced switchyard (transformers, gantry, pylon) at the front. Fixed
+// composition (ignores b.level — utility buildings never grow); the seed picks colours, tower height and which
+// side the hall is on. `height` is the stack's beacon, not the steam, and stays under twice the roof deck's
+// height so the deck studs keep anchoring roof flames (fire.js).
 function generatePowerPlant(ctx, b, rng, halfW, halfD, cx, cz, groundY) {
   const parts = [];
   const studs = [];
-  const bodyA = pick(rng, IND_BODY_A);
-  const bodyB = pick(rng, IND_BODY_B);
+  const body = pick(rng, PP_BODY);
   const accent = pick(rng, IND_ACCENT);
-  const storyH = 9.5;
-  const stripH = storyH / 7;
-  for (let i = 0; i < 7; i++) {
-    box(ctx, parts, i % 2 === 0 ? bodyA : bodyB, halfW * 2, stripH * 1.02, halfD * 2, cx, groundY + i * stripH, cz, 0.02);
-  }
-  interiorLiner(parts, bodyA, halfW * 2, storyH, halfD * 2, cx, groundY, cz);
-  plinth(ctx, parts, 'darkStoneGrey', cx, cz, halfW, halfD, groundY, 0.3, 0.06);
-  const parapetH = 0.3;
-  const roofInfo = {};
-  const roofTop = flatRoof(ctx, parts, studs, 'darkStoneGrey', cx, cz, halfW, halfD, groundY + storyH, { capH: 0.35, parapetH, out: roofInfo });
-  const deckY = roofTop - parapetH;
+  const m = rng.chance(0.5) ? 1 : -1;
+  const X = (u) => cx + m * u;
+  const towerH = 16.5 + rng.range(0, 2);
+  const padY = groundY + 0.2;
 
-  const towerR = Math.min(halfW, halfD) * 0.4;
-  const towerH = 9 + rng.range(0, 2);
-  const towers = [{ x: cx - halfW * 0.5, z: cz - halfD * 0.5 }, { x: cx + halfW * 0.45, z: cz + halfD * 0.4 }];
-  for (const t of towers) {
-    cylinder(parts, 'lightStoneGrey', towerR * 0.78, towerR, towerH, 14, t.x, deckY, t.z);
-    cylinder(parts, 'mediumStoneGrey', towerR * 0.6, towerR * 0.8, towerH * 0.1, 14, t.x, deckY + towerH, t.z);
-    // studded round cap plate (a real Blox element on top of the cooling tower)
-    for (const ox of [-0.25, 0.25]) for (const oz of [-0.25, 0.25]) {
-      studs.push({ x: t.x + ox, y: deckY + towerH + towerH * 0.1, z: t.z + oz, color: 'mediumStoneGrey' });
-    }
+  // site slab: one concrete pad under everything (also takes up a sloping lot)
+  plainBox(parts, 'mediumStoneGrey', halfW * 2 - 0.1, 0.8, halfD * 2 - 0.1, cx, groundY - 0.2, cz);
+  studGrid(studs, X(5.95), cz + 6.1, 5.05, 4.9, padY, 'mediumStoneGrey', { max: 200 });
+  studGrid(studs, X(-6), cz + 8.5, 5.25, 2.75, padY, 'mediumStoneGrey', { max: 120 });
+
+  // turbine hall
+  const hx = X(-6), hz = cz - 2.75, hHW = 5.25, hHD = 8.5, storyH = 10.5;
+  const out = -m; // the hall's long outer wall faces away from the tower
+  box(ctx, parts, body, hHW * 2, storyH, hHD * 2, hx, groundY, hz, 0.05);
+  interiorLiner(parts, body, hHW * 2, storyH, hHD * 2, hx, groundY, hz);
+  plinth(ctx, parts, 'darkStoneGrey', hx, hz, hHW, hHD, groundY, 0.6, 0.08);
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    plainBox(parts, 'darkStoneGrey', 0.6, storyH - 0.05, 0.6, hx + sx * (hHW - 0.18), groundY + (storyH - 0.05) / 2, hz + sz * (hHD - 0.18));
   }
-  const chimneyH = 7.5 + rng.range(0, 2), chx = cx + halfW * 0.1, chz = cz - halfD * 0.1;
-  brickStack(ctx, parts, studs, 'darkStoneGrey', chx, chz, 1.5, 1.2, deckY, chimneyH);
-  if (rng.chance(0.7)) plainBox(parts, 'chimneyGlow', 0.7, 0.28, 0.7, chx, deckY + chimneyH, chz);
-  plainBox(parts, 'beacon', 0.3, 0.3, 0.3, chx, deckY + chimneyH + 0.35, chz);
-  // transformer yard along the +z edge
-  for (let k = -1; k <= 1; k += 2) plainBox(parts, accent, 1.1, 1.7, 1.1, cx + k * halfW * 0.7, groundY, cz + halfD - 1.0);
-  // cycle-3 roof clutter, kept off the cooling towers and the smokestack
+  for (const dz of [-4.8, -1.6, 1.6, 4.8]) {
+    plainBox(parts, 'darkStoneGrey', 0.12, storyH - 0.65, 0.35, hx + out * (hHW + 0.01), groundY + 0.6 + (storyH - 0.65) / 2, hz + dz);
+  }
+  courseBands(parts, accent, hx, hz, hHW, hHD, groundY + 8.4, groundY + storyH, { pitch: 1.2, proud: 0.09, bandH: 0.3 });
+  const roofInfo = {};
+  flatRoof(ctx, parts, studs, 'darkStoneGrey', hx, hz, hHW, hHD, groundY + storyH, { capH: 0.35, parapetH: 0.3, out: roofInfo });
+  const deckY = roofInfo.deckY;
+  // tall glazing on the outer wall, the front and the rear (none toward the tower: fire leans flames away from
+  // the lot centre, which on that wall would be into the hall)
+  for (const dz of [-6.4, -3.2, 0, 3.2, 6.4]) tallWindow(parts, 'x', out, hx + out * hHW, groundY + 6, hz + dz, 1.4, 5, 4, 2);
+  for (const dx of [-3.6, 3.6]) tallWindow(parts, 'z', 1, hx + dx, groundY + 6, hz + hHD, 1.4, 5, 4, 2);
+  for (const dx of [-2.6, 2.6]) tallWindow(parts, 'z', -1, hx + dx, groundY + 6, hz - hHD, 1.4, 5, 4, 2);
+  // roller door under a hazard header, with a lit bolt sign above (front wall; layers 0.14 .. 0.205 proud)
+  const zf = hz + hHD;
+  plainBox(parts, 'darkStoneGrey', 5, 4.9, 0.14, hx, groundY + 2.45, zf + 0.07);
+  plainBox(parts, 'lightStoneGrey', 4.4, 4.6, 0.06, hx, groundY + 2.5, zf + 0.15);
+  for (const y of [1.15, 2.05, 2.95, 3.85]) plainBox(parts, 'mediumStoneGrey', 4.4, 0.07, 0.03, hx, groundY + y, zf + 0.19);
+  plainBox(parts, 'brightYellow', 5, 0.35, 0.05, hx, groundY + 5.1, zf + 0.145);
+  for (const dx of [-2, -1, 0, 1, 2]) plainBox(parts, 'black', 0.35, 0.35, 0.05, hx + dx, groundY + 5.1, zf + 0.165);
+  const signY = groundY + 7.6;
+  plainBox(parts, 'brightYellow', 2.9, 3.5, 0.1, hx, signY, zf + 0.03);
+  plainBox(parts, 'signGlow', 2.4, 3, 0.06, hx, signY, zf + 0.09);
+  plainBoxR(parts, 'black', 0.5, 1.55, 0.04, hx + 0.12, signY + 0.66, zf + 0.12, 0, 0, -0.55);
+  plainBox(parts, 'black', 1.3, 0.4, 0.04, hx, signY, zf + 0.14);
+  plainBoxR(parts, 'black', 0.5, 1.55, 0.04, hx - 0.12, signY - 0.66, zf + 0.16, 0, 0, -0.55);
+  // glazed roof monitor along the ridge
+  const mz = hz + 1.5;
+  box(ctx, parts, body, 3.2, 1.6, 11, hx, deckY, mz, 0.04);
+  plainBox(parts, 'darkStoneGrey', 3.5, 0.2, 11.3, hx, deckY + 1.7, mz);
+  for (const sx of [-1, 1]) {
+    plainBox(parts, 'darkAzur', 0.05, 0.9, 10.2, hx + sx * 1.61, deckY + 0.95, mz);
+    litPaneGrid(parts, 'winCool', 9.8, 0.7, 1, 5, hx + sx * 1.65, deckY + 0.95, mz, 'x');
+  }
+  studGrid(studs, hx, mz, 1.75, 5.65, deckY + 1.8, 'darkStoneGrey', { max: 80 });
+  // red-and-white stack at the rear of the roof
+  const sz0 = hz - 6.2;
+  plainBox(parts, 'darkStoneGrey', 2.2, 1, 2.2, hx, deckY + 0.5, sz0);
+  for (let k = 0; k < 6; k++) {
+    cylinder(parts, k % 2 === 0 ? 'brightRed' : 'white', 1 - 0.05 * (k + 1), 1 - 0.05 * k, 1.4, 10, hx, deckY + 1 + 1.4 * k, sz0);
+  }
+  plainBox(parts, 'chimneyGlow', 0.7, 0.2, 0.7, hx, deckY + 9.5, sz0);
+  plainBox(parts, 'beacon', 0.3, 0.3, 0.3, hx, deckY + 9.77, sz0);
   const clutter = roofClutter(ctx, parts, studs, rng, {
-    cx, cz, deckY, halfW: roofInfo.innerHalfW, halfD: roofInfo.innerHalfD, menu: LOW_CLUTTER, maxItems: 2,
-    avoid: [{ x: towers[0].x, z: towers[0].z, r: towerR + 0.5 }, { x: towers[1].x, z: towers[1].z, r: towerR + 0.5 }, { x: chx, z: chz, r: 1.3 }],
+    cx: hx, cz: hz, deckY, halfW: roofInfo.innerHalfW, halfD: roofInfo.innerHalfD, menu: ['ac', 'tank', 'bulkhead'], maxItems: 2,
+    avoid: [{ x: hx, z: mz - 3.7, r: 2 }, { x: hx, z: mz, r: 2 }, { x: hx, z: mz + 3.7, r: 2 }, { x: hx, z: sz0, r: 1.5 }],
   });
+
+  // cooling tower: stacked frusta pinched to a throat, on a ring of legs around a dark core
+  const tx = X(5.75), tz = cz - 5.5, H = towerH;
+  cylinder(parts, 'black', 4.3, 4.3, 1.1, 16, tx, groundY, tz);
+  for (let k = 0; k < 12; k++) {
+    const a = (15 + 30 * k) * Math.PI / 180;
+    plainBoxR(parts, 'lightStoneGrey', 0.5, 0.95, 0.5, tx + Math.sin(a) * 4.95, groundY + 0.675, tz + Math.cos(a) * 4.95, 0, a, 0);
+  }
+  const rings = [[1.1, 5.25], [0.27 * H, 4.35], [0.52 * H, 3.75], [0.74 * H, 3.55], [0.91 * H, 3.8], [H, 4.1]];
+  for (let k = 0; k < 5; k++) {
+    const [y0, r0] = rings[k], [y1, r1] = rings[k + 1];
+    cylinder(parts, k === 4 ? accent : 'lightStoneGrey', r1, r0, y1 - y0, 16, tx, groundY + y0, tz);
+  }
+  cylinder(parts, 'black', 3.6, 3.6, 0.07, 16, tx, groundY + H - 0.04, tz);
+  // steam: a cloud of white balls billowing out of the mouth, smaller and further downwind as it rises
+  for (const [r, dx, dy, dz] of [[2.9, 0, 0.9, 0], [2.3, 1.6, 2.3, 0.6], [2, -0.9, 2.7, -0.9], [1.9, 0.9, 4.1, -0.3], [1.4, 2.5, 4.8, 0.6], [1, 3.4, 5.9, 0.2]]) {
+    ball(parts, 'white', r, tx + dx, groundY + H + dy, tz + dz);
+  }
+  for (const dz of [-1.2, 1.2]) plainBox(parts, 'mediumStoneGrey', 2.2, 0.5, 0.5, X(0.3), groundY + 2.2, tz + dz);
+
+  // switchyard: three transformers under a gantry, a pylon behind, fenced on the open sides
+  const gz = cz + 4.5;
+  for (const u of [2.75, 5.95, 9.15]) {
+    const x = X(u), z = cz + 7.3;
+    plainBox(parts, 'lightStoneGrey', 2, 0.25, 1.5, x, padY + 0.125, z);
+    plainBox(parts, 'sandGreen', 1.5, 1.6, 1, x, padY + 1.05, z);
+    plainBox(parts, 'brightYellow', 1.56, 0.2, 1.06, x, padY + 0.45, z);
+    for (const ox of [-0.55, -0.2, 0.2, 0.55]) for (const oz of [-0.62, 0.62]) {
+      plainBox(parts, 'darkStoneGrey', 0.08, 1.1, 0.28, x + ox, padY + 1.2, z + oz);
+    }
+    plainBox(parts, 'mediumStoneGrey', 1, 0.3, 0.35, x, padY + 2, z - 0.25);
+    for (const ox of [-0.45, 0, 0.45]) plainBox(parts, 'white', 0.16, 0.7, 0.16, x + ox, padY + 2.2, z + 0.2);
+    for (const ox of [-0.5, 0.5]) plainBox(parts, 'white', 0.14, 0.8, 0.14, x + ox, padY + 5.6, gz);
+  }
+  for (const u of [1.75, 5.95, 10.15]) plainBox(parts, 'mediumStoneGrey', 0.28, 6, 0.28, X(u), padY + 3, gz);
+  plainBox(parts, 'mediumStoneGrey', 8.9, 0.28, 0.28, X(5.95), padY + 6.14, gz);
+  plainBox(parts, 'mediumStoneGrey', 8.4, 0.2, 0.2, X(5.95), padY + 4.2, gz);
+  for (const u of [3.85, 8.05]) {
+    plainBoxR(parts, 'mediumStoneGrey', 0.12, 5.6, 0.1, X(u), padY + 2.2, gz - 0.06, 0, 0, 0.85);
+    plainBoxR(parts, 'mediumStoneGrey', 0.12, 5.6, 0.1, X(u), padY + 2.2, gz + 0.06, 0, 0, -0.85);
+  }
+  const px = X(9.3), pz = cz + 2.4;
+  for (const s of [-1, 1]) plainBoxR(parts, 'mediumStoneGrey', 0.2, 9.05, 0.2, px + s * 0.675, padY + 4.5, pz, 0, 0, s * 0.094);
+  for (const [w, y] of [[1.9, 2.5], [1.45, 5], [3, 6.6], [2.4, 8]]) plainBox(parts, 'mediumStoneGrey', w, 0.16, 0.16, px, padY + y, pz);
+  plainBox(parts, 'mediumStoneGrey', 0.7, 0.2, 0.3, px, padY + 9, pz);
+  plainBoxR(parts, 'mediumStoneGrey', 0.1, 2.9, 0.08, px, padY + 3.75, pz - 0.05, 0, 0, 0.55);
+  plainBoxR(parts, 'mediumStoneGrey', 0.1, 2.9, 0.08, px, padY + 3.75, pz + 0.05, 0, 0, -0.55);
+  for (const [ox, y] of [[1.4, 6.22], [1.1, 7.62]]) for (const s of [-1, 1]) plainBox(parts, 'white', 0.14, 0.6, 0.14, px + s * ox, padY + y, pz);
+  const fz = cz + 11, fxOut = X(11), fxIn = X(0.9);
+  for (const u of [0.9, 3.4, 5.95, 8.5, 11]) plainBox(parts, 'darkStoneGrey', 0.14, 1.3, 0.14, X(u), padY + 0.65, fz);
+  for (const dz of [1.2, 4.5, 7.75]) plainBox(parts, 'darkStoneGrey', 0.14, 1.3, 0.14, fxOut, padY + 0.65, cz + dz);
+  for (const dz of [6, 8.5]) plainBox(parts, 'darkStoneGrey', 0.14, 1.3, 0.14, fxIn, padY + 0.65, cz + dz);
+  for (const y of [0.7, 1.25]) {
+    plainBox(parts, 'darkStoneGrey', 10.1, 0.07, 0.07, X(5.95), padY + y, fz);
+    plainBox(parts, 'darkStoneGrey', 0.07, 0.07, 9.8, fxOut, padY + y, cz + 6.1);
+    plainBox(parts, 'darkStoneGrey', 0.07, 0.07, 5, fxIn, padY + y, cz + 8.5);
+  }
+  for (const u of [4.7, 7.2]) {
+    plainBox(parts, 'brightYellow', 0.6, 0.5, 0.04, X(u), padY + 0.97, fz + 0.07);
+    plainBox(parts, 'black', 0.12, 0.3, 0.02, X(u), padY + 0.97, fz + 0.1);
+  }
+  for (const s of [-1, 1]) {
+    plainBox(parts, 'brightYellow', 0.25, 0.9, 0.25, hx + s * 2.9, padY + 0.45, cz + 6.6);
+    plainBox(parts, 'black', 0.27, 0.15, 0.27, hx + s * 2.9, padY + 0.6, cz + 6.6);
+  }
 
   return {
     parts, studs,
-    height: storyH + 0.35 + towerH, kind: 'power_plant',
-    features: { clutter: clutter.placed },
+    height: storyH + 0.35 + 9.4 + 0.55, kind: 'power_plant',
+    features: { clutter: clutter.placed, mirror: m },
   };
 }
 
-// Civic water tower: a tank raised on four lattice legs with cross-bracing. Fixed composition, small footprint.
+// Civic water tower: a banded tank on four braced legs, with a catwalk and ladder, a riser pipe down the middle
+// and a pump house on a concrete pad at its foot. Fixed composition, small footprint.
 function generateWaterTower(ctx, b, rng, halfW, halfD, cx, cz, groundY) {
   const parts = [];
   const studs = [];
   const accent = pick(rng, IND_ACCENT);
   const legR = 0.32, legH = 8.5 + rng.range(0, 1.5);
   const inset = Math.min(halfW, halfD) * 0.55;
+  const padY = groundY + 0.15;
   const legs = [
     { x: cx - inset, z: cz - inset }, { x: cx + inset, z: cz - inset },
-    { x: cx - inset, z: cz + inset }, { x: cx + inset, z: cz + inset },
+    { x: cx + inset, z: cz + inset }, { x: cx - inset, z: cz + inset },
   ];
-  for (const p of legs) cylinder(parts, 'darkStoneGrey', legR, legR * 1.35, legH, 8, p.x, groundY, p.z);
-  for (const yFrac of [0.35, 0.72]) {
-    const y = groundY + legH * yFrac;
-    for (let k = 0; k < 4; k++) {
-      const a = legs[k], bp = legs[(k + 1) % 4];
-      const dx = bp.x - a.x, dz = bp.z - a.z, len = Math.hypot(dx, dz);
-      const g = ctx.materials.bevelBox(Math.max(0.3, quant(len)), 0.15, 0.15, 0.02).clone();
-      g.rotateY(-Math.atan2(dz, dx));
-      g.translate((a.x + bp.x) / 2, y, (a.z + bp.z) / 2);
-      parts.push({ mat: 'darkStoneGrey', geom: g });
+  plainBox(parts, 'mediumStoneGrey', 9.6, 0.5, 9.6, cx, groundY - 0.1, cz);
+  studGrid(studs, cx, cz, 4.8, 4.8, padY, 'mediumStoneGrey', { max: 160 });
+  const tankR = Math.min(halfW, halfD) * 0.85, tankH = tankR * 1.3, tankY = groundY + legH;
+  const bowlH = tankH * 0.22, drumY = tankY + bowlH;
+  // the legs run up into the bowl, which narrows below them
+  for (const p of legs) {
+    plainBox(parts, 'lightStoneGrey', 1, 0.4, 1, p.x, groundY + 0.2, p.z);
+    cylinder(parts, 'darkStoneGrey', legR, legR * 1.35, legH + bowlH * 0.8, 8, p.x, groundY, p.z);
+  }
+  // two rings of ties with a zigzag of diagonals below and between them
+  const ringY = [0.4, legH * 0.35, legH * 0.72];
+  for (let k = 0; k < 4; k++) {
+    const a = legs[k], bp = legs[(k + 1) % 4];
+    const dx = bp.x - a.x, dz = bp.z - a.z, len = Math.hypot(dx, dz), turn = -Math.atan2(dz, dx);
+    const mx = (a.x + bp.x) / 2, mzz = (a.z + bp.z) / 2;
+    for (let r = 1; r < 3; r++) plainBoxR(parts, 'darkStoneGrey', len, 0.15, 0.15, mx, groundY + ringY[r], mzz, 0, turn, 0);
+    for (let r = 0; r < 2; r++) {
+      const dy = ringY[r + 1] - ringY[r], rise = Math.atan2(dy, len) * (r === 0 ? 1 : -1);
+      plainBoxR(parts, 'darkStoneGrey', Math.hypot(len, dy), 0.1, 0.1, mx, groundY + (ringY[r] + ringY[r + 1]) / 2, mzz, 0, turn, rise);
     }
   }
-  const tankR = Math.min(halfW, halfD) * 0.85, tankH = tankR * 1.3, tankY = groundY + legH;
-  cylinder(parts, accent, tankR * 0.3, tankR, tankH * 0.22, 16, cx, tankY, cz);
-  cylinder(parts, accent, tankR, tankR, tankH * 0.6, 16, cx, tankY + tankH * 0.22, cz);
+  // riser pipe and pump house
+  cylinder(parts, 'mediumStoneGrey', 0.35, 0.35, legH, 8, cx, groundY, cz);
+  for (const f of [0.35, 0.72]) plainBox(parts, 'darkStoneGrey', 0.9, 0.15, 0.9, cx, groundY + legH * f, cz);
+  const hx = cx + 1.9;
+  box(ctx, parts, 'tan', 3.2, 2.4, 2.6, hx, padY, cz, 0.04);
+  plainBox(parts, accent, 3.5, 0.2, 2.9, hx, padY + 2.5, cz);
+  plainBox(parts, 'darkStoneGrey', 0.9, 1.8, 0.06, hx - 0.7, padY + 0.9, cz + 1.32);
+  plainBox(parts, 'white', 1.1, 0.9, 0.08, hx + 0.7, padY + 1.4, cz + 1.33);
+  plainBox(parts, 'transBlue', 0.9, 0.7, 0.04, hx + 0.7, padY + 1.4, cz + 1.37);
+  plainBox(parts, 'winWarm', 0.6, 0.45, 0.02, hx + 0.7, padY + 1.4, cz + 1.4);
+  // tank: bowl, banded drum, conical lid
+  cylinder(parts, accent, tankR, tankR * 0.45, bowlH, 16, cx, tankY, cz);
+  cylinder(parts, accent, tankR, tankR, tankH * 0.6, 16, cx, drumY, cz);
+  cylinder(parts, 'white', tankR + 0.03, tankR + 0.03, 0.9, 16, cx, drumY + tankH * 0.3 - 0.45, cz);
   cylinder(parts, 'lightStoneGrey', tankR * 0.05, tankR * 0.92, tankH * 0.18, 16, cx, tankY + tankH * 0.82, cz);
   plainBox(parts, 'lightStoneGrey', 0.5, 0.55, 0.5, cx, tankY + tankH, cz);
   // studded cap plate (2x2 Blox studs) instead of a bare beacon-only cap
@@ -1568,6 +1724,24 @@ function generateWaterTower(ctx, b, rng, halfW, halfD, cx, cz, groundY) {
     studs.push({ x: cx + ox, y: tankY + tankH + 0.55, z: cz + oz, color: 'lightStoneGrey' });
   }
   plainBox(parts, 'beacon', 0.22, 0.22, 0.22, cx, tankY + tankH + 0.55, cz);
+  // catwalk round the foot of the drum, railed, with a ladder leaning up to it from between the front legs
+  const walkR = tankR + 0.6, railY = drumY + 0.14;
+  cylinder(parts, 'darkStoneGrey', tankR + 0.7, tankR + 0.7, 0.14, 16, cx, drumY, cz);
+  for (let k = 0; k < 16; k++) {
+    const a = k * Math.PI / 8, mid = a + Math.PI / 16, mr = walkR * Math.cos(Math.PI / 16);
+    plainBox(parts, 'darkStoneGrey', 0.08, 0.9, 0.08, cx + Math.sin(a) * walkR, railY + 0.45, cz + Math.cos(a) * walkR);
+    plainBoxR(parts, 'darkStoneGrey', 2 * walkR * Math.sin(Math.PI / 16), 0.07, 0.07, cx + Math.sin(mid) * mr, railY + 0.88, cz + Math.cos(mid) * mr, 0, mid, 0);
+  }
+  const footZ = cz + inset, topZ = cz + tankR + 0.75, run = topZ - footZ, climb = drumY - padY;
+  const ladderLen = Math.hypot(run, climb), lean = Math.atan2(run, climb);
+  for (const ox of [-0.25, 0.25]) {
+    plainBoxR(parts, 'lightStoneGrey', 0.07, ladderLen, 0.07, cx + ox, padY + climb / 2, footZ + run / 2, lean, 0, 0);
+  }
+  const rungs = Math.floor(ladderLen / 0.6);
+  for (let k = 1; k <= rungs; k++) {
+    const t = k / (rungs + 1);
+    plainBox(parts, 'lightStoneGrey', 0.5, 0.05, 0.05, cx, padY + climb * t, footZ + run * t);
+  }
 
   return {
     parts, studs,
@@ -1575,8 +1749,9 @@ function generateWaterTower(ctx, b, rng, halfW, halfD, cx, cz, groundY) {
   };
 }
 
-// Civic fire department: a low red garage hall with a white door stripe, a small lookout tower, and a beacon.
-// Fixed composition (ignores b.level — utility buildings never grow), small 2x2-cell footprint.
+// Civic fire department: a red engine house with three bay doors under a lit sign band, upper windows on the other
+// walls, and a square hose tower with a beacon. Fixed composition (ignores b.level — utility buildings never grow),
+// small 2x2-cell footprint.
 function generateFireDepartment(ctx, b, rng, halfW, halfD, cx, cz, groundY) {
   const parts = [];
   const studs = [];
@@ -1587,31 +1762,52 @@ function generateFireDepartment(ctx, b, rng, halfW, halfD, cx, cz, groundY) {
   courseBands(parts, 'white', cx, cz, halfW, halfD, groundY + 0.35, groundY + storyH, { pitch: 1.2 });
   const roofInfo = {};
   const roofTop = flatRoof(ctx, parts, studs, 'darkStoneGrey', cx, cz, halfW, halfD, groundY + storyH, { capH: 0.3, parapetH: 0.35, out: roofInfo });
-  // garage door stripe on the +z face (front face 2 cm proud of the wall - flush leaves z-fight)
-  plainBox(parts, 'white', halfW * 1.1, storyH * 0.55, 0.12, cx, groundY + storyH * 0.32, cz + halfD - 0.04);
-  // lookout tower + beacon, offset toward a back corner
-  const towerR = Math.min(halfW, halfD) * 0.42;
-  const towerH = 3.5 + rng.range(0, 1);
-  const tx = cx - halfW * 0.45, tz = cz - halfD * 0.45;
-  cylinder(parts, 'white', towerR, towerR * 1.05, towerH, 10, tx, roofTop, tz);
-  cylinder(parts, 'brightRed', towerR * 0.6, towerR * 0.8, 0.35, 10, tx, roofTop + towerH, tz);
-  studs.push({ x: tx, y: roofTop + towerH + 0.35, z: tz, color: 'brightRed' });
-  plainBox(parts, 'beacon', 0.32, 0.32, 0.32, tx, roofTop + towerH + 0.5, tz);
+  // three bay doors on the +z face, each a panelled leaf with a window strip (layers 0.12 .. 0.19 proud)
+  const zf = cz + halfD;
+  for (const t of [-4.5, 0, 4.5]) {
+    plainBox(parts, 'white', 3.8, 4.2, 0.12, cx + t, groundY + 2.1, zf + 0.06);
+    plainBox(parts, 'lightStoneGrey', 3.4, 3.9, 0.06, cx + t, groundY + 1.95, zf + 0.13);
+    for (const y of [0.8, 1.6, 2.4]) plainBox(parts, 'mediumStoneGrey', 3.4, 0.06, 0.03, cx + t, groundY + y, zf + 0.165);
+    plainBox(parts, 'transBlue', 3, 0.6, 0.03, cx + t, groundY + 3.2, zf + 0.175);
+  }
+  // lit sign band over the doors with a red badge and dashes
+  plainBox(parts, 'signGlow', 11, 0.7, 0.1, cx, groundY + 4.85, zf + 0.08);
+  plainBox(parts, 'brightRed', 0.9, 0.5, 0.04, cx, groundY + 4.85, zf + 0.15);
+  for (const t of [-4, -2.2, 2.2, 4]) plainBox(parts, 'brightRed', 0.8, 0.2, 0.03, cx + t, groundY + 4.85, zf + 0.145);
+  // upper windows on the side and rear walls
+  const upper = { halfW, halfD, floors: [{ y0: 3.5, h: 2.2 }], pitch: 3.2, frameMat: 'white', glassMat: 'darkAzur', litFrac: 0.7, warmFrac: 0.8 };
+  facade(ctx, parts, rng, cx, cz, groundY, { axis: 'x', sign: 1, ...upper });
+  facade(ctx, parts, rng, cx, cz, groundY, { axis: 'x', sign: -1, ...upper });
+  facade(ctx, parts, rng, cx, cz, groundY, { axis: 'z', sign: -1, ...upper });
+  // hose tower + beacon, offset toward a back corner
+  const deckY = roofInfo.deckY;
+  const towerH = 3.8 + rng.range(0, 0.8);
+  const tx = cx - halfW * 0.55, tz = cz - halfD * 0.55;
+  box(ctx, parts, 'brightRed', 2.6, towerH, 2.6, tx, deckY, tz, 0.04);
+  for (const f of [0.22, 0.48]) plainBox(parts, 'white', 2.7, 0.25, 2.7, tx, deckY + towerH * f, tz);
+  for (const s of [-1, 1]) {
+    plainBox(parts, 'darkStoneGrey', 1.4, 0.9, 0.05, tx, deckY + towerH - 0.8, tz + s * 1.32);
+    plainBox(parts, 'darkStoneGrey', 0.05, 0.9, 1.4, tx + s * 1.32, deckY + towerH - 0.8, tz);
+  }
+  plainBox(parts, 'darkStoneGrey', 3, 0.25, 3, tx, deckY + towerH + 0.125, tz);
+  studGrid(studs, tx, tz, 1.5, 1.5, deckY + towerH + 0.25, 'darkStoneGrey', { inset: 0.3, align: 'center', max: 16 });
+  plainBox(parts, 'beacon', 0.32, 0.32, 0.32, tx, deckY + towerH + 0.41, tz);
   // cycle-3 roof clutter on the free deck
   const clutter = roofClutter(ctx, parts, studs, rng, {
-    cx, cz, deckY: roofInfo.deckY, halfW: roofInfo.innerHalfW, halfD: roofInfo.innerHalfD,
-    menu: LOW_CLUTTER, maxItems: 3, avoid: [{ x: tx, z: tz, r: towerR + 0.4 }],
+    cx, cz, deckY, halfW: roofInfo.innerHalfW, halfD: roofInfo.innerHalfD,
+    menu: LOW_CLUTTER, maxItems: 3, avoid: [{ x: tx, z: tz, r: 1.8 }],
   });
 
   return {
     parts, studs,
-    height: storyH + 0.65 + towerH + 0.35, kind: 'fire_department',
+    height: roofTop - 0.35 - groundY + towerH + 0.57, kind: 'fire_department',
     features: { clutter: clutter.placed },
   };
 }
 
-// Civic police station: a low dark-blue precinct hall with a white band, a glazed front desk bay, a roof sign and
-// a blue beacon. Fixed composition (ignores b.level — utility buildings never grow), small 2x2-cell footprint.
+// Civic police station: a blue precinct hall with a white band, a glazed entrance under a canopy with blue lamps,
+// windows on every wall, a garage door, a lit sign board on the front parapet and a blue beacon. Fixed composition
+// (ignores b.level — utility buildings never grow), small 2x2-cell footprint.
 function generatePoliceStation(ctx, b, rng, halfW, halfD, cx, cz, groundY) {
   const parts = [];
   const studs = [];
@@ -1623,21 +1819,63 @@ function generatePoliceStation(ctx, b, rng, halfW, halfD, cx, cz, groundY) {
   box(ctx, parts, 'white', halfW * 2 * 1.02, 1.1, halfD * 2 * 1.02, cx, groundY + storyH - 0.9, cz, 0.03);
   const roofInfo = {};
   const roofTop = flatRoof(ctx, parts, studs, 'white', cx, cz, halfW, halfD, groundY + storyH, { capH: 0.3, parapetH: 0.35, out: roofInfo });
-  // glazed entrance bay on the +z face, with a white desk stripe behind it (stripe front 2 cm proud of
-  // the wall - flush leaves z-fight)
-  plainBox(parts, 'white', halfW * 1.15, storyH * 0.5, 0.12, cx, groundY + storyH * 0.3, cz + halfD - 0.04);
-  plainBox(parts, 'transBlue', halfW * 1.05, storyH * 0.42, 0.06, cx, groundY + storyH * 0.3, cz + halfD - 0.02);
-  // roof sign (white board + blue badge block) and a blue beacon on a short mast, toward a back corner
-  const sx = cx + halfW * 0.35, sz = cz - halfD * 0.3;
-  plainBox(parts, 'white', 2.2, 1.1, 0.22, sx, roofTop + 0.55, sz);
-  plainBox(parts, 'brightBlue', 0.7, 0.7, 0.1, sx, roofTop + 0.55, sz + 0.16);
+  // entrance on the +z face: white portal, glazed doors with mullions, two steps, a canopy on posts and a blue
+  // lamp either side (layers 0.10 .. 0.24 proud; nothing reaches more than 0.7 m past the wall)
+  const zf = cz + halfD;
+  plainBox(parts, 'white', 3.8, 3.4, 0.1, cx, groundY + 1.7, zf + 0.05);
+  plainBox(parts, 'darkStoneGrey', 3, 3, 0.04, cx, groundY + 1.5, zf + 0.1);
+  plainBox(parts, 'transBlue', 2.6, 2.7, 0.05, cx, groundY + 1.5, zf + 0.165);
+  for (const t of [-0.43, 0.43]) plainBox(parts, 'white', 0.1, 2.7, 0.05, cx + t, groundY + 1.5, zf + 0.215);
+  plainBox(parts, 'white', 2.6, 0.1, 0.05, cx, groundY + 2.25, zf + 0.215);
+  plainBox(parts, 'lightStoneGrey', 4.4, 0.17, 0.65, cx, groundY + 0.085, zf + 0.325);
+  plainBox(parts, 'lightStoneGrey', 4, 0.17, 0.35, cx, groundY + 0.255, zf + 0.175);
+  plainBox(parts, 'white', 4.6, 0.2, 0.7, cx, groundY + 3.5, zf + 0.35);
+  for (const s of [-1, 1]) {
+    plainBox(parts, 'lightStoneGrey', 0.12, 3.23, 0.12, cx + s * 2.1, groundY + 1.785, zf + 0.58);
+    plainBox(parts, 'beaconBlue', 0.22, 0.22, 0.22, cx + s * 2.55, groundY + 2.9, zf + 0.11);
+  }
+  // windows: two rows on the side and rear walls and on the front left of the entrance; the front right keeps
+  // only the upper row, above a garage door
+  const floors = [{ y0: 0.9, h: 2.2 }, { y0: 3.3, h: 2 }];
+  const win = { halfD, frameMat: 'white', glassMat: 'darkAzur', warmFrac: 0.3 };
+  facade(ctx, parts, rng, cx, cz, groundY, { axis: 'x', sign: 1, halfW, floors, pitch: 2.9, litFrac: 0.6, ...win });
+  facade(ctx, parts, rng, cx, cz, groundY, { axis: 'x', sign: -1, halfW, floors, pitch: 2.9, litFrac: 0.6, ...win });
+  facade(ctx, parts, rng, cx, cz, groundY, { axis: 'z', sign: -1, halfW, floors, pitch: 2.9, litFrac: 0.6, ...win });
+  facade(ctx, parts, rng, cx - 4.75, cz, groundY, { axis: 'z', sign: 1, halfW: 2.5, floors, pitch: 1.9, litFrac: 1, ...win });
+  facade(ctx, parts, rng, cx + 4.75, cz, groundY, { axis: 'z', sign: 1, halfW: 2.5, floors: [floors[1]], pitch: 1.9, litFrac: 1, ...win });
+  plainBox(parts, 'white', 3.6, 3, 0.1, cx + 4.6, groundY + 1.5, zf + 0.05);
+  plainBox(parts, 'lightStoneGrey', 3.2, 2.8, 0.05, cx + 4.6, groundY + 1.4, zf + 0.115);
+  for (const y of [0.7, 1.4, 2.1]) plainBox(parts, 'mediumStoneGrey', 3.2, 0.06, 0.03, cx + 4.6, groundY + y, zf + 0.145);
+  // what says "police": a lit transom over the doors, a shield over the canopy, and two rows of black checks
+  // round the white band (the band stands 0.145 proud)
+  plainBox(parts, 'winCool', 2.4, 0.45, 0.02, cx, groundY + 2.57, zf + 0.2);
+  for (const [mat, k, out] of [['brightYellow', 1, 0.06], ['brightBlue', 0.6, 0.1]]) {
+    plainBox(parts, mat, 1.5 * k, 0.9 * k, 0.04, cx, groundY + 4.75, zf + out);
+    plainBoxR(parts, mat, 1.06 * k, 1.06 * k, 0.04, cx, groundY + 4.3 + 0.18 * (1 - k), zf + out, 0, 0, Math.PI / 4);
+  }
+  for (let k = 0; k < 28; k++) {
+    const t = -6.75 + k * 0.5, y = groundY + storyH - (k % 2 === 0 ? 0.5 : 0.2);
+    for (const s of [-1, 1]) {
+      plainBox(parts, 'black', 0.5, 0.3, 0.03, cx + t, y, cz + s * (halfD + 0.16));
+      plainBox(parts, 'black', 0.03, 0.3, 0.5, cx + s * (halfW + 0.16), y, cz + t);
+    }
+  }
+  // lit sign board standing on the front parapet: blue stripe, yellow-and-blue badge, six letter blocks
+  const sz = zf - 0.15;
+  for (const s of [-1, 1]) plainBox(parts, 'lightStoneGrey', 0.14, 0.5, 0.14, cx + s * 1.6, roofTop + 0.25, sz);
+  plainBox(parts, 'signGlow', 4.4, 1.2, 0.14, cx, roofTop + 1.1, sz);
+  plainBox(parts, 'brightBlue', 4.4, 0.22, 0.04, cx, roofTop + 0.66, sz + 0.09);
+  plainBox(parts, 'brightYellow', 0.8, 0.8, 0.04, cx - 1.6, roofTop + 1.2, sz + 0.09);
+  plainBox(parts, 'brightBlue', 0.45, 0.45, 0.03, cx - 1.6, roofTop + 1.2, sz + 0.125);
+  for (let k = 0; k < 6; k++) plainBox(parts, 'brightBlue', 0.3, 0.5, 0.04, cx - 0.65 + k * 0.48, roofTop + 1.22, sz + 0.09);
+  // blue beacon on a short mast, toward a back corner
   const mastH = 1.6 + rng.range(0, 0.6);
   cylinder(parts, 'lightStoneGrey', 0.09, 0.12, mastH, 8, cx - halfW * 0.5, roofTop, cz - halfD * 0.5);
   plainBox(parts, 'beaconBlue', 0.32, 0.32, 0.32, cx - halfW * 0.5, roofTop + mastH + 0.2, cz - halfD * 0.5);
-  // cycle-3 roof clutter, kept clear of the sign and the beacon mast
+  // cycle-3 roof clutter, kept clear of the beacon mast
   const clutter = roofClutter(ctx, parts, studs, rng, {
     cx, cz, deckY: roofInfo.deckY, halfW: roofInfo.innerHalfW, halfD: roofInfo.innerHalfD, menu: LOW_CLUTTER, maxItems: 3,
-    avoid: [{ x: sx, z: sz, r: 1.5 }, { x: cx - halfW * 0.5, z: cz - halfD * 0.5, r: 0.6 }],
+    avoid: [{ x: cx - halfW * 0.5, z: cz - halfD * 0.5, r: 0.6 }],
   });
 
   return {
