@@ -11,7 +11,7 @@ export const LAYER_DEFS = [
   { id: 'rumble', label: 'rumble', color: '#B39DDB' },
 ];
 
-export const SFX_NAMES = ['click', 'place', 'road', 'bulldoze', 'zone', 'error', 'levelup', 'cash', 'crash'];
+export const SFX_NAMES = ['click', 'place', 'road', 'bulldoze', 'zone', 'error', 'levelup', 'cash', 'crash', 'stomp', 'roar'];
 
 const TC = 0.12; // setTargetAtTime time constant (s) — smooths the 10 Hz updates
 
@@ -404,6 +404,24 @@ export class AudioEngine {
       const dt = 0.04 + this.rng.range(0, 0.5);
       this._burst(t + dt, out, { dur: 0.025, peak: 0.22, f0: this.rng.range(1800, 5200), q: 3 });
     }
+  }
+
+  /** A kaiju footfall: a deep thud that drops away, and a little loose plastic. */
+  _sfx_stomp(t, out) {
+    this._burst(t, out, { dur: 0.5, peak: 0.75, type: 'lowpass', f0: 520, f1: 70, q: 0.6, a: 0.006 });
+    this._tone(t, out, { type: 'triangle', f0: 55, f1: 22, dur: 0.55, peak: 0.6, a: 0.006 });
+    for (let i = 0; i < 3; i++) {
+      const dt = 0.08 + this.rng.range(0, 0.3);
+      this._burst(t + dt, out, { dur: 0.025, peak: 0.16, f0: this.rng.range(1500, 4200), q: 3 });
+    }
+  }
+
+  /** A kaiju roar: two detuned falling saw voices, breath noise over them and a low growl under. */
+  _sfx_roar(t, out) {
+    this._tone(t, out, { type: 'sawtooth', f0: 95, f1: 58, dur: 1.3, peak: 0.3, a: 0.08, curve: 'lin' });
+    this._tone(t, out, { type: 'sawtooth', f0: 142, f1: 88, dur: 1.3, peak: 0.22, a: 0.08, curve: 'lin' });
+    this._burst(t, out, { dur: 1.1, peak: 0.4, f0: 900, f1: 420, q: 1.4, a: 0.1 });
+    this._burst(t, out, { dur: 1.4, peak: 0.35, type: 'lowpass', f0: 260, f1: 90, q: 0.8, a: 0.05 });
   }
 
   _sfx_zone(t, out) {

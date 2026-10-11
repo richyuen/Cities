@@ -29,9 +29,9 @@ export const TOOL_GROUPS = [
   { label: 'Utilities', tools: [['utility:power', 'Power'], ['utility:water', 'Water'], ['utility:firedept', 'Fire Dept'], ['utility:police', 'Police'], ['utility:school', 'School'], ['utility:hospital', 'Hospital']] },
   { label: 'Transit', tools: [['transit:stop', 'Bus Stop'], ['transit:line', 'Bus Line'], ['transit:lines', 'Lines']] },
   { label: 'Tools', tools: [['bulldoze', 'Bulldoze', 'B'], ['select', 'Inspect', 'I']] },
-  { label: 'Hazards', tools: [['hazard:fire', 'Start Fire'], ['hazard:tornado', 'Tornado'], ['hazard:burglary', 'Start Burglary']] },
+  { label: 'Hazards', tools: [['hazard:fire', 'Start Fire'], ['hazard:tornado', 'Tornado'], ['hazard:kaiju', 'Kaiju'], ['hazard:burglary', 'Start Burglary']] },
 ];
-const DANGER = new Set(['bulldoze', 'zone:none', 'hazard:fire', 'hazard:tornado', 'hazard:burglary']);
+const DANGER = new Set(['bulldoze', 'zone:none', 'hazard:fire', 'hazard:tornado', 'hazard:kaiju', 'hazard:burglary']);
 const MAX_TOASTS_VISIBLE = 3, MAX_TOASTS_KEPT = 8;
 const WEATHER_LABEL = { clear: 'Clear', cloudy: 'Cloudy', rain: 'Rain', fog: 'Fog' };
 const TOAST_ICON = { info: icons.info, success: icons.check, warn: icons.warn, error: icons.close };

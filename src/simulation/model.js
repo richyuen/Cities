@@ -86,6 +86,9 @@ export const FIRE_IGNITION_BASE = 4e-6;      // per-tick ignition chance per eli
 // departments — NOT a "must be within range" cutoff. Any fire department on the map is always dispatched
 // (however far), it just scales toward FIRE_MAX_SEVERITY/a longer burn the farther away it is.
 export const FIRE_MAX_RESPONSE_DIST = 60;
+// Coverage footprint of a fire department, in Chebyshev cells: the 'fire' coverage grid (the kaiju's life drain in
+// `disasters` reads it, data views may later). Dispatch is unchanged and still has no range cutoff.
+export const FIRE_RADIUS = 14;
 export const FIRE_BASE_DURATION_TICKS = 40;  // ~20 game-sec minimum burn even with a station right next door
 export const FIRE_DURATION_PER_CELL = 3;     // extra ticks of burn per Chebyshev cell of response distance
 export const FIRE_MIN_SEVERITY = 0.15;       // final damage added, best case (station adjacent)
@@ -183,6 +186,7 @@ export class SimModel {
     this.powerCoverage = null;
     this.waterCoverage = null;
     this.policeCoverage = null;
+    this.fireCoverage = null;
     this.schoolCoverage = null;
     this.hospitalCoverage = null;
     this.utilities = [];                               // { id, kind: 'power_plant'|'water_tower'|'fire_department'|'police_station'|'school'|'hospital', i, j, w, d }
@@ -443,20 +447,23 @@ export class SimModel {
     const powerCov = (this.powerCoverage && this.powerCoverage.length === n) ? this.powerCoverage : new Uint8Array(n);
     const waterCov = (this.waterCoverage && this.waterCoverage.length === n) ? this.waterCoverage : new Uint8Array(n);
     const policeCov = (this.policeCoverage && this.policeCoverage.length === n) ? this.policeCoverage : new Uint8Array(n);
+    const fireCov = (this.fireCoverage && this.fireCoverage.length === n) ? this.fireCoverage : new Uint8Array(n);
     const schoolCov = (this.schoolCoverage && this.schoolCoverage.length === n) ? this.schoolCoverage : new Uint8Array(n);
     const hospitalCov = (this.hospitalCoverage && this.hospitalCoverage.length === n) ? this.hospitalCoverage : new Uint8Array(n);
-    powerCov.fill(0); waterCov.fill(0); policeCov.fill(0); schoolCov.fill(0); hospitalCov.fill(0);
+    powerCov.fill(0); waterCov.fill(0); policeCov.fill(0); fireCov.fill(0); schoolCov.fill(0); hospitalCov.fill(0);
     for (const b of this.utilities) {
       const ci = Math.min(w - 1, b.i + ((b.w || 1) >> 1)), cj = Math.min(h - 1, b.j + ((b.d || 1) >> 1));
       if (b.kind === 'power_plant') SimModel._stampRadius(powerCov, w, h, ci, cj, POWER_RADIUS);
       else if (b.kind === 'water_tower') SimModel._stampRadius(waterCov, w, h, ci, cj, WATER_RADIUS);
       else if (b.kind === 'police_station') SimModel._stampRadius(policeCov, w, h, ci, cj, POLICE_RADIUS);
+      else if (b.kind === 'fire_department') SimModel._stampRadius(fireCov, w, h, ci, cj, FIRE_RADIUS);
       else if (b.kind === 'school') SimModel._stampRadius(schoolCov, w, h, ci, cj, SCHOOL_RADIUS);
       else if (b.kind === 'hospital') SimModel._stampRadius(hospitalCov, w, h, ci, cj, HOSPITAL_RADIUS);
     }
     this.powerCoverage = powerCov;
     this.waterCoverage = waterCov;
     this.policeCoverage = policeCov;
+    this.fireCoverage = fireCov;
     this.schoolCoverage = schoolCov;
     this.hospitalCoverage = hospitalCov;
 
@@ -768,13 +775,14 @@ export class SimModel {
    * `views` overlay while the game is paused) call this first. */
   ensureStatic(world) { if (this.dirtyStatic && world) this._recomputeStatic(world); }
 
-  /** Read-only coverage grid (Uint8Array w*h, 1 = covered) for 'power'|'water'|'police'|'school'|'hospital'|
-   * 'park'|'road'. Null for an unknown layer or before the first recompute. Do not mutate. */
+  /** Read-only coverage grid (Uint8Array w*h, 1 = covered) for 'power'|'water'|'police'|'fire'|'school'|
+   * 'hospital'|'park'|'road'. Null for an unknown layer or before the first recompute. Do not mutate. */
   coverageGrid(layer) {
     switch (layer) {
       case 'power': return this.powerCoverage;
       case 'water': return this.waterCoverage;
       case 'police': return this.policeCoverage;
+      case 'fire': return this.fireCoverage;
       case 'school': return this.schoolCoverage;
       case 'hospital': return this.hospitalCoverage;
       case 'park': return this.parkCoverage;

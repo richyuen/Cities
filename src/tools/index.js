@@ -73,7 +73,7 @@ function toolKindOf(tool) {
   if (tool.startsWith('transit:')) return { group: 'transit', transitKind: tool.slice(8) };
   if (tool === 'bulldoze') return { group: 'bulldoze' };
   if (tool === 'select') return { group: 'select' };
-  if (tool === 'hazard:tornado') return { group: 'hazard' };
+  if (tool === 'hazard:tornado' || tool === 'hazard:kaiju') return { group: 'hazard' };
   if (tool === 'hazard:fire' || tool === 'hazard:burglary') return { group: 'hazard' };
   return null;
 }
@@ -865,8 +865,20 @@ function handleTornadoClick(e) {
   if (!hit) { fail('Click the map to drop a tornado', null); return; }
   const d = ctx.modules.get('disasters');
   if (d?.status !== 'ok') { fail('Disasters unavailable'); return; }
+  if (d.api.getKaiju?.()) { fail('A kaiju is already loose'); return; }
   const id = safeCall(() => d.api.spawnTornado({ x: hit.x, z: hit.z }), null);
   if (!id) { fail('A tornado is already on the ground'); return; }
+}
+
+function handleKaijuClick(e) {
+  const ctx = S.ctx;
+  const hit = screenToHit(ctx, e.clientX, e.clientY);
+  if (!hit) { fail('Click the map to release a kaiju', null); return; }
+  const d = ctx.modules.get('disasters');
+  if (d?.status !== 'ok' || typeof d.api.spawnKaiju !== 'function') { fail('Disasters unavailable'); return; }
+  if (d.api.isActive()) { fail(d.api.getKaiju() ? 'A kaiju is already loose' : 'A tornado is already on the ground'); return; }
+  const id = safeCall(() => d.api.spawnKaiju({ x: hit.x, z: hit.z }), null);
+  if (!id) { fail('The kaiju will not come'); return; }
 }
 
 function handleBurglaryClick(e) {
@@ -972,6 +984,7 @@ function onPointerUp(e) {
     if (Math.hypot(dx, dy) < 6) {
       if (S.tool === 'hazard:fire') handleFireClick(e);
       else if (S.tool === 'hazard:tornado') handleTornadoClick(e);
+      else if (S.tool === 'hazard:kaiju') handleKaijuClick(e);
       else if (S.tool === 'hazard:burglary') handleBurglaryClick(e);
       else if (S.tool?.startsWith('transit:')) handleTransitClick(e);
       else handleClick(e);

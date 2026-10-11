@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Functional check for disasters (tornado: Wave D2, brick destruction: D3).
+// Functional check for disasters (tornado: Wave D2, brick destruction: D3, kaiju).
 //   node tools/check-disasters.mjs
 // Full game via tools/shot.mjs's openApp. Proves, through the real toolbar path and the public APIs:
 //   1. the Hazards button spawns exactly one tornado at the clicked spot;
@@ -10,7 +10,13 @@
 //   5. save/load round-trips an active tornado (position/age) and the damage scars;
 //   6. (D3) a storm aimed at a dense block strips and destroys buildings: no ghost geometry on the frame a building
 //      is removed, the lot keeps its zoning and regrows, props and cars are picked up, the brick pool stays bounded,
-//      the storm sky is set and given back, stripped facades survive save/load and come back with repair.
+//      the storm sky is set and given back, stripped facades survive save/load and come back with repair;
+//   7. the storm showcase is the same on two fresh boots;
+//   8. the Kaiju button raises one kaiju (and no tornado while it is loose, nor the other way round): it walks,
+//      stomps, sweeps its tail and breathes fire; what it tears down comes apart as bricks with no funnel, is billed
+//      exactly, keeps its zoning and regrows; police and fire coverage shorten its rampage; it survives save/load
+//      and crafted saves; it costs at most 10 draw calls; it leaves when its time is up;
+//   9. the kaiju showcase is the same on two fresh boots.
 // Writes shots/disasters/d3/*.png + summary.json. Exit 1 on any failed check.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -18,7 +24,7 @@ import { openApp } from './shot.mjs';
 
 const OUT = 'shots/disasters/d3';
 fs.mkdirSync(OUT, { recursive: true });
-for (const f of fs.readdirSync(OUT)) if (/^(before|after|storm-|aimed-|summary)/.test(f)) fs.rmSync(path.join(OUT, f), { force: true });
+for (const f of fs.readdirSync(OUT)) if (/^(before|after|storm-|aimed-|kaiju-|summary)/.test(f)) fs.rmSync(path.join(OUT, f), { force: true });
 const results = [];
 let failed = 0;
 const check = (ok, msg) => { results.push({ ok: !!ok, msg }); console.log(`${ok ? 'ok  ' : 'FAIL'} ${msg}`); if (!ok) failed++; };
@@ -397,6 +403,318 @@ try {
   const cars = await page.evaluate(() => window.__city.ctx.modules.get('traffic').api.getVehicleCount());
   check(cars >= aim.cars * 0.9, `picked-up cars are back on the road (${aim.cars} before, ${cars} now)`);
 
+  // ---- 8. kaiju ----------------------------------------------------------------------------------------------
+  // The second city-scale hazard, through the same toolbar path and public APIs. Sections 1-6 leave tornado
+  // residue in the ledger and the removal log: both start from zero here.
+  await page.evaluate(() => {
+    const c = window.__city, ctx = c.ctx, d = ctx.modules.get('disasters').api;
+    d.clear();
+    c.pause(); c.setCamera('aerial'); c.setTime(12);
+    window.__ledger.charged = 0; window.__ledger.applied = 0;
+    window.__dz.removed.length = 0; window.__dz.armed = true;
+    const kz = window.__kz = { stomps: [], breaths: [], tail: 0, tremor: 0, ended: [], toasts: [], phases: [], probing: false };
+    ctx.events.on('disaster:stomp', (e) => { const k = d.getKaiju(); kz.stomps.push({ hits: e.hits, off: k ? Math.hypot(e.x - k.x, e.z - k.z) : -1 }); });
+    ctx.events.on('disaster:breath', (e) => {
+      // every building it lit, as seen from the mouth
+      const lit = e.ignited.map((id) => {
+        const b = ctx.world.buildings.get(id);
+        const p = ctx.world.cellToWorld(b.i + (b.w - 1) / 2, b.j + (b.d - 1) / 2);
+        const dx = p.x - e.x, dz = p.z - e.z, ch = Math.cos(e.heading), sh = Math.sin(e.heading);
+        return { dist: Math.hypot(dx, dz), angle: Math.abs(Math.atan2(dz * ch - dx * sh, dx * ch + dz * sh)), onFire: !!b.onFire };
+      });
+      kz.breaths.push({ n: e.ignited.length, lit });
+    });
+    ctx.events.on('disaster:damage', (e) => { if (e.source === 'tail') kz.tail += e.amount; else if (e.source === 'tremor') kz.tremor += e.amount; });
+    ctx.events.on('disaster:ended', (e) => kz.ended.push({ ...e }));
+    ctx.events.on('sim:tick', () => { const p = d.getStats().kaiju; if (p && !kz.phases.includes(p)) kz.phases.push(p); });
+    ctx.events.on('building:removed', ({ building: q }) => {
+      if (!kz.probing || !d.getKaiju() || !q.zone) return;
+      for (let j = q.j; j < q.j + q.d; j++) for (let i = q.i; i < q.i + q.w; i++) ctx.world.cellAt(i, j).kaijuProbe = true;
+    });
+    const ui = ctx.modules.get('ui').api, notify = ui.notify;
+    ui.notify = (text, ...rest) => { kz.toasts.push(String(text)); return notify(text, ...rest); };
+  });
+  await page.evaluate(() => window.__city.frames(6));
+  const getKaiju = () => page.evaluate(() => window.__city.ctx.modules.get('disasters').api.getKaiju());
+  const K_SPEED = 5, K_STEP_LEN = 12;
+
+  check(await page.evaluate(() => !!document.querySelector('button[data-tool="hazard:kaiju"]')), 'Hazards toolbar has the Kaiju button');
+  await page.click('button[data-tool="hazard:kaiju"]');
+  await page.mouse.click(960, 540);
+  await page.evaluate(() => window.__city.frames(6));
+  const k0 = await getKaiju();
+  check(!!k0 && Number.isFinite(k0.x) && Number.isFinite(k0.z) && (await disActive()).length === 0, `toolbar click raises a kaiju at the click and no tornado (${k0 ? `${k0.x.toFixed(0)}, ${k0.z.toFixed(0)}` : 'none'})`);
+  const risen = await page.evaluate(() => {
+    const ctx = window.__city.ctx, g = ctx.scene.getObjectByName('disasters:kaiju'), k = ctx.modules.get('disasters').api.getKaiju();
+    return { visible: !!g?.visible, above: g ? g.position.y + 59 - ctx.world.getHeight(k.x, k.z) : -1, tornado: !!ctx.scene.getObjectByName('disasters')?.visible };
+  });
+  check(risen.visible && risen.above > 5 && !risen.tornado, `a kaiju raised while paused is visible at once, already ${risen.above.toFixed(0)} m out of the ground`);
+  await page.click('button[data-tool="hazard:tornado"]');
+  await page.mouse.click(1000, 560);
+  await page.click('button[data-tool="hazard:kaiju"]');
+  await page.mouse.click(900, 500);
+  await page.evaluate(() => window.__city.frames(4));
+  const refused = await page.evaluate(() => {
+    const d = window.__city.ctx.modules.get('disasters').api;
+    return { tornado: d.spawnTornado({ x: 0, z: 0 }), kaiju: d.spawnKaiju({ x: 0, z: 0 }), active: d.getActive().length, id: d.getKaiju()?.id, live: d.isActive() };
+  });
+  check(refused.tornado === null && refused.kaiju === null && refused.active === 0 && refused.id === k0?.id && refused.live,
+    'a tornado and a second kaiju are refused while one is loose (toolbar and api): one hazard at a time');
+  const sfx = await page.evaluate(() => window.__city.ctx.modules.get('audio').api.sfxNames);
+  check(sfx.includes('stomp') && sfx.includes('roar'), `the kaiju has its own sounds (${sfx.filter((n) => n === 'stomp' || n === 'roar').join(', ')})`);
+
+  // walking: against its own age (game seconds), never faster than K_SPEED, a footfall every K_STEP_LEN
+  await page.evaluate(async () => { window.__city.setTimeScale(4); await window.__city.frames(150); });
+  const k1 = await getKaiju();
+  const walkT = k1.age - k0.age;
+  check(walkT > 5 && k1.walked > 10 && k1.walked <= K_SPEED * walkT + 1e-6 && Math.hypot(k1.x - k0.x, k1.z - k0.z) <= k1.walked + 1e-6,
+    `the kaiju walks, at most ${K_SPEED} m/s: ${k1.walked.toFixed(1)} m in ${walkT.toFixed(1)} game-s`);
+  check(k1.steps === Math.floor(k1.walked / K_STEP_LEN) && k1.steps >= 1, `a footfall every ${K_STEP_LEN} m of travel (${k1.steps} steps in ${k1.walked.toFixed(1)} m)`);
+
+  // rampage: until it has stomped, swept, breathed fire and torn something down (4x, at most ~40 game-seconds)
+  let kst = null, kpeak = 0;
+  for (let n = 0; n < 40; n++) {
+    kst = await page.evaluate(async () => { window.__city.setTimeScale(4); await window.__city.frames(15); return window.__city.ctx.modules.get('disasters').api.getStats(); });
+    kpeak = Math.max(kpeak, kst.bricks.live);
+    if (kst.destroyed >= 2 && kst.footfalls >= 3 && kst.breaths >= 1 && kst.bricks.live > 100) break;
+  }
+  await page.evaluate(() => window.__city.pause());
+  const kz1 = await page.evaluate(() => window.__kz);
+  const kdz = await page.evaluate(() => window.__dz.removed);
+  check(kz1.stomps.length >= 2 && kz1.stomps.every((s) => s.off >= 0 && s.off < K_STEP_LEN),
+    `footfalls land at its feet: ${kz1.stomps.length} disaster:stomp events, ${kz1.stomps.reduce((a, s) => a + s.hits, 0)} buildings under them (furthest ${Math.max(...kz1.stomps.map((s) => s.off)).toFixed(1)} m from the hips)`);
+  check(kst.destroyed >= 1 && kdz.length === kst.destroyed, `it tears buildings down: ${kst.destroyed} destroyed, ${kdz.length} removed from the world`);
+  check(kdz.length > 0 && kdz.every((r) => r.ghost === 0), `no ghost: 0 drawn triangles left in the lot on the frame of removal (${kdz.length} removals, worst ${Math.max(0, ...kdz.map((r) => r.ghost))})`);
+  const kzoned = kdz.filter((r) => r.zone);
+  const kbad = kzoned.flatMap((r) => r.cells).filter((c) => c.type !== 'zone' || !c.zone || c.buildingId);
+  check(kzoned.length > 0 && kbad.length === 0, `stomped lots keep their zoning: ${kzoned.flatMap((r) => r.cells).length} cells (${kbad.length} wrong)`);
+  const noFunnel = await page.evaluate(() => {
+    const scene = window.__city.ctx.scene;
+    return { storm: !!scene.getObjectByName('bricks:storm')?.visible, funnel: !!scene.getObjectByName('disasters')?.visible };
+  });
+  check(kst.bricks.spawned > 100 && kpeak > 0 && !noFunnel.storm && !noFunnel.funnel, `they come apart as bricks with no funnel to carry them: ${kst.bricks.spawned} spawned, ${kpeak} in the air at peak`);
+  check(kz1.tail > 0, `the tail knocks into what it passes (${kz1.tail.toFixed(2)} damage from the tail, ${kz1.tremor.toFixed(2)} from footfall tremors)`);
+  const lit = kz1.breaths.flatMap((b) => b.lit);
+  check(kz1.breaths.length >= 1 && kz1.breaths.every((b) => b.n >= 1 && b.n <= 3) && lit.every((l) => l.onFire && l.dist >= 8 && l.dist <= 70 && l.angle <= 0.3 + 1e-9) && kst.ignited === lit.length,
+    `fire breath sets 1-3 buildings in its cone alight: ${kz1.breaths.map((b) => b.n).join(' + ')} lit (${lit.map((l) => `${l.dist.toFixed(0)} m / ${l.angle.toFixed(2)} rad`).join(', ')})`);
+
+  // billing: every blow (stomp, tremor, tail) is charged; fire damage is the simulation's own and is not
+  await page.evaluate(() => { const sim = window.__city.ctx.modules.get('simulation').api; for (let i = 0; i < 2; i++) sim.tick(true); });
+  const kledger = await page.evaluate(() => window.__ledger);
+  const kexpected = kledger.applied * 900;
+  check(kledger.applied > 0 && Math.abs(kledger.charged - kexpected) < Math.max(2, 0.01 * kexpected),
+    `billing is exact: charged $${kledger.charged.toFixed(1)} vs damage applied ${kledger.applied.toFixed(4)} × $900 = $${kexpected.toFixed(1)}`);
+
+  // save / load mid-rampage. A half-stripped building is a passing state under a kaiju (a footfall takes a building
+  // whole), so one is set up the way a load does it: a damaged building listed as stripped. The same loadState
+  // hands the kaiju a full rampage again, so the checks below do not depend on how long the ones above took.
+  const kstrip = await page.evaluate(() => {
+    const ctx = window.__city.ctx, world = ctx.world, d = ctx.modules.get('disasters').api, B = ctx.modules.get('buildings').api;
+    const k = d.getKaiju();
+    let pick = null, best = Infinity;
+    for (const b of world.buildings.values()) {
+      if (!b.zone || b.onFire || (b.damage || 0) >= 0.35 || !B.getParts(b.id)) continue;
+      const p = world.cellToWorld(b.i + (b.w - 1) / 2, b.j + (b.d - 1) / 2);
+      const far = Math.abs(Math.hypot(p.x - k.x, p.z - k.z) - 90);
+      if (far < best) { best = far; pick = b; }
+    }
+    pick.damage = 0.7;
+    const state = d.getState();
+    state.shedding.push({ id: pick.id });
+    state.kaiju.life = 75; state.kaiju.phase = 'rampage';
+    d.loadState(state);
+    return { id: pick.id, stats: d.getStats(), phase: d.getKaiju()?.phase };
+  });
+  check(kstrip.stats.stripped >= 1 && kstrip.phase === 'rampage', `a damaged building listed as stripped is stripped on load (${kstrip.stats.stripped} buildings, ${kstrip.stats.hiddenParts} parts hidden)`);
+  const ksave = await page.evaluate(async () => {
+    const ctx = window.__city.ctx, d = ctx.modules.get('disasters').api;
+    const m = await import('/src/menu/serialize.js');
+    const before = d.getStats(), pre = d.getKaiju();
+    const save = m.serializeSave(ctx, { name: 'kaiju-save' });
+    window.__dz.armed = false;
+    d.clear();
+    const cleared = d.isActive();
+    m.applySave(ctx, JSON.parse(JSON.stringify(save)));
+    window.__kz.probing = true;
+    await window.__city.frames(4);
+    return { saved: save.disasters, pre, post: d.getKaiju(), before, after: d.getStats(), cleared, tornadoes: d.getActive().length };
+  });
+  check(!!ksave.saved.kaiju && ksave.saved.tornadoes.length === 0 && !ksave.cleared, `a mid-rampage save holds the kaiju and no tornado (${ksave.saved.shedding.length} stripped buildings)`);
+  const kp = ksave.pre, kq = ksave.post;
+  check(!!kq && ksave.tornadoes === 0 && Math.abs(kq.x - kp.x) < 1e-6 && Math.abs(kq.z - kp.z) < 1e-6 && Math.abs(kq.heading - kp.heading) < 1e-9 && Math.abs(kq.age - kp.age) < 1e-9
+    && kq.steps === kp.steps && kq.phase === kp.phase && Math.abs(kq.life - kp.life) < 1e-9 && Math.hypot(kq.footL[0] - kp.footL[0], kq.footR[1] - kp.footR[1]) < 1e-6,
+    `load restores it where it stood: position, heading, age ${kp.age.toFixed(1)}, ${kp.steps} steps, phase ${kp.phase}, both feet`);
+  check(ksave.before.stripped > 0 && ksave.after.stripped === ksave.before.stripped && ksave.after.hiddenParts === ksave.before.hiddenParts,
+    `and re-applies the stripped facades: ${ksave.after.stripped} buildings / ${ksave.after.hiddenParts} parts hidden (saved ${ksave.before.stripped} / ${ksave.before.hiddenParts})`);
+
+  // crafted saves are sanitised
+  const kcraft = await page.evaluate(() => {
+    const d = window.__city.ctx.modules.get('disasters').api, world = window.__city.ctx.world;
+    const keep = d.getState();
+    d.loadState({ kaiju: { id: 5, x: null, z: 0, heading: 0, age: 3 } });
+    const bogus = d.getKaiju();
+    d.loadState({ kaiju: { id: 6, x: 1e9, z: -1e9, heading: 100, age: -5, life: 1e9, walked: 30, steps: 77, phase: 'dance', footL: 'x', footR: [1e9, 0], target: 7, nextBreath: -1e9, breathUntil: 1e9 } });
+    const k = d.getKaiju();
+    const half = world.size.w * world.cellSize / 2 + world.cellSize;
+    const bounded = !!k && Math.abs(k.x) <= half && Math.abs(k.z) <= half && Math.abs(k.heading) <= Math.PI && k.age === 0 && k.life <= 300 && k.steps === 2 && k.phase === 'rampage'
+      && Math.hypot(k.footL[0] - k.x, k.footL[1] - k.z) < 30 && Math.hypot(k.footR[0] - k.x, k.footR[1] - k.z) < 30 && k.target === null && k.breathUntil <= 2.5 && k.nextBreath >= 0;
+    d.loadState({ tornadoes: [{ id: 7, x: 0, z: 0, dirX: 1, dirZ: 0, age: 3, life: 60 }], kaiju: { id: 8, x: 0, z: 0, heading: 0 } });
+    const both = { tornadoes: d.getActive().length, kaiju: d.getKaiju() };
+    d.clear();
+    d.loadState({ tornadoes: [], shedding: [] });
+    const older = d.isActive();
+    keep.kaiju.life = 75; // back with a full rampage ahead of it, for the checks below
+    d.loadState(keep);
+    return { bogus, bounded, both, older, back: !!d.getKaiju() };
+  });
+  check(kcraft.bogus === null, 'a kaiju with non-finite fields is dropped, not frozen');
+  check(kcraft.bounded, 'out-of-range position, heading, age, life, steps, phase, feet, target and breath timers are clamped or rebuilt on load');
+  check(kcraft.both.tornadoes === 1 && kcraft.both.kaiju === null, 'a crafted save with both hazards loads the tornado only');
+  check(kcraft.older === false && kcraft.back, 'a save without the kaiju field (older saves) loads no kaiju');
+  const weatherK = await weather();
+  check(sameWeather(weatherK, weather0), `the kaiju leaves the weather alone, and the crafted tornado gave its sky back (${weatherK.kind} ${weatherK.intensity})`);
+
+  // the fire is drawn only while it breathes
+  const flames = await page.evaluate(async () => {
+    const c = window.__city, ctx = c.ctx, d = ctx.modules.get('disasters').api;
+    const fire = ctx.scene.getObjectByName('kaiju:fire');
+    c.setTimeScale(2);
+    const breathing = () => { const k = d.getKaiju(); return !!k && k.breathUntil > k.age; };
+    let n = 0;
+    while (breathing() && n++ < 600) await c.frames(1);
+    await c.frames(2);
+    const idle = fire.count;
+    n = 0;
+    while (!breathing() && d.getKaiju() && n++ < 1500) await c.frames(1);
+    await c.frames(4);
+    const lit = breathing() ? fire.count : -1;
+    c.pause();
+    return { idle, lit };
+  });
+  check(flames.idle === 2 && flames.lit > 2, `kaiju:fire draws the eyes only (${flames.idle} boxes) until it breathes (${flames.lit} boxes)`);
+
+  // chase it: a fixed camera relative to its live position, at noon and dusk
+  for (const [tod, name] of [[12, 'kaiju-chase-day'], [17.7, 'kaiju-chase-dusk']]) {
+    await page.evaluate(({ tod }) => {
+      const ctx = window.__city.ctx;
+      const k = ctx.modules.get('disasters').api.getKaiju();
+      if (!k) return;
+      const gy = ctx.world.getHeight(k.x, k.z);
+      window.__city.setCamera({ pos: [k.x - 120, gy + 55, k.z + 110], target: [k.x, gy + 26, k.z], fov: 45 });
+      window.__city.setTime(tod);
+    }, { tod });
+    const log = await app.capture(path.join(OUT, `${name}.png`), { settle: 8, sampleMs: 300 });
+    captureErrors.push(...log.errors);
+    check(log.gpuMs <= 20, `full-game ${name} GPU time ${log.gpuMs} ms <= 20 (${log.drawCalls} draws, ${log.triangles} triangles)`);
+  }
+  await page.evaluate(() => { window.__city.pause(); window.__city.setCamera('aerial'); window.__city.setTime(12); });
+
+
+  // what the kaiju itself costs in draw calls: the same paused frame with and without it (bricks in the air)
+  const kcost = await page.evaluate(async () => {
+    const c = window.__city, ctx = c.ctx, d = ctx.modules.get('disasters').api;
+    c.setCamera('aerial');
+    c.setTimeScale(2);
+    let n = 0, st = d.getStats();
+    while ((st.bricks.live < 50 || st.bricks.rubble < 1) && d.getKaiju() && n++ < 1200) { await c.frames(1); st = d.getStats(); }
+    c.pause();
+    await c.frames(6);
+    const live = c.stats().drawCalls;
+    const state = d.getState();
+    const meshes = ['kaiju:body', 'kaiju:fire', 'bricks:2x4', 'bricks:box'].map((name) => { const m = ctx.scene.getObjectByName(name); return `${name}${m?.visible && m.count ? '' : ' (off)'}`; });
+    d.clear();
+    await c.frames(6);
+    const idle = c.stats().drawCalls;
+    d.loadState(state);
+    await c.frames(2);
+    return { live, idle, flying: st.bricks.live, lying: st.bricks.rubble, back: !!d.getKaiju(), meshes };
+  });
+  check(kcost.live - kcost.idle <= 10 && kcost.flying + kcost.lying > 0, `the kaiju adds at most 10 draw calls to the whole frame (${kcost.idle} without, ${kcost.live} with ${kcost.flying} bricks flying and ${kcost.lying} lying; ${kcost.meshes.join(', ')})`);
+  check(kcost.back, 'clear() then loadState(getState()) brings the kaiju back');
+
+  // the city fights back: a police station and a fire department behind it shorten the rampage
+  const fight = await page.evaluate(async () => {
+    const c = window.__city, ctx = c.ctx, world = ctx.world, d = ctx.modules.get('disasters').api;
+    const k = d.getKaiju();
+    const drain0 = k.drain;
+    // the two free 2x2 lots nearest a point 8 cells behind it (it does not walk to what is behind it), inside the
+    // coverage radius of the cell it stands on and well clear of its feet
+    const here = world.worldToCell(k.x, k.z);
+    const back = world.worldToCell(k.x - Math.cos(k.heading) * 64, k.z - Math.sin(k.heading) * 64);
+    const free = (i, j) => { for (let y = j; y < j + 2; y++) for (let x = i; x < i + 2; x++) { const q = world.cellAt(x, y); if (!q || q.buildingId || q.type === 'road' || q.type === 'water' || world.isWaterCell?.(x, y)) return false; } return true; };
+    const cand = [];
+    for (let j = here.j - 10; j <= here.j + 10; j++) for (let i = here.i - 10; i <= here.i + 10; i++) {
+      if (Math.max(Math.abs(i - here.i), Math.abs(j - here.j)) < 5 || !free(i, j)) continue;
+      cand.push({ i, j, far: Math.hypot(i - back.i, j - back.j) });
+    }
+    cand.sort((p, q) => p.far - q.far);
+    const spots = [];
+    for (const p of cand) { if (spots.length < 2 && !spots.some((s) => Math.abs(s.i - p.i) < 2 && Math.abs(s.j - p.j) < 2)) spots.push(p); }
+    if (spots.length < 2) return { drain0, placed: spots.length };
+    world.addBuilding({ i: spots[0].i, j: spots[0].j, w: 2, d: 2, zone: null, kind: 'police_station', level: 1 });
+    world.addBuilding({ i: spots[1].i, j: spots[1].j, w: 2, d: 2, zone: null, kind: 'fire_department', level: 1 });
+    c.setTimeScale(1); await c.frames(3);
+    const a = d.getKaiju();
+    await c.frames(90);
+    const b = d.getKaiju();
+    c.pause();
+    return { drain0, placed: 2, drain1: a.drain, drain2: b.drain, phase: b.phase, rate: (a.life - b.life) / (b.age - a.age), secs: b.age - a.age };
+  });
+  check(fight.placed === 2 && fight.drain1 > fight.drain0 && fight.drain1 >= 2.49,
+    `police and fire coverage under it drain its time faster: x${fight.drain0} before, x${fight.drain1} with a station and a fire department placed`);
+  check(fight.phase !== 'rampage' || (fight.drain2 === fight.drain1 && Math.abs(fight.rate - fight.drain1) < 1e-6),
+    `and its time really runs down at that rate (${fight.rate?.toFixed(4)} life-s per game-s over ${fight.secs?.toFixed(1)} s)`);
+  const fightToasts = (await page.evaluate(() => window.__kz.toasts)).filter((t) => /driving the kaiju off/.test(t));
+  check(fightToasts.length === 1, `the player is told once that the crews are fighting back (${fightToasts.length} toast)`);
+
+  // its time runs out: it walks off, sinks, and the lots it emptied grow back
+  for (let n = 0; n < 40; n++) {
+    const live = await page.evaluate(async () => { window.__city.setTimeScale(8); await window.__city.frames(30); return window.__city.ctx.modules.get('disasters').api.isActive(); });
+    if (!live) break;
+  }
+  await page.evaluate(() => window.__city.pause());
+  const kend = await page.evaluate(() => {
+    const ctx = window.__city.ctx, d = ctx.modules.get('disasters').api;
+    const burning = ctx.modules.get('simulation').api.getBurningBuildings();
+    return { live: d.isActive(), kz: window.__kz, stats: d.getStats(), visible: !!ctx.scene.getObjectByName('disasters:kaiju')?.visible, burning: burning.length, orphans: burning.filter((id) => !ctx.world.buildings.has(id)).length };
+  });
+  const kended = kend.kz.ended.filter((e) => e.kind === 'kaiju').pop();
+  check(!kend.live && !kend.visible && kend.kz.phases.includes('leave') && !!kended && kended.destroyed === kend.stats.destroyed,
+    `when its time is up the kaiju walks off and sinks (phases seen: ${kend.kz.phases.join(' → ')}; disaster:ended kind ${kended?.kind}, ${kended?.destroyed} destroyed)`);
+  check(kend.kz.toasts.filter((t) => /kaiju has left/.test(t)).length === 1, 'and says so once');
+  check(kend.orphans === 0, `no fire is left burning on a building it tore down (${kend.burning} burning, ${kend.orphans} of them gone from the world)`);
+  const klots = await page.evaluate(() => {
+    const world = window.__city.ctx.world, W = world.size.w, H = world.size.h;
+    const out = [];
+    for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) if (world.cells[j * W + i].kaijuProbe) out.push(j * W + i);
+    return out;
+  });
+  let kregrown = 0, kgrew = 0;
+  for (let n = 0; n < 60 && kregrown < Math.min(3, klots.length); n++) {
+    kregrown = await page.evaluate(async (lots) => {
+      window.__city.setTimeScale(8); await window.__city.frames(30);
+      const cells = window.__city.ctx.world.cells;
+      return lots.filter((k) => cells[k].buildingId).length;
+    }, klots);
+    kgrew = (n + 1) * 30 * 8 / 60;
+  }
+  await page.evaluate(() => window.__city.pause());
+  check(kregrown > 0, `stomped lots regrow: ${kregrown} of ${klots.length} cells built on again within ${kgrew.toFixed(0)} game-s`);
+  const kdrained = await disStats();
+  check(kdrained.bricks.live === 0, `no brick is left in the air after the kaiju (${kdrained.bricks.live} live, ${kdrained.bricks.rubble} rubble, ${kdrained.bricks.fading} fading)`);
+
+  // exclusivity the other way round
+  const other = await page.evaluate(() => {
+    const d = window.__city.ctx.modules.get('disasters').api;
+    const tornado = d.spawnTornado({ x: 0, z: 0, dirX: 1, dirZ: 0 });
+    const kaiju = d.spawnKaiju({ x: 40, z: 40 });
+    d.clear();
+    return { tornado, kaiju, live: d.isActive() };
+  });
+  check(!!other.tornado && other.kaiju === null && !other.live, 'spawnKaiju is refused while a tornado is on the ground');
+  const weatherEnd = await weather();
+  check(sameWeather(weatherEnd, weather0), `and the sky is the one the session started with (${weatherEnd.kind} ${weatherEnd.intensity})`);
+
   const runtimeErrors = await page.evaluate(() => window.__city.stats().errors);
   check(runtimeErrors.length === 0, `no runtime errors (${runtimeErrors.length}${runtimeErrors.length ? ': ' + runtimeErrors[0] : ''})`);
   check(captureErrors.length === 0, `all captures report no errors (${captureErrors.length})`);
@@ -435,8 +753,9 @@ for (let k = 0; k < 2; k++) {
         `the staged storm is already tearing the district up: ${r.st.destroyed} destroyed, ${r.st.stripped} stripped, ${r.st.bricks.spawned} bricks released (grey debris cubes gone: ${!r.debris})`);
     } else {
       check(r.hash === bootHash.hash, `cross-boot determinism: storm layout hash ${bootHash.hash} == ${r.hash}`);
-      // the showcase pre-step is fixed; frames after it may release a few more parts, so compare the staged counts
-      check(r.st.destroyed >= bootHash.st.destroyed && Math.abs(r.st.destroyed - bootHash.st.destroyed) <= 2,
+      // the showcase pre-step is fixed; the 30 wall-clock frames after it may tear down a building more on either
+      // boot, so the counts are compared with a tolerance (the exact staged counts are compared below)
+      check(Math.abs(r.st.destroyed - bootHash.st.destroyed) <= 2,
         `cross-boot: destroyed ${bootHash.st.destroyed} vs ${r.st.destroyed}`);
     }
   } finally {
@@ -459,6 +778,36 @@ for (let k = 0; k < 2; k++) {
       `cross-boot determinism: brick spawn set ${stagedHash.hash}/${stagedHash.spawned} == ${r.hash}/${r.spawned}`);
   } finally {
     await app3.close();
+  }
+}
+
+// 9. the kaiju showcase, staged with the clock paused from the first frame: its walk, its footfalls, what it tore
+// down and set alight are all decided in fixed steps, so two fresh boots must agree exactly.
+let kaijuStaged = null;
+for (let k = 0; k < 2; k++) {
+  const app4 = await openApp({ showcase: 'disasters', variant: 'default', seed: 1, tod: 12 });
+  try {
+    const r = await app4.page.evaluate(async () => {
+      window.__city.pause();
+      await window.__city.showcase('disasters', 'kaiju');
+      const ctx = window.__city.ctx, d = ctx.modules.get('disasters').api;
+      const st = d.getStats(), q = d.getKaiju();
+      const utilities = [...ctx.world.buildings.values()].filter((b) => !b.zone && (b.kind === 'power_plant' || b.kind === 'water_tower')).length;
+      return {
+        hash: st.bricks.spawnHash, spawned: st.bricks.spawned, destroyed: st.destroyed, hidden: st.hiddenParts, footfalls: st.footfalls, breaths: st.breaths,
+        ignited: st.ignited, burning: ctx.modules.get('simulation').api.getBurningBuildings().length, utilities,
+        pose: q ? [q.x, q.z, q.heading, q.walked].map((v) => v.toFixed(3)).join(' ') + ` steps ${q.steps} ${q.phase}` : 'none',
+        breathing: !!q && q.breathUntil > q.age,
+      };
+    });
+    const key = (s) => [s.hash, s.spawned, s.destroyed, s.hidden, s.footfalls, s.breaths, s.ignited, s.burning, s.pose].join(' | ');
+    if (k === 0) {
+      kaijuStaged = r;
+      check(r.destroyed > 0 && r.footfalls >= 2 && r.breaths >= 1 && r.breathing && r.spawned > 300 && r.utilities === 4,
+        `the staged kaiju is mid-rampage and breathing fire: ${r.footfalls} footfalls, ${r.destroyed} destroyed, ${r.ignited} set alight, ${r.spawned} bricks released, the district's ${r.utilities} utilities still standing`);
+    } else check(key(r) === key(kaijuStaged), `cross-boot determinism: kaiju showcase ${key(kaijuStaged)} == ${key(r)}`);
+  } finally {
+    await app4.close();
   }
 }
 

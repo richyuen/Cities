@@ -150,11 +150,11 @@ export default {
       ev.on('tool:selected', () => play('click')),
       ev.on('road:added', ({ edge, reason }) => { if (reason !== 'split' && reason !== 'merge') play('road', edge ? edgeCenter(world, edge) : null); }),
       ev.on('building:spawned', ({ building }) => play('place', building ? buildingCenter(world, building) : null)),
-      // While a tornado is on the ground it is the one removing buildings (several a second): it plays its own
-      // collapse sound, so the bulldozer is muted. A manual bulldoze during a storm is silent too.
+      // While a tornado or a kaiju is on the map it is the one removing buildings (several a second): it plays its
+      // own collapse sound, so the bulldozer is muted. A manual bulldoze during one is silent too.
       ev.on('building:removed', ({ building }) => {
         const d = ctx.modules.get('disasters');
-        if (d?.status === 'ok' && d.api?.getActive?.().length) return;
+        if (d?.status === 'ok' && (d.api?.isActive?.() ?? d.api?.getActive?.().length)) return;
         play('bulldoze', building ? buildingCenter(world, building) : null);
       }),
       ev.on('zone:changed', ({ zone }) => { if (zone) play('zone'); }),

@@ -95,8 +95,8 @@ const api = {
   getBuildingCoverage(id) { return S.model.getBuildingCoverage(id); },
   /** ids of tracked buildings currently missing road, power, or water. */
   getUnservedBuildings() { return S.model.getUnservedBuildings(); },
-  /** Read-only per-cell coverage grid (Uint8Array, 1 = covered) for 'power'|'water'|'police'|'school'|
-   * 'hospital'|'park'|'road'; recomputes stale grids first, so it is correct even while the game is paused.
+  /** Read-only per-cell coverage grid (Uint8Array, 1 = covered) for 'power'|'water'|'police'|'fire'|
+   * 'school'|'hospital'|'park'|'road'; recomputes stale grids first, so it is correct even while the game is paused.
    * Do not mutate — the returned array is the model's own. */
   getCoverageGrid(layer) { S.model.ensureStatic(S.ctx.world); return S.model.coverageGrid(layer); },
   /** utility coverage radius in cells (Chebyshev; multiply by ctx.world.cellSize for meters). */

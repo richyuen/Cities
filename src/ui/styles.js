@@ -340,7 +340,8 @@ export const CSS = `
 .lc-status > span { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 
 /* ---------- toolbar (bottom-centre) ---------- */
-.lc-toolbar { left: 50%; bottom: 16px; transform: translateX(-50%); display: flex; align-items: flex-end; gap: 2px; padding: 8px 8px 8px; }
+/* centred in the room between the demand panel (left) and the wider minimap (right), not on the window */
+.lc-toolbar { left: calc(50% - 42px); bottom: 16px; transform: translateX(-50%); display: flex; align-items: flex-end; gap: 2px; padding: 8px 8px 8px; }
 .lc-group { display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 0 1px; }
 .lc-group-lbl { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 1.3px; color: var(--lc-muted); }
 .lc-group-btns { display: flex; gap: 2px; }

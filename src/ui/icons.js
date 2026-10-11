@@ -152,6 +152,11 @@ export const icons = {
   // domino mask, matching the in-world burglary indicator's navy band + two eye holes
   'hazard:burglary': svg(`<path d="M2.2 8.6c1.8-2.4 5.8-2.2 8.2-.2.6.5 2.6.5 3.2 0 2.4-2 6.4-2.2 8.2.2 1.2 1.8-.2 6-3.2 6.8-2.2.6-4.4-.6-5.8-1.8-.5-.4-1.1-.4-1.6 0-1.4 1.2-3.6 2.4-5.8 1.8-3-.8-4.4-5-3.2-6.8z" fill="#1d3557" ${O}/>
     <circle cx="8.4" cy="11.2" r="1.5" fill="${WHITE}"/><circle cx="15.6" cy="11.2" r="1.5" fill="${WHITE}"/>`),
+  // kaiju: a brick lizard's head in profile, back plates, a red eye
+  'hazard:kaiju': svg(`<path d="M5 6.5 8 2.6l2.2 3.2 2.4-3 1.8 3.7" fill="${ORANGE}" ${O}/>
+    <path d="M4 7.5h11.5l5.5 2.6v3.4H13v3h7.5v2.5l-9 2H7.5L4 17z" fill="${GREEN}" ${O}/>
+    <path d="M13 13.5h8l-1.2 1.6-1.3-1.6-1.3 1.6-1.3-1.6-1.3 1.6z" fill="${WHITE}"/>
+    <rect x="12.6" y="9.2" width="3" height="2.4" fill="${RED}" stroke="${INK}" stroke-width="1"/>`),
   // funnel cloud: stacked swirl bands narrowing to the ground
   'hazard:tornado': svg(`<path d="M3 4h18l-5.2 3.2H8.2L3 4z" fill="${GREY}" ${O}/>
     <path d="M8.2 7.2h7.6l-3.1 3.1h-4.2l-.3-3.1z" fill="#8d9296" ${O}/>
