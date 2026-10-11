@@ -219,6 +219,31 @@ const api = {
     S.batcher.flush();
     return true;
   },
+  /** Read-only description of a building's generated parts, for effects that take it apart (disasters):
+   * { gen, baseY, height, kind, cx, cz, parts: [{ index, mat, min:[x,y,z], max:[x,y,z], liner, hidden }] } or null.
+   * `gen` changes whenever the building is regenerated (level-up, repair): part indices are only valid for the
+   * `gen` they were read at. Boxes are the parts' world-space AABBs as generated (hiding does not change them). */
+  getParts(id) {
+    const rec = S.batcher?.get(id);
+    if (!rec) return null;
+    const parts = rec.parts.map((p, index) => {
+      const bb = S.batcher.partBox(rec, index);
+      return { index, mat: p.mat, min: [bb.min.x, bb.min.y, bb.min.z], max: [bb.max.x, bb.max.y, bb.max.z], liner: p.liner === true, hidden: rec.hidden.has(index) };
+    });
+    return { gen: rec.gen, baseY: rec.baseY, height: rec.height, kind: rec.kind, cx: rec.cx, cz: rec.cz, parts };
+  },
+  /** Generation counter only (cheap: no part copies). null when the building is not rendered. */
+  getGen(id) { return S.batcher?.get(id)?.gen ?? null; },
+  /** Stop drawing some parts (indices from getParts, or 'all') this frame, without waiting for the chunk re-merge.
+   * Purely visual and not saved; regenerate(id) or any level-up brings everything back. Returns parts hidden. */
+  hideParts(id, which = 'all') { return S.batcher ? S.batcher.hide(id, which) : 0; },
+  /** Regenerate a building's geometry on the normal time-sliced path (rebuild(id) flushes synchronously). */
+  regenerate(id) {
+    const b = S.ctx?.world.buildings.get(id);
+    if (!b) return false;
+    regenerateBuilding(S.ctx, b);
+    return true;
+  },
   /** Boot/warm-up only: apply simulation's current level-up candidates and flush the batcher synchronously, so
    * the first drawn frame is the finished city instead of a multi-second post-`ready` fill-in. The demo city
    * calls this at the end of its 600-tick warm-up, while the boot screen is still up (see docs/reviews/demo-r2.md).
@@ -251,7 +276,9 @@ const api = {
       byLevel[b.level] = (byLevel[b.level] || 0) + 1;
     }
     const bs = S.batcher ? S.batcher.stats() : { draws: 0, tris: 0 };
-    return { count, byZone, byLevel, drawCalls: bs.draws, triangles: bs.tris };
+    return { count, byZone, byLevel, drawCalls: bs.draws, triangles: bs.tris,
+      // batcher re-merge backlog (a removed building stays drawn until its chunk's buckets are re-merged)
+      dirtyChunks: S.batcher ? S.batcher.dirtyChunks.size : 0, rebuilding: !!S.batcher?._rebuild };
   },
 };
 

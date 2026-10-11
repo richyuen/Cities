@@ -81,7 +81,7 @@ function interiorLiner(parts, mat, w, h, d, x, y, z, baseLift = 0) {
   }
   for (let i = 0; i < norm.count; i++) norm.setXYZ(i, -norm.getX(i), -norm.getY(i), -norm.getZ(i));
   g.translate(x, y + baseLift + lh / 2, z); // base at y + baseLift
-  parts.push({ mat, geom: g });
+  parts.push({ mat, geom: g, liner: true }); // tagged so effects that take a building apart can skip it
 }
 
 /** One facade band of windows. axis: 'x' or 'z' is the OUTWARD normal axis; sign: +1 or -1. */

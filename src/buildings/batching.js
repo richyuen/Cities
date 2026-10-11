@@ -11,6 +11,16 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 // whole module, so a fully studded roof costs one instance per stud and far studs are simply not uploaded.
 const CHUNK_CELLS = 128;
 
+/** Squash `count` vertices from `start` onto the first of them (zero-area triangles: nothing is rasterised, in the
+ * colour pass or the shadow pass). `upload` queues just that range for the GPU. */
+function collapseRange(attr, start, count, upload) {
+  if (count <= 0) return;
+  const a = attr.array, o = start * 3;
+  const x = a[o], y = a[o + 1], z = a[o + 2];
+  for (let k = 1; k < count; k++) { const q = o + k * 3; a[q] = x; a[q + 1] = y; a[q + 2] = z; }
+  if (upload) { attr.addUpdateRange(o, count * 3); attr.needsUpdate = true; }
+}
+
 export class BuildingBatcher {
   // Max raw part-geometries merged in a single mergeGeometries() call while time-slicing a rebuild (see
   // _stepChunkRebuild). Tuned empirically against the full demo city (~300 buildings, seed 1): keeps every
@@ -33,7 +43,8 @@ export class BuildingBatcher {
     // docs/core-requests/environment.md "## 2." perf note). flushIncremental() below processes one bucket's
     // merge at a time and yields back to the caller once a time budget is spent, so the full-game per-frame
     // update() can spread a big chunk's rebuild across many frames instead of paying it all in one.
-    this._rebuild = null; // { key, chunk, entries: [[matKey, geom[]], ...], idx, seen: Set, studPts, cur }
+    this._rebuild = null; // { key, chunk, entries: [[matKey, { geoms, refs }], ...], idx, seen: Set, cur }
+    this._gen = 0;        // bumped on every set(): tells a caller its part indices went stale (level-up, repair)
   }
 
   chunkKeyFor(i, j) { return `${Math.floor(i / CHUNK_CELLS)}_${Math.floor(j / CHUNK_CELLS)}`; }
@@ -47,7 +58,10 @@ export class BuildingBatcher {
     const prev = this.buildings.get(id);
     const chunkKey = this.chunkKeyFor(i, j);
     if (prev) { for (const g of prev.parts) g.geom.dispose(); this._markChunkDirty(prev.chunkKey); }
-    this.buildings.set(id, { ...data, chunkKey });
+    // `hidden` = part indices collapsed by hide(); it starts empty for every (re)generated record, so a repaired or
+    // levelled-up building is whole again. The previous generation's triangles stay in the drawn mesh until the
+    // re-merge; their vertex ranges live on the mesh (userData.byId), so hide(id, 'all') still reaches them.
+    this.buildings.set(id, { ...data, id, chunkKey, gen: ++this._gen, hidden: new Set(), liveStuds: null });
     this.studField?.set(id, data.studs);
     this._markChunkDirty(chunkKey);
   }
@@ -62,6 +76,74 @@ export class BuildingBatcher {
   }
 
   get(id) { return this.buildings.get(id); }
+
+  /** Cached pre-collapse AABB of one part (hide() squashes the vertices, so the box is taken first and kept). */
+  partBox(rec, idx) {
+    const g = rec.parts[idx].geom;
+    if (!g.boundingBox) g.computeBoundingBox();
+    return g.boundingBox;
+  }
+
+  /** Instantly stop drawing some parts of a building (`which` = part indices, or 'all') without a re-merge.
+   *
+   * remove() only marks the chunk dirty; the time-sliced re-merge then takes 16-60 frames in the full game, during
+   * which the building is still drawn and disappears one colour at a time. hide() instead squashes the parts'
+   * triangles to a point: in the part's own geometry (so any later or in-flight re-merge copies the squashed
+   * version, and _stepChunkRebuild re-squashes whatever it merged earlier) and in the drawn bucket mesh, through
+   * the vertex ranges recorded when that mesh was merged. It never marks the chunk dirty. A squashed vertex stays
+   * inside the part's old box, so the merged geometry's bounds remain valid. Returns the number of parts hidden. */
+  hide(id, which = 'all') {
+    const rec = this.buildings.get(id);
+    if (!rec) return 0;
+    const chunk = this.chunks.get(rec.chunkKey);
+    const all = which === 'all';
+    const list = all ? rec.parts.map((_, k) => k) : which;
+    let n = 0;
+    const fresh = [];
+    for (const idx of list) {
+      const part = rec.parts[idx];
+      if (!part || rec.hidden.has(idx)) continue;
+      this.partBox(rec, idx);
+      collapseRange(part.geom.attributes.position, 0, part.geom.attributes.position.count, false);
+      rec.hidden.add(idx);
+      fresh.push(idx);
+      n++;
+      if (all || !chunk) continue;
+      const mesh = chunk.meshes.get(part.mat);
+      const refs = mesh?.userData.byId?.get(id);
+      if (!refs) continue; // not merged into the drawn mesh yet: the pending re-merge picks the squashed part up
+      for (const r of refs) if (r.partIdx === idx && r.gen === rec.gen) this._collapseDrawn(mesh, r);
+    }
+    if (all) {
+      // every range this id owns in the drawn meshes, including a previous generation's (see set())
+      if (chunk) for (const mesh of chunk.meshes.values()) {
+        const refs = mesh.userData.byId?.get(id);
+        if (refs) for (const r of refs) this._collapseDrawn(mesh, r);
+      }
+      this.studField?.remove(id);
+      rec.liveStuds = [];
+    } else if (fresh.length && this.studField && rec.studs?.length) {
+      // studs standing on a part that just went (roof tiles, sills, awning tops) go with it
+      let studs = rec.liveStuds || rec.studs;
+      const before = studs.length;
+      for (const idx of fresh) {
+        const bb = this.partBox(rec, idx);
+        studs = studs.filter((p) => !(p.x > bb.min.x - 0.1 && p.x < bb.max.x + 0.1 && p.z > bb.min.z - 0.1 && p.z < bb.max.z + 0.1
+          && p.y > bb.min.y - 0.1 && p.y < bb.max.y + 0.2));
+      }
+      if (studs.length !== before) { rec.liveStuds = studs; this.studField.set(id, studs); }
+    }
+    return n;
+  }
+
+  _collapseDrawn(mesh, r) {
+    const attr = mesh.geometry.attributes.position;
+    if (r.start + r.count > attr.count) {
+      this.ctx.error?.(`[buildings] hide: vertex range ${r.start}+${r.count} is outside ${mesh.name} (${attr.count})`);
+      return;
+    }
+    collapseRange(attr, r.start, r.count, true);
+  }
 
   // If a chunk currently being incrementally rebuilt (see flushIncremental) gets touched again by a building
   // add/level-up/remove mid-rebuild, its snapshotted bucket list is now stale (could reference disposed
@@ -115,9 +197,16 @@ export class BuildingBatcher {
     for (const b of this.buildings.values()) {
       if (b.chunkKey !== key) continue;
       any = true;
-      for (const p of b.parts) {
-        if (!buckets.has(p.mat)) buckets.set(p.mat, []);
-        buckets.get(p.mat).push(p.geom);
+      for (let k = 0; k < b.parts.length; k++) {
+        const p = b.parts[k];
+        let bucket = buckets.get(p.mat);
+        if (!bucket) { bucket = { geoms: [], refs: [], verts: 0 }; buckets.set(p.mat, bucket); }
+        // mergeGeometries() concatenates in input order, so this part's vertices are [start, start+count) of the
+        // bucket's merged position attribute (see hide()).
+        const count = p.geom.attributes.position.count;
+        bucket.geoms.push(p.geom);
+        bucket.refs.push({ rec: b, partIdx: k, start: bucket.verts, count });
+        bucket.verts += count;
       }
     }
     if (!any) {
@@ -153,8 +242,8 @@ export class BuildingBatcher {
     const { key, chunk, entries, seen } = state;
     while (state.idx < entries.length) {
       if (!state.cur) {
-        const [matKey, geoms] = entries[state.idx];
-        state.cur = { matKey, geoms, subIdx: 0, partials: [] };
+        const [matKey, bucket] = entries[state.idx];
+        state.cur = { matKey, geoms: bucket.geoms, refs: bucket.refs, verts: bucket.verts, subIdx: 0, partials: [] };
       }
       const cur = state.cur;
       while (cur.subIdx < cur.geoms.length) {
@@ -177,6 +266,21 @@ export class BuildingBatcher {
         // must never take the whole app down - skip this bucket for this rebuild rather than crash.
         this.ctx.error?.(`[buildings] mergeGeometries failed for mat="${cur.matKey}" (${cur.geoms.length} pieces) - skipped this rebuild`);
       } else {
+        // Vertex ranges of the mesh about to be drawn, by building id. Parts hidden since their slice was merged
+        // (or before this rebuild began) are squashed again here, so hidden state survives every re-merge.
+        const byId = new Map();
+        if (merged.attributes.position.count !== cur.verts) {
+          // ranges would be wrong: draw the bucket without them, so hide() waits for a re-merge instead of
+          // squashing somebody else's triangles
+          this.ctx.error?.(`[buildings] merged vertex count ${merged.attributes.position.count} != ${cur.verts} for mat="${cur.matKey}"`);
+        } else {
+          for (const r of cur.refs) {
+            let list = byId.get(r.rec.id);
+            if (!list) { list = []; byId.set(r.rec.id, list); }
+            list.push({ partIdx: r.partIdx, gen: r.rec.gen, start: r.start, count: r.count });
+            if (r.rec.hidden.has(r.partIdx)) collapseRange(merged.attributes.position, r.start, r.count, false);
+          }
+        }
         let mesh = chunk.meshes.get(cur.matKey);
         if (!mesh) {
           mesh = new THREE.Mesh(merged, this.resolveMaterial(cur.matKey));
@@ -188,6 +292,7 @@ export class BuildingBatcher {
           mesh.geometry.dispose();
           mesh.geometry = merged;
         }
+        mesh.userData.byId = byId;
       }
       state.idx++;
       state.cur = null;
