@@ -222,9 +222,11 @@ function roadGhostGeom(ctx, kind, a, b) {
     const buildingBlocked = roadBuildingBlocked(ctx, a, b, kind);
     valid = crossing.ok && !buildingBlocked && !ctx.world.roadOverlapBlocked(a, b, kind);
     cost = Math.round(length * (PRICE_PER_M[kind] ?? 100) * (crossing.crossesWater ? BRIDGE_COST_MULTIPLIER : 1));
-    status = `${label}: ${Math.round(length)} m, ${priceText(ctx, cost)}`;
+    if (valid && currentMoney(ctx) < cost) { valid = false; status = `Insufficient funds — need $${cost.toLocaleString()}`; }
+    else status = `${label}: ${Math.round(length)} m, ${priceText(ctx, cost)}`;
   }
-  return { length, width, mid: { x: midx, y: midy + 0.25, z: midz }, angle: Math.atan2(dz, dx), valid, cost, mode, status };
+  // a rotation about Y turns the ribbon's long axis (+X) toward -Z, so the heading is atan2(-dz, dx)
+  return { length, width, mid: { x: midx, y: midy + 0.25, z: midz }, angle: Math.atan2(-dz, dx), valid, cost, mode, status };
 }
 
 function normRect(d) { return { i0: Math.min(d.i0, d.i1), i1: Math.max(d.i0, d.i1), j0: Math.min(d.j0, d.j1), j1: Math.max(d.j0, d.j1) }; }
@@ -1056,6 +1058,15 @@ function showCoverageRing(ctx, b) {
   mesh.visible = true;
 }
 
+/** World-space end points of the road ghost as it is actually drawn (read back off the mesh transform, so a
+ * check compares what is on screen rather than the inputs it was built from). Null when no ribbon is showing. */
+function ribbonPath() {
+  const mesh = S.ghosts?.ribbon;
+  if (!mesh?.visible) return null;
+  mesh.updateMatrixWorld(true);
+  return [-0.5, 0.5].map((u) => { const p = mesh.localToWorld(new THREE.Vector3(u, 0, 0)); return { x: p.x, y: p.y, z: p.z }; });
+}
+
 // ---- public api -------------------------------------------------------------------------------------------
 
 const api = {
@@ -1066,6 +1077,7 @@ const api = {
     dragging: !!S.drag,
     drag: S.drag ? { ...S.drag } : null,
     ribbonVisible: !!S.ghosts?.ribbon.visible,
+    ribbonPath: ribbonPath(),
     rectVisible: !!S.ghosts?.rect.visible,
     pointVisible: !!S.ghosts?.point.visible,
   }),

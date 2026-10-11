@@ -16,6 +16,9 @@
 // Free construction (2026-10-11):
 //   K  the mode survives save -> load (and the HUD label says so); with it on a street is placed for "free" and the
 //      treasury does not move, spend() never refuses; off again, spend() refuses as before
+// Road drag ghost (2026-10-11):
+//   L  a diagonal drag: the ghost ribbon ends on the drag's two ends and the street is built there; short of
+//      funds, the ghost says so before release and nothing is built
 // Exit 1 on any failed check.
 import { openApp, BASE_URL } from './shot.mjs';
 
@@ -599,6 +602,73 @@ let before = null;
       check(after.edges === fb.edges + 1 && /free/.test(status) && /free/.test(after.toast) && !/\$/.test(after.toast), `K: the street was built and quoted as free ("${status}" / "${after.toast}")`);
       check(Math.abs(paid) < Math.abs(fb.net) * 4 + 50, `K: the treasury did not pay for it ($${paid})`);
       check(after.refusedAfter === false && after.state === false, 'K: switched off, spend() refuses an unaffordable amount again');
+    }
+
+    // L: a diagonal road drag. The ghost runs from the press point to the cursor, and the street lands on it.
+    const dg = await page.evaluate(async () => {
+      const c = window.__city, w = c.world, H = window.__pt;
+      const o = H.openLand(10, 2);
+      if (!o) return { err: 'no open land' };
+      const A = w.cellToWorld(o.i + 1, o.j + 1), B = w.cellToWorld(o.i + 8, o.j + 6);
+      const mx = (A.x + B.x) / 2, mz = (A.z + B.z) / 2, y = w.getHeight(mx, mz);
+      c.ctx.camera.position.set(mx, y + 110, mz + 0.5);
+      c.ctx.controls.target.set(mx, y, mz);
+      c.ctx.controls.update();
+      await H.frames(6);
+      const r = c.ctx.renderer.domElement.getBoundingClientRect();
+      const scr = (p) => { const v = new c.THREE.Vector3(p.x, w.getHeight(p.x, p.z), p.z).project(c.ctx.camera); return [r.left + (v.x + 1) / 2 * r.width, r.top + (1 - v.y) / 2 * r.height]; };
+      return { a: scr(A), b: scr(B), edges: [...w.roads.edges.keys()] };
+    });
+    if (dg.err) check(false, `L: ${dg.err}`);
+    else {
+      const dragTo = async (from, to) => {
+        await page.mouse.move(from[0], from[1]);
+        await page.mouse.down();
+        await page.mouse.move((from[0] + to[0]) / 2, (from[1] + to[1]) / 2, { steps: 4 });
+        await page.mouse.move(to[0], to[1], { steps: 4 });
+        await page.evaluate(() => window.__pt.frames(2));
+        return page.evaluate(() => {
+          const g = window.__city.ctx.modules.get('tools').api.getGhostState();
+          return { drag: g.drag, path: g.ribbonPath, status: document.querySelector('.lc-status')?.textContent || '' };
+        });
+      };
+      const off = (p, q) => Math.hypot(p.x - q.x, p.z - q.z);
+      // the ghost's two ends against the drag's two ends, in whichever order the ribbon happens to run
+      const ghostOff = (g) => !g.path || !g.drag ? Infinity : Math.min(
+        Math.max(off(g.path[0], g.drag.a), off(g.path[g.path.length - 1], g.drag.b)),
+        Math.max(off(g.path[0], g.drag.b), off(g.path[g.path.length - 1], g.drag.a)));
+
+      // with the treasury short, the ghost says so and the release builds nothing
+      await page.evaluate(() => {
+        const sim = window.__city.ctx.modules.get('simulation').api;
+        window.__pt.realStats = sim.getStats;
+        sim.getStats = () => ({ ...window.__pt.realStats.call(sim), money: 100 });
+        window.__city.ctx.modules.get('ui').api.setTool('road:street');
+      });
+      const poor = await dragTo(dg.a, dg.b);
+      await page.mouse.up();
+      const poorEdges = await page.evaluate(async () => {
+        const c = window.__city;
+        await window.__pt.frames(4);
+        c.ctx.modules.get('simulation').api.getStats = window.__pt.realStats;
+        return c.world.roads.edges.size;
+      });
+      check(/Insufficient funds/.test(poor.status) && poorEdges === dg.edges.length, `L: an unaffordable drag says so before release and builds nothing ("${poor.status}", ${poorEdges - dg.edges.length} edges)`);
+
+      const g = await dragTo(dg.a, dg.b);
+      await page.mouse.up();
+      const built = await page.evaluate(async (had) => {
+        const c = window.__city, w = c.world;
+        await window.__pt.frames(4);
+        c.ctx.modules.get('ui').api.setTool(null);
+        return [...w.roads.edges.values()].filter((e) => !had.includes(e.id)).map((e) => [w.roads.nodes.get(e.a), w.roads.nodes.get(e.b)].map((n) => ({ x: n.x, z: n.z })));
+      }, dg.edges);
+      const len = g.drag ? off(g.drag.a, g.drag.b) : 0;
+      check(len > 50 && ghostOff(g) < 1, `L: the ghost of a ${len.toFixed(0)} m diagonal drag ends on the drag's ends (off by ${ghostOff(g).toFixed(1)} m)`);
+      const builtOff = built.length === 1 ? Math.min(
+        Math.max(off(built[0][0], g.drag.a), off(built[0][1], g.drag.b)),
+        Math.max(off(built[0][0], g.drag.b), off(built[0][1], g.drag.a))) : Infinity;
+      check(built.length === 1 && builtOff < 1, `L: the street is built where the ghost was (${built.length} edge, off by ${builtOff.toFixed(1)} m)`);
     }
 
     // G: zone 6 road-adjacent cells in the mature city
