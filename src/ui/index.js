@@ -380,6 +380,7 @@ export default {
     S.hud.setStuds(S.settings.studs);
     S.hud.setViewsAvailable(!!viewsApi(ctx));
     S.hud.setStatsAvailable(!!simApi(ctx));
+    S.hud.setFreeBuild(!!simApi(ctx)?.getFreeBuild?.());
     S.hud.setActiveView(viewsApi(ctx)?.getView?.() ?? null);
     S.minimap = new Minimap(ctx, S.hud.minimapCanvas, moveCameraTo);
     S.minimap.setActiveView(viewsApi(ctx)?.getView?.() ?? null);
@@ -399,6 +400,8 @@ export default {
 
     // events
     S.offs.push(
+      // the simulation announces free-construction changes (Options switch, or a loaded save) this way
+      ctx.events.on('settings:changed', (p = {}) => { if ('freeBuild' in p) S.hud.setFreeBuild(!!p.freeBuild); }),
       ctx.events.on('sim:tick', (p) => {
         S.hadTick = true;
         applyStats(p?.stats);

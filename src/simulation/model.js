@@ -154,6 +154,7 @@ export class SimModel {
     this.basePolicy = { demandBias: 0, upkeepMul: 1, incomeMul: 1 };  // scenario knobs (showcases/tests)
     this.policies = new Set();                                        // active policy ids (see policies.js)
     this.policyFx = mergePolicyFx(this.basePolicy, []);
+    this.freeBuild = false;   // free construction mode: a player setting, so a reset (New City) keeps it; loadState sets it
     this.reset();
   }
 
@@ -728,10 +729,12 @@ export class SimModel {
   /** Active policy ids in catalogue order (stable for saves/tests). */
   getActivePolicies() { return POLICIES.filter((p) => this.policies.has(p.id)).map((p) => p.id); }
 
-  /** One-time capital spend (e.g. placing a utility building): debits the treasury iff affordable. */
+  /** One-time capital spend (e.g. placing a utility building): debits the treasury iff affordable.
+   *  Under `freeBuild` (Options → Gameplay → Free construction) it always succeeds and debits nothing; upkeep,
+   *  taxes and debt are untouched by the mode. */
   spend(amount) {
     const cost = Number(amount) || 0;
-    if (cost <= 0) return true;
+    if (cost <= 0 || this.freeBuild) return true;
     if (this.money < cost) return false;
     this.money -= cost;
     return true;

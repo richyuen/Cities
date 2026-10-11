@@ -13,6 +13,9 @@
 //   G  land zoned during play grows in the mature demo city (whose demand idles under the 0.3 gate), other land does not
 //   H  a utility on gently uneven ground levels its site (charged), and the neighbours are left alone
 //   J  V / Shift+V cycle through "off"; the coverage plate is a faint tint; Continue starts from an overview
+// Free construction (2026-10-11):
+//   K  the mode survives save -> load (and the HUD label says so); with it on a street is placed for "free" and the
+//      treasury does not move, spend() never refuses; off again, spend() refuses as before
 // Exit 1 on any failed check.
 import { openApp, BASE_URL } from './shot.mjs';
 
@@ -251,7 +254,10 @@ let before = null;
       sim.spend(1234);
       await H.frames(30); // park flush (200 ms) and any deferred prop work
       sim.tick(true);     // stats are a per-tick snapshot: make them current before reading
-      return { before: H.census(), save: JSON.stringify(serializeSave(c.ctx, { name: 'check-playtest' })) };
+      sim.setFreeBuild(true); // K: the save carries the mode (page 2 switches it off again before the charged checks)
+      const save = JSON.stringify(serializeSave(c.ctx, { name: 'check-playtest' }));
+      sim.setFreeBuild(false);
+      return { before: H.census(), save };
     });
     before = snap.before; save = snap.save;
     check(before.day > 1 && before.tick >= 1500, `setup: the saved city is past day 1 (day ${before.day}, tick ${before.tick}, $${before.money}, ${before.props} props, ${(save.length / 1e6).toFixed(2)} MB)`);
@@ -280,6 +286,18 @@ let before = null;
       return { r0, r1, r2 };
     }, save);
     const { r0, r1, r2 } = after;
+    // K: the loaded save had free construction on; read it, then switch it off so the charged checks below (H, I) see
+    // the default
+    const fbLoad = await page.evaluate(() => {
+      const sim = window.__city.ctx.modules.get('simulation').api;
+      const out = { on: sim.getFreeBuild(), label: document.querySelector('.lc-stat.money .lc-stat-label, .lc-stat-money .lc-stat-label')?.textContent
+        || [...document.querySelectorAll('.lc-stat-label')].map((e) => e.textContent).find((t) => /Treasury/.test(t)) || '' };
+      sim.setFreeBuild(false);
+      out.labelOff = [...document.querySelectorAll('.lc-stat-label')].map((e) => e.textContent).find((t) => /Treasury/.test(t)) || '';
+      return out;
+    });
+    check(fbLoad.on === true, 'K: free construction survives save -> load');
+    check(/free build/.test(fbLoad.label) && fbLoad.labelOff === 'Treasury', `K: the Treasury label follows the mode ("${fbLoad.label}" -> "${fbLoad.labelOff}")`);
     check(r0.money === before.money && r0.day === before.day && r0.tick === before.tick, `A: load restores treasury/day/tick ($${before.money}/d${before.day}/t${before.tick} -> $${r0.money}/d${r0.day}/t${r0.tick})`);
     check(Math.abs(r2.money - before.money) < Math.max(5000, Math.abs(before.money) * 0.02) && r2.day === before.day && r2.tick > before.tick && r2.tick <= before.tick + 12, // the game keeps ticking during the waits
       `A: and they survive the next tick ($${r2.money}/d${r2.day}/t${r2.tick})`);
@@ -532,6 +550,55 @@ let before = null;
       const paid = rd.money - after.money;
       check(after.edges === rd.edges + 1 && Number.isFinite(quoted) && quoted > 1000, `I: the street was built and quoted a price ("${after.toast}")`);
       check(Math.abs(paid - quoted) < Math.abs(rd.net) * 4 + 50, `I: the treasury paid it ($${paid} for a $${quoted} street)`);
+    }
+
+    // K: the same street again on the next open plot, with free construction on: quoted "free", nothing paid
+    const fb = await page.evaluate(async () => {
+      const c = window.__city, w = c.world, H = window.__pt;
+      const sim = c.ctx.modules.get('simulation').api;
+      sim.setFreeBuild(true);
+      const money0 = sim.getStats().money;
+      const out = { refusedBefore: null, okFree: sim.spend(money0 + 1e9), moneyAfterSpend: sim.getStats().money, money0 };
+      sim.tick(true);
+      out.moneyAfterSpend = sim.getStats().money;
+      const o = H.openLand(10, 2);
+      if (!o) return { err: 'no open land' };
+      const A = w.cellToWorld(o.i + 1, o.j + 5), B = w.cellToWorld(o.i + 8, o.j + 5);
+      const y = w.getHeight(A.x, A.z);
+      c.ctx.camera.position.set((A.x + B.x) / 2, y + 110, A.z + 0.5);
+      c.ctx.controls.target.set((A.x + B.x) / 2, y, A.z);
+      c.ctx.controls.update();
+      await H.frames(6);
+      const r = c.ctx.renderer.domElement.getBoundingClientRect();
+      const scr = (p) => { const v = new c.THREE.Vector3(p.x, w.getHeight(p.x, p.z), p.z).project(c.ctx.camera); return [r.left + (v.x + 1) / 2 * r.width, r.top + (1 - v.y) / 2 * r.height]; };
+      sim.tick(true);
+      return { ...out, a: scr(A), b: scr(B), money: sim.getStats().money, net: sim.getBudget().perTick.net, edges: w.roads.edges.size };
+    });
+    if (fb.err) check(false, `K: ${fb.err}`);
+    else {
+      check(fb.okFree === true && Math.abs(fb.moneyAfterSpend - fb.money0) < Math.abs(fb.net) * 2 + 50, `K: spend() accepts more than the treasury holds and charges nothing ($${fb.money0} -> $${fb.moneyAfterSpend})`);
+      await page.evaluate(() => window.__city.ctx.modules.get('ui').api.setTool('road:street'));
+      await page.mouse.move(fb.a[0], fb.a[1]);
+      await page.mouse.down();
+      await page.mouse.move((fb.a[0] + fb.b[0]) / 2, fb.a[1], { steps: 4 });
+      await page.mouse.move(fb.b[0], fb.b[1], { steps: 4 });
+      await page.evaluate(() => window.__pt.frames(2));
+      const status = await page.evaluate(() => document.querySelector('.lc-status')?.textContent || '');
+      await page.mouse.up();
+      await page.evaluate(() => window.__pt.frames(4));
+      const after = await page.evaluate(() => {
+        const c = window.__city, sim = c.ctx.modules.get('simulation').api;
+        const toast = [...document.querySelectorAll('.lc-toast, [class*="toast"]')].map((t) => t.textContent).filter((t) => /built/.test(t)).pop() || '';
+        sim.tick(true);
+        c.ctx.modules.get('ui').api.setTool(null);
+        const money = sim.getStats().money;
+        sim.setFreeBuild(false);
+        return { money, edges: c.world.roads.edges.size, toast, refusedAfter: sim.spend(money + 1e9), state: sim.getState().freeBuild };
+      });
+      const paid = fb.money - after.money;
+      check(after.edges === fb.edges + 1 && /free/.test(status) && /free/.test(after.toast) && !/\$/.test(after.toast), `K: the street was built and quoted as free ("${status}" / "${after.toast}")`);
+      check(Math.abs(paid) < Math.abs(fb.net) * 4 + 50, `K: the treasury did not pay for it ($${paid})`);
+      check(after.refusedAfter === false && after.state === false, 'K: switched off, spend() refuses an unaffordable amount again');
     }
 
     // G: zone 6 road-adjacent cells in the mature city

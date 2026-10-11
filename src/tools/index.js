@@ -213,7 +213,7 @@ function roadGhostGeom(ctx, kind, a, b) {
       valid = length >= MIN_ROAD_LEN && (e.kindChanged || e.dirChanged);
       if (!valid) status = `Already ${oneway ? 'a one-way ' : 'a '}${ROAD_LABEL[kind] || kind}`;
       else if (currentMoney(ctx) < cost) { valid = false; status = `Insufficient funds — need $${cost.toLocaleString()}`; }
-      else status = `${label} upgrade: ${Math.round(length)} m, $${cost.toLocaleString()}`;
+      else status = `${label} upgrade: ${Math.round(length)} m, ${priceText(ctx, cost)}`;
     }
   } else if (length < MIN_ROAD_LEN) {
     valid = false; cost = 0; status = `${label}: ${Math.round(length)} m`;
@@ -222,7 +222,7 @@ function roadGhostGeom(ctx, kind, a, b) {
     const buildingBlocked = roadBuildingBlocked(ctx, a, b, kind);
     valid = crossing.ok && !buildingBlocked && !ctx.world.roadOverlapBlocked(a, b, kind);
     cost = Math.round(length * (PRICE_PER_M[kind] ?? 100) * (crossing.crossesWater ? BRIDGE_COST_MULTIPLIER : 1));
-    status = `${label}: ${Math.round(length)} m, $${cost.toLocaleString()}`;
+    status = `${label}: ${Math.round(length)} m, ${priceText(ctx, cost)}`;
   }
   return { length, width, mid: { x: midx, y: midy + 0.25, z: midz }, angle: Math.atan2(dz, dx), valid, cost, mode, status };
 }
@@ -347,7 +347,17 @@ function groundHeightFn(ctx) {
   return terr?.status === 'ok' && typeof terr.api?.surfaceHeight === 'function' ? terr.api.surfaceHeight : null;
 }
 
+/** Free construction mode (simulation.setFreeBuild): nothing is charged, so every funds check passes. */
+function freeBuild(ctx) {
+  const sim = ctx.modules.get('simulation');
+  return sim?.status === 'ok' && !!sim.api?.getFreeBuild?.();
+}
+
+/** Price as shown in the status bar and toasts: "$12,000", or "free" under free construction. */
+function priceText(ctx, cost) { return freeBuild(ctx) ? 'free' : `$${cost.toLocaleString()}`; }
+
 function currentMoney(ctx) {
+  if (freeBuild(ctx)) return Infinity;
   const sim = ctx.modules.get('simulation');
   if (sim?.status === 'ok' && typeof sim.api?.getStats === 'function') {
     try { const m = sim.api.getStats()?.money; if (Number.isFinite(m)) return m; } catch (_) { /* fall through */ }
@@ -561,7 +571,7 @@ function updateGhostsForDrag() {
     const { reason: blocked, gradeCost } = stampSite(ctx, d.i0, d.j0, def.w, def.d);
     applyRect(rectBounds(ctx, d.i0, d.j0, d.i1, d.j1), blocked ? 'transRed' : 'lime');
     const afford = currentMoney(ctx) >= def.cost + gradeCost;
-    const price = `$${def.cost.toLocaleString()}${gradeCost ? ` + $${gradeCost.toLocaleString()} grading` : ''}`;
+    const price = freeBuild(ctx) ? 'free' : `$${def.cost.toLocaleString()}${gradeCost ? ` + $${gradeCost.toLocaleString()} grading` : ''}`;
     const txt = blocked ? `Blocked — ${STAMP_BLOCK_TEXT[blocked]}` : afford ? price : 'Insufficient funds';
     uiApi(ctx)?.setStatus?.(`${def.label}: ${txt}`);
     return;
@@ -672,7 +682,7 @@ function finishRoad(d) {
     if (!res) { fail('Cannot upgrade here — the drag must follow the road', a); return; }
     spendMoney(ctx, cost);
     const what = res.kindChanged ? `Upgraded to ${label}` : oneway ? 'One-way set' : 'Two-way set';
-    notify(`${what}: ${Math.round(res.length)} m, $${cost.toLocaleString()}`, 'success');
+    notify(`${what}: ${Math.round(res.length)} m, ${priceText(ctx, cost)}`, 'success');
     return;
   }
 
@@ -689,7 +699,7 @@ function finishRoad(d) {
   spendMoney(ctx, cost);
   const props = ctx.modules.get('props');
   if (props?.status === 'ok') { try { props.api?.populateAlongRoad?.(edgeId); } catch (e) { ctx.error('[tools] props.populateAlongRoad failed:', e); } }
-  notify(`${oneway ? 'One-way ' : ''}${label} built: ${Math.round(length)} m, $${cost.toLocaleString()}`, 'success');
+  notify(`${oneway ? 'One-way ' : ''}${label} built: ${Math.round(length)} m, ${priceText(ctx, cost)}`, 'success');
   // world.addRoad emits 'road:added', which the audio module already listens to and plays 'road' for — no
   // explicit ctx.modules.get('audio').api.play('road', ...) here, to avoid an audible double-trigger.
 }
@@ -719,7 +729,7 @@ function finishZone(d) {
     const res = safeCall(() => zoning.setZoneRect(i0, j0, i1, j1, d.zone, 1)) || { cells: 0, cost: 0 };
     if (res.cells > 0) {
       spendMoney(ctx, res.cost);
-      notify(`${ZONE_LABEL[d.zone]}: ${res.cells} cell${res.cells === 1 ? '' : 's'}, $${res.cost.toLocaleString()}`, 'success');
+      notify(`${ZONE_LABEL[d.zone]}: ${res.cells} cell${res.cells === 1 ? '' : 's'}, ${priceText(ctx, res.cost)}`, 'success');
     } else fail('Nothing to zone here');
     return;
   }
@@ -766,7 +776,7 @@ function finishStamp(d) {
   // Level the pad before the building exists, so it is generated on the finished ground.
   if (gradeCost) ctx.modules.get('terrain').api.flatten(d.i0, d.j0, d.i0 + def.w - 1, d.j0 + def.d - 1);
   ctx.world.addBuilding({ i: d.i0, j: d.j0, w: def.w, d: def.d, zone: null, kind: def.kind, level: 1 });
-  notify(`${def.label} built${hasLedger ? `, $${total.toLocaleString()}` : ''}${gradeCost ? ' (site graded)' : ''}`, 'success');
+  notify(`${def.label} built${hasLedger ? `, ${priceText(ctx, total)}` : ''}${gradeCost ? ' (site graded)' : ''}`, 'success');
   const audio = ctx.modules.get('audio');
   if (audio?.status === 'ok') { try { audio.api?.play?.('zone'); } catch (_) { /* ignore */ } }
 }

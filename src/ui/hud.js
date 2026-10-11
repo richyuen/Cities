@@ -252,6 +252,8 @@ export class Hud {
   /** Show/hide the Statistics entry point (index.js hides it when the simulation module is unavailable). */
   setStatsAvailable(on) { this.statsBtn.hidden = !on; }
   setMoney(v) { setText(this.money.value, fmtMoney(v)); setClass(this.money.value, 'neg', v < 0); }
+  /** Free construction mode: the Treasury label says so, since nothing else in-game hints at it. */
+  setFreeBuild(on) { setText(this.money.el.querySelector('.lc-stat-label'), on ? 'Treasury · free build' : 'Treasury'); }
   setPop(v) { setText(this.pop.value, fmtInt(v)); }
   setJobs(v) { setText(this.jobs.value, fmtInt(v)); }
   setLevel(name) { if (this.levelChip && name) this.levelChip.textContent = name; }

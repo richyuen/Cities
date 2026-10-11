@@ -78,8 +78,17 @@ const api = {
   getBudget() { return S.model.getBudget(); },
   setTaxRate(zone, rate) { return S.model.setTaxRate(zone, rate); },
   getTaxRate(zone) { return zone ? S.model.taxRate[zone] : { ...S.model.taxRate }; },
-  /** Debit the treasury by `amount`; returns false (no-op) if unaffordable. */
+  /** Debit the treasury by `amount`; returns false (no-op) if unaffordable (always true under free build). */
   spend(amount) { return S.model.spend(amount); },
+  /** Free construction mode: `spend()` charges nothing and `tools` treats funds as unlimited; the rest of the
+   *  economy runs as usual. Saved with the simulation state. Emits settings:changed { freeBuild }. */
+  setFreeBuild(on) {
+    const v = !!on;
+    if (S.model.freeBuild === v) return;
+    S.model.freeBuild = v;
+    S.ctx.events.emit('settings:changed', { freeBuild: v });
+  },
+  getFreeBuild() { return !!S.model.freeBuild; },
   /** 0..1 fraction of RCI capacity within power/water/education/health coverage. */
   getUtilityCoverage() { return S.model.getUtilityCoverage(); },
   /** { powered, watered, policed, schooled, hospitaled, roadConnected } for a building id, or null if untracked. */
@@ -163,7 +172,7 @@ const api = {
     const m = S.model;
     // `live`: the model's own running fields (stats only mirrors them once per tick, rounded).
     const live = { money: m.money, tick: m.tick, gameSeconds: m.gameSeconds, happiness: m.happiness, pressure: { ...m.pressure } };
-    return { policy: { ...m.basePolicy }, policies: m.getActivePolicies(), taxRate: { ...m.taxRate }, transitUpkeep: m.transitUpkeep, stats: snapshot(m.stats), live, occupancy: m.getOccupancyState(), milestones: m.getClaimedMilestones() };
+    return { policy: { ...m.basePolicy }, policies: m.getActivePolicies(), taxRate: { ...m.taxRate }, transitUpkeep: m.transitUpkeep, freeBuild: !!m.freeBuild, stats: snapshot(m.stats), live, occupancy: m.getOccupancyState(), milestones: m.getClaimedMilestones() };
   },
   /** Restore exactly what getState() returned (used by menu's Load) — no synthetic tick warm-up: a loaded save
    * should look exactly as it did when saved, unlike a freshly generated city which has no history to restore. */
@@ -175,6 +184,8 @@ const api = {
     if (patch.policy) Object.assign(S.model.basePolicy, patch.policy);
     if (patch.taxRate) S.model.taxRate = { ...patch.taxRate };
     if (typeof patch.transitUpkeep === 'number') S.model.transitUpkeep = patch.transitUpkeep;
+    // Free construction is a per-save mode (saves from before it existed load with it off).
+    api.setFreeBuild(patch.freeBuild === true);
     if (patch.stats) {
       Object.assign(S.model.stats, patch.stats);
       // crime is a model field, not just a stat — restore it too, or the loaded city restarts at crime 0 and

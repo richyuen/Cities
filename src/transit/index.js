@@ -83,6 +83,9 @@ function nearestStop(x, z, maxDist) {
   return bestD <= maxDist ? best : null;
 }
 
+/** "$400", or "free" under the simulation's free-construction mode (spend() then charges nothing). */
+function priceText(sim, cost) { return sim?.getFreeBuild?.() ? 'free' : `$${cost.toLocaleString()}`; }
+
 function placeStop(x, z) {
   const ctx = S.ctx;
   if (S.stops.size >= MAX_STOPS) return { ok: false, reason: `Stop limit reached (${MAX_STOPS})` };
@@ -98,7 +101,7 @@ function placeStop(x, z) {
   refreshLineMembership();
   computeCoverage(); // immediate: the HUD should never show stale coverage after a placement
   S.ctx.events.emit('transit:changed', {});
-  notify(`Bus stop built${sim ? `, $${STOP_COST.toLocaleString()}` : ''}`, 'success');
+  notify(`Bus stop built${sim ? `, ${priceText(sim, STOP_COST)}` : ''}`, 'success');
   return { ok: true, id: stop.id };
 }
 
@@ -162,7 +165,7 @@ function createLine(stopIds, { silent = false } = {}) {
   refreshLineMembership();
   refreshRibbons();
   syncTraffic();
-  if (!silent) notify(`${line.name} opened: ${line.stopIds.length} stops${sim ? `, $${LINE_COST.toLocaleString()}` : ''}`, 'success');
+  if (!silent) notify(`${line.name} opened: ${line.stopIds.length} stops${sim ? `, ${priceText(sim, LINE_COST)}` : ''}`, 'success');
   ctx.events.emit('transit:changed', {});
   return { ok: true, id: line.id };
 }

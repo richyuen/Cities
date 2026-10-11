@@ -84,6 +84,11 @@ function buildGameplay(ctx) {
       const s = slider(0, 0.3, 0.01, rate, (v) => { simulation.setTaxRate(zone, v); val.textContent = `${Math.round(v * 100)}%`; });
       body.append(row(label, h('div', { style: 'display:flex;align-items:center;gap:10px' }, s, val)));
     }
+    if (typeof simulation.setFreeBuild === 'function') {
+      body.append(
+        row('Free construction', switchBtn(!!simulation.getFreeBuild?.(), (v) => simulation.setFreeBuild(v))),
+        h('div', { class: 'lc-menu-hint' }, 'Roads, zones, services and transit cost nothing; taxes and upkeep still apply.'));
+    }
   }
   if (environment) {
     const current = environment.state?.weather?.kind || 'clear';
