@@ -12,7 +12,8 @@
 //      is removed, the lot keeps its zoning and regrows, props and cars are picked up, the brick pool stays bounded,
 //      the storm sky is set and given back, stripped facades survive save/load and come back with repair;
 //   7. the storm showcase is the same on two fresh boots;
-//   8. the Kaiju button raises one kaiju (and no tornado while it is loose, nor the other way round): it walks,
+//   8. the Kaiju button raises one kaiju, the next of the variants each time; a click with a hazard's own tool
+//      sends it away and a click with the other tool replaces it (the api alone still refuses a second hazard); it walks,
 //      stomps, sweeps its tail and breathes fire; what it tears down comes apart as bricks with no funnel, is billed
 //      exactly, keeps its zoning and regrows; police and fire coverage shorten its rampage; it survives save/load
 //      and crafted saves; it costs at most 10 draw calls; it leaves when its time is up;
@@ -101,10 +102,25 @@ try {
   const dir0 = a0[0] ? (weather0.wind[0] * a0[0].dirX + weather0.wind[1] * a0[0].dirZ) / Math.hypot(...weather0.wind) : 0;
   check(dir0 > 0.999 && windAlong > 0.999, `path follows the wind it was dropped in, and the storm wind blows along the path (${dir0.toFixed(4)}, ${windAlong.toFixed(4)})`);
 
-  // second click while one is active must be refused
+  // a second click with the same tool sends the tornado away, at once, and the sky comes back; the next drops a new one
+  const statusLine = () => page.evaluate(() => { const el = document.querySelector('.lc-status'); return el?.classList.contains('open') ? el.textContent : ''; });
+  await page.mouse.move(990, 555);
+  await page.mouse.move(1000, 560);
+  const hint = await statusLine();
   await page.mouse.click(1000, 560);
-  await page.evaluate(() => window.__city.frames(4));
-  check((await disActive()).length === 1, 'a second spawn is refused while one is active (one at a time)');
+  const hintAfter = await statusLine();
+  check(/send the tornado away/.test(hint) && hintAfter === '', `hovering the map with the live hazard's own tool says what a click will do ("${hint}"), and the line clears once it is gone`);
+  const gone = await page.evaluate(() => {
+    const ctx = window.__city.ctx, d = ctx.modules.get('disasters').api;
+    return { n: d.getActive().length, live: d.isActive(), funnel: !!ctx.scene.getObjectByName('disasters')?.visible };
+  });
+  const weatherGone = await weather();
+  check(gone.n === 0 && !gone.live && !gone.funnel && sameWeather(weatherGone, weather0),
+    `a second click with the Tornado tool sends the tornado away: none active, the funnel hidden on that frame, the sky given back (${weatherGone.kind} ${weatherGone.intensity})`);
+  await page.mouse.click(960, 540);
+  await page.evaluate(() => window.__city.frames(6));
+  const a1 = await disActive();
+  check(a1.length === 1 && a1[0].id !== a0[0]?.id && sameWeather(await weather(), weather1), `and the click after that drops a new one (id ${a0[0]?.id} → ${a1[0]?.id}) under the storm sky`);
 
   // 2. travel: run 6 game-seconds at 4× and compare distance against the game clock
   const t0 = await page.evaluate(() => ({ tick: window.__city.ctx.modules.get('simulation').api.getStats().tick, t: window.__city.ctx.modules.get('disasters').api.getActive()[0] }));
@@ -442,24 +458,52 @@ try {
   await page.click('button[data-tool="hazard:kaiju"]');
   await page.mouse.click(960, 540);
   await page.evaluate(() => window.__city.frames(6));
-  const k0 = await getKaiju();
+  let k0 = await getKaiju();
   check(!!k0 && Number.isFinite(k0.x) && Number.isFinite(k0.z) && (await disActive()).length === 0, `toolbar click raises a kaiju at the click and no tornado (${k0 ? `${k0.x.toFixed(0)}, ${k0.z.toFixed(0)}` : 'none'})`);
   const risen = await page.evaluate(() => {
     const ctx = window.__city.ctx, g = ctx.scene.getObjectByName('disasters:kaiju'), k = ctx.modules.get('disasters').api.getKaiju();
     return { visible: !!g?.visible, above: g ? g.position.y + 59 - ctx.world.getHeight(k.x, k.z) : -1, tornado: !!ctx.scene.getObjectByName('disasters')?.visible };
   });
   check(risen.visible && risen.above > 5 && !risen.tornado, `a kaiju raised while paused is visible at once, already ${risen.above.toFixed(0)} m out of the ground`);
+  // the other tool swaps the hazard, the same tool sends it away; each new kaiju is the next of the variants
+  const kweather = await weather();
+  const hazards = () => page.evaluate(() => {
+    const ctx = window.__city.ctx, d = ctx.modules.get('disasters').api, w = ctx.world.weather;
+    return { kaiju: d.getKaiju(), tornadoes: d.getActive().length, ended: window.__kz.ended.map((e) => e.kind), toasts: [...window.__kz.toasts],
+      rig: !!ctx.scene.getObjectByName('disasters:kaiju')?.visible, funnel: !!ctx.scene.getObjectByName('disasters')?.visible, rain: w.kind === 'rain' && w.intensity >= 0.9 };
+  });
   await page.click('button[data-tool="hazard:tornado"]');
   await page.mouse.click(1000, 560);
+  const swap1 = await hazards();
+  check(swap1.kaiju === null && !swap1.rig && swap1.tornadoes === 1 && swap1.ended.join() === 'kaiju' && swap1.rain,
+    `a Tornado click while a kaiju is loose replaces it: the kaiju is gone on that frame (disaster:ended ${swap1.ended.join()}), one tornado under a storm sky`);
   await page.click('button[data-tool="hazard:kaiju"]');
   await page.mouse.click(900, 500);
+  const swap2 = await hazards();
+  check(!!swap2.kaiju && swap2.kaiju.id !== k0.id && swap2.tornadoes === 0 && !swap2.funnel && swap2.ended.join() === 'kaiju,tornado' && sameWeather(await weather(), kweather),
+    `a Kaiju click while a tornado is on the ground replaces it: the funnel is gone (disaster:ended ${swap2.ended.join()}), the sky given back, a new kaiju at the click`);
+  await page.mouse.click(900, 500);
+  const swap3 = await hazards();
+  check(swap3.kaiju === null && !swap3.rig && swap3.tornadoes === 0 && swap3.ended.join() === 'kaiju,tornado,kaiju',
+    'a second click with the Kaiju tool sends the kaiju home: nothing on the map');
+  await page.mouse.click(960, 540);
   await page.evaluate(() => window.__city.frames(4));
+  const swap4 = await hazards();
+  const variants = await page.evaluate(() => window.__city.ctx.modules.get('disasters').api.kaijuVariants());
+  check(variants.length >= 4 && new Set(variants.map((v) => v.id)).size === variants.length, `there are ${variants.length} different kaiju (${variants.map((v) => v.name).join(', ')})`);
+  check(k0.variant === 0 && swap2.kaiju?.variant === 1 && swap4.kaiju?.variant === 2, `each one raised is the next of them, in order (${[k0.variant, swap2.kaiju?.variant, swap4.kaiju?.variant].join(', ')})`);
+  const rising = swap4.toasts.filter((t) => /is rising in the city/.test(t));
+  check(rising.length === 3 && rising.every((t, i) => t.includes(variants[i].name)), `and is announced by name (${rising.map((t) => t.replace(/^\S+ Kaiju! /, '').replace(/ is rising.*/, '')).join(', ')})`);
+  check(swap4.toasts.filter((t) => /Tornado dismissed/.test(t)).length === 1 && swap4.toasts.filter((t) => /kaiju was sent home/.test(t)).length === 2,
+    'sending a hazard away says so: one toast for the tornado, one for each kaiju');
+  k0 = swap4.kaiju;
   const refused = await page.evaluate(() => {
     const d = window.__city.ctx.modules.get('disasters').api;
-    return { tornado: d.spawnTornado({ x: 0, z: 0 }), kaiju: d.spawnKaiju({ x: 0, z: 0 }), active: d.getActive().length, id: d.getKaiju()?.id, live: d.isActive() };
+    const seq = d.getState().kaijuSeq;
+    return { tornado: d.spawnTornado({ x: 0, z: 0 }), kaiju: d.spawnKaiju({ x: 0, z: 0 }), active: d.getActive().length, id: d.getKaiju()?.id, live: d.isActive(), seq, seq1: d.getState().kaijuSeq };
   });
-  check(refused.tornado === null && refused.kaiju === null && refused.active === 0 && refused.id === k0?.id && refused.live,
-    'a tornado and a second kaiju are refused while one is loose (toolbar and api): one hazard at a time');
+  check(refused.tornado === null && refused.kaiju === null && refused.active === 0 && refused.id === k0?.id && refused.live && refused.seq === 3 && refused.seq1 === 3,
+    'the api still refuses a tornado and a second kaiju while one is loose (one hazard at a time), and a refusal does not use up a variant');
   const sfx = await page.evaluate(() => window.__city.ctx.modules.get('audio').api.sfxNames);
   check(sfx.includes('stomp') && sfx.includes('roar'), `the kaiju has its own sounds (${sfx.filter((n) => n === 'stomp' || n === 'roar').join(', ')})`);
 
@@ -542,8 +586,8 @@ try {
   check(!!ksave.saved.kaiju && ksave.saved.tornadoes.length === 0 && !ksave.cleared, `a mid-rampage save holds the kaiju and no tornado (${ksave.saved.shedding.length} stripped buildings)`);
   const kp = ksave.pre, kq = ksave.post;
   check(!!kq && ksave.tornadoes === 0 && Math.abs(kq.x - kp.x) < 1e-6 && Math.abs(kq.z - kp.z) < 1e-6 && Math.abs(kq.heading - kp.heading) < 1e-9 && Math.abs(kq.age - kp.age) < 1e-9
-    && kq.steps === kp.steps && kq.phase === kp.phase && Math.abs(kq.life - kp.life) < 1e-9 && Math.hypot(kq.footL[0] - kp.footL[0], kq.footR[1] - kp.footR[1]) < 1e-6,
-    `load restores it where it stood: position, heading, age ${kp.age.toFixed(1)}, ${kp.steps} steps, phase ${kp.phase}, both feet`);
+    && kq.steps === kp.steps && kq.phase === kp.phase && kq.variant === kp.variant && kp.variant === 2 && ksave.saved.kaijuSeq === 3 && Math.abs(kq.life - kp.life) < 1e-9 && Math.hypot(kq.footL[0] - kp.footL[0], kq.footR[1] - kp.footR[1]) < 1e-6,
+    `load restores it where it stood and the kaiju it was: variant ${kp.variant}, position, heading, age ${kp.age.toFixed(1)}, ${kp.steps} steps, phase ${kp.phase}, both feet`);
   check(ksave.before.stripped > 0 && ksave.after.stripped === ksave.before.stripped && ksave.after.hiddenParts === ksave.before.hiddenParts,
     `and re-applies the stripped facades: ${ksave.after.stripped} buildings / ${ksave.after.hiddenParts} parts hidden (saved ${ksave.before.stripped} / ${ksave.before.hiddenParts})`);
 
@@ -560,14 +604,21 @@ try {
       && Math.hypot(k.footL[0] - k.x, k.footL[1] - k.z) < 30 && Math.hypot(k.footR[0] - k.x, k.footR[1] - k.z) < 30 && k.target === null && k.breathUntil <= 2.5 && k.nextBreath >= 0;
     d.loadState({ tornadoes: [{ id: 7, x: 0, z: 0, dirX: 1, dirZ: 0, age: 3, life: 60 }], kaiju: { id: 8, x: 0, z: 0, heading: 0 } });
     const both = { tornadoes: d.getActive().length, kaiju: d.getKaiju() };
+    // an older save: no variant, no place in the order. And one with nonsense in both.
+    d.loadState({ kaiju: { id: 9, x: 0, z: 0, heading: 0 } });
+    const old = { variant: d.getKaiju()?.variant, seq: d.getState().kaijuSeq };
+    d.loadState({ kaiju: { id: 10, x: 0, z: 0, heading: 0, variant: 99 }, kaijuSeq: -4 });
+    const wrong = { variant: d.getKaiju()?.variant, seq: d.getState().kaijuSeq };
     d.clear();
     d.loadState({ tornadoes: [], shedding: [] });
     const older = d.isActive();
     keep.kaiju.life = 75; // back with a full rampage ahead of it, for the checks below
     d.loadState(keep);
-    return { bogus, bounded, both, older, back: !!d.getKaiju() };
+    return { bogus, bounded, both, older, old, wrong, seq: keep.kaijuSeq, back: !!d.getKaiju(), variant: d.getKaiju()?.variant };
   });
   check(kcraft.bogus === null, 'a kaiju with non-finite fields is dropped, not frozen');
+  check(kcraft.old.variant === 0 && kcraft.old.seq === kcraft.seq && kcraft.wrong.variant === 0 && kcraft.wrong.seq === kcraft.seq && kcraft.variant === 2,
+    `a save without a variant loads the first kaiju and leaves the order where it was (variant ${kcraft.old.variant}, next still ${kcraft.old.seq}); a bad variant or count is ignored`);
   check(kcraft.bounded, 'out-of-range position, heading, age, life, steps, phase, feet, target and breath timers are clamped or rebuilt on load');
   check(kcraft.both.tornadoes === 1 && kcraft.both.kaiju === null, 'a crafted save with both hazards loads the tornado only');
   check(kcraft.older === false && kcraft.back, 'a save without the kaiju field (older saves) loads no kaiju');
@@ -706,6 +757,69 @@ try {
   check(kregrown > 0, `stomped lots regrow: ${kregrown} of ${klots.length} cells built on again within ${kgrew.toFixed(0)} game-s`);
   const kdrained = await disStats();
   check(kdrained.bricks.live === 0, `no brick is left in the air after the kaiju (${kdrained.bricks.live} live, ${kdrained.bricks.rubble} rubble, ${kdrained.bricks.fading} fading)`);
+
+  // the variants, through the api: the order cycles, a named variant leaves it alone, each is a different body on
+  // the same two-eyed rig
+  const vars = await page.evaluate(async () => {
+    const c = window.__city, ctx = c.ctx, d = ctx.modules.get('disasters').api;
+    const count = d.kaijuVariants().length, seq0 = d.getState().kaijuSeq;
+    const body = () => {
+      const m = ctx.scene.getObjectByName('kaiju:body'), a = m.instanceColor.array;
+      let h = 0;
+      for (let i = 0; i < m.count * 3; i++) h = (h * 31 + Math.round(a[i] * 255)) >>> 0;
+      return `${m.count}:${h}`;
+    };
+    const eyeOf = () => { const f = ctx.scene.getObjectByName('kaiju:fire'); return `${f.count}:${f.material.emissive.getHexString()}`; };
+    const seen = [], bodies = [], eyes = [];
+    for (let n = 0; n <= count; n++) {
+      d.spawnKaiju({ x: 0, z: 0 });
+      await c.frames(2);
+      seen.push(d.getKaiju().variant); bodies.push(body()); eyes.push(eyeOf());
+      d.despawn();
+    }
+    d.spawnKaiju({ x: 0, z: 0, variant: 2 });
+    const named = d.getKaiju().variant, sent = d.despawn(), seq1 = d.getState().kaijuSeq;
+    return { count, seq0, seq1, seen, bodies, eyes, named, sent, none: d.despawn(), live: d.isActive() };
+  });
+  check(vars.seen.every((v, n) => v === (vars.seq0 + n) % vars.count) && vars.seq1 === vars.seq0 + vars.count + 1,
+    `spawnKaiju cycles through the variants in order and starts over (${vars.seen.join(', ')} from a count of ${vars.seq0})`);
+  check(vars.named === 2 && vars.sent?.kind === 'kaiju' && vars.none === null && !vars.live, 'a named variant does not move the order on; despawn() names what it sent away and returns null when the map is clear');
+  check(new Set(vars.bodies.slice(0, vars.count)).size === vars.count && vars.bodies[vars.count] === vars.bodies[0] && vars.eyes.every((e) => e.startsWith('2:')) && new Set(vars.eyes).size >= 3,
+    `each variant is its own body on the same rig, with two eyes of its own colour (bricks:colour hash ${vars.bodies.slice(0, vars.count).join(', ')}; eyes ${[...new Set(vars.eyes)].join(', ')})`);
+
+  // sent away mid-rampage: what it did stands. The bricks in the air stay there, the damage not yet billed is billed.
+  const sent = await page.evaluate(async () => {
+    const c = window.__city, ctx = c.ctx, world = ctx.world, d = ctx.modules.get('disasters').api, sim = ctx.modules.get('simulation').api;
+    const B = ctx.modules.get('buildings').api;
+    for (let i = 0; i < 2; i++) sim.tick(true);
+    window.__ledger.charged = 0; window.__ledger.applied = 0;
+    let b = null;
+    for (const x of world.buildings.values()) { if (x.zone && !x.onFire && !(x.damage > 0) && B.getParts(x.id) && (!b || x.w * x.d > b.w * b.d)) b = x; }
+    const p = world.cellToWorld(b.i + (b.w - 1) / 2, b.j + (b.d - 1) / 2);
+    d.spawnKaiju({ x: p.x - 30, z: p.z, heading: 0 });
+    let billed = 0;
+    const off = ctx.events.on('sim:tick', () => { billed = window.__ledger.applied; });
+    c.setTimeScale(4);
+    let n = 0, st = d.getStats();
+    // until there are bricks in the air and damage the last tick has not seen yet
+    while (n++ < 2400 && d.getKaiju() && !(st.bricks.live > 20 && st.destroyed >= 1 && window.__ledger.applied > billed + 1e-6)) { await c.frames(1); st = d.getStats(); }
+    const owed = window.__ledger.applied - billed, live0 = d.getStats().bricks.live, destroyed = st.destroyed;
+    const what = d.despawn();
+    const after = { live: d.isActive(), rig: !!ctx.scene.getObjectByName('disasters:kaiju')?.visible, bricks: d.getStats().bricks.live };
+    if (typeof off === 'function') off();
+    c.pause();
+    for (let i = 0; i < 2; i++) sim.tick(true);
+    const ledger = { ...window.__ledger };
+    await c.frames(2);
+    const flying = d.getStats().bricks.live;
+    d.clear();
+    return { what, owed, live0, destroyed, after, ledger, flying, frames: n };
+  });
+  const sentExpected = sent.ledger.applied * 900;
+  check(sent.what?.kind === 'kaiju' && !sent.after.live && !sent.after.rig && sent.live0 > 20 && sent.after.bricks === sent.live0 && sent.flying > 0,
+    `a kaiju sent away mid-rampage leaves its bricks in the air: ${sent.live0} flying before, ${sent.after.bricks} on that frame, ${sent.flying} two frames on (${sent.destroyed} destroyed)`);
+  check(sent.owed > 0 && Math.abs(sent.ledger.charged - sentExpected) < Math.max(2, 0.01 * sentExpected),
+    `and the damage it had done is still billed: $${sent.ledger.charged.toFixed(1)} charged vs ${sent.ledger.applied.toFixed(4)} × $900 = $${sentExpected.toFixed(1)} (${(sent.owed * 900).toFixed(1)} of it not yet billed when it left)`);
 
   // exclusivity the other way round
   const other = await page.evaluate(() => {

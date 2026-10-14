@@ -675,7 +675,14 @@ function updateHoverGhost(hit) {
   const ctx = S.ctx;
   const info = toolKindOf(S.tool);
   if (!info || info.group === 'select') { hideGhosts(); return; }
-  if (info.group === 'hazard') { applyRect(rectBounds(ctx, hit.i, hit.j, hit.i, hit.j), 'transRed'); return; }
+  if (info.group === 'hazard') {
+    // a click with the live hazard's own tool sends it away: say so, and mark the cell differently
+    const live = hazardOnMap(ctx.modules.get('disasters'));
+    const dismiss = !!live && S.tool === `hazard:${live}`;
+    applyRect(rectBounds(ctx, hit.i, hit.j, hit.i, hit.j), dismiss ? 'transYellow' : 'transRed');
+    uiApi(ctx)?.setStatus?.(dismiss ? `Click to send the ${live} away` : null);
+    return;
+  }
   if (info.group === 'road') {
     const p = snapRoadPoint(ctx, hit.x, hit.z);
     applyPoint({ x: p.x, z: p.z }, 'lime');
@@ -939,15 +946,19 @@ function handleFireClick(e) {
   if (audio?.status === 'ok') safeCall(() => audio.api?.play?.('error', hit));
 }
 
+// Tornado and kaiju: one hazard on the map at a time. A click with the live hazard's own tool sends it away; a click
+// with the other tool swaps it for a new one at the click.
 function handleTornadoClick(e) {
   const ctx = S.ctx;
   const hit = screenToHit(ctx, e.clientX, e.clientY);
   if (!hit) { fail('Click the map to drop a tornado', null); return; }
   const d = ctx.modules.get('disasters');
   if (d?.status !== 'ok') { fail('Disasters unavailable'); return; }
-  if (d.api.getKaiju?.()) { fail('A kaiju is already loose'); return; }
+  const live = hazardOnMap(d);
+  if (live) { safeCall(() => d.api.despawn()); uiApi(ctx)?.setStatus?.(null); }
+  if (live === 'tornado') return;
   const id = safeCall(() => d.api.spawnTornado({ x: hit.x, z: hit.z }), null);
-  if (!id) { fail('A tornado is already on the ground'); return; }
+  if (!id) { fail('The tornado will not come'); return; }
 }
 
 function handleKaijuClick(e) {
@@ -956,9 +967,17 @@ function handleKaijuClick(e) {
   if (!hit) { fail('Click the map to release a kaiju', null); return; }
   const d = ctx.modules.get('disasters');
   if (d?.status !== 'ok' || typeof d.api.spawnKaiju !== 'function') { fail('Disasters unavailable'); return; }
-  if (d.api.isActive()) { fail(d.api.getKaiju() ? 'A kaiju is already loose' : 'A tornado is already on the ground'); return; }
+  const live = hazardOnMap(d);
+  if (live) { safeCall(() => d.api.despawn()); uiApi(ctx)?.setStatus?.(null); }
+  if (live === 'kaiju') return;
   const id = safeCall(() => d.api.spawnKaiju({ x: hit.x, z: hit.z }), null);
   if (!id) { fail('The kaiju will not come'); return; }
+}
+
+/** 'tornado' | 'kaiju' | null: the hazard on the map now. */
+function hazardOnMap(d) {
+  if (d?.status !== 'ok') return null;
+  return safeCall(() => (d.api.getKaiju?.() ? 'kaiju' : d.api.getActive().length ? 'tornado' : null), null);
 }
 
 function handleBurglaryClick(e) {
@@ -1090,7 +1109,7 @@ function onToolSelected(p) {
   const ui = uiApi(S.ctx);
   if (next === 'transit:stop') ui?.setStatus?.('Bus Stop — click a road to place ($400)');
   else if (next === 'transit:line') ui?.setStatus?.('Bus Line — click stops in visiting order; Enter or click the first stop to close the loop');
-  else if (prev === 'transit:stop' || prev === 'transit:line') ui?.setStatus?.(null);
+  else if (prev === 'transit:stop' || prev === 'transit:line' || prev === 'hazard:tornado' || prev === 'hazard:kaiju') ui?.setStatus?.(null);
 }
 
 function onKeyDown(e) {

@@ -1,5 +1,6 @@
 // disasters — city-scale hazards. One hazard on the map at a time: a tornado (owner pick, Wave D2), which takes the
-// city apart brick by brick (D3), or a kaiju (see the kaiju block below), which does the same on foot.
+// city apart brick by brick (D3), or a kaiju (see the kaiju block below), which does the same on foot. The player
+// can send the live one away (api.despawn); the hazard tools use that to dismiss it or to swap it for the other.
 //
 // The funnel travels along the world wind direction and damages every building within OUTER_R using the existing
 // fire damage model (b.damage 0..1 -> FIRE_DAMAGE_CAP_LOSS capacity loss, FIRE_REPAIR_RATE repair). Damage is billed
@@ -23,6 +24,7 @@ import { createTornadoVisuals } from './visuals.js';
 import { createBrickPool } from './bricks.js';
 import { brickify, shedOrder } from './brickify.js';
 import { createKaijuVisuals } from './kaiju.js';
+import { KAIJU_VARIANTS, KAIJU_VARIANT_COUNT } from './kaijuVariants.js';
 import {
   K_STEP_LEN, K_TAIL_SEGS, K_RISE_SEC, K_SINK_SEC, K_BREATH_DUR, sideOf, stepPhase, footPlant, tailPoints, mouthPoint, breathT,
 } from './kaijuGait.js';
@@ -100,6 +102,7 @@ const S = {
   regrow: [],              // lots of buildings this storm destroyed ({ i, j }), handed to buildings when it ends
   crashAt: -1e9,
   kaiju: null,             // the live kaiju (see the kaiju block below), or null
+  kaijuSeq: 0,             // kaiju raised so far without a named variant: the next one is kaijuSeq % KAIJU_VARIANT_COUNT
   kaijuVis: null, footfalls: 0, breaths: 0, ignited: 0, stompAt: -1e9, roarAt: -1e9,
 };
 
@@ -171,20 +174,21 @@ function fallbackDir() {
   return [Math.cos(a), Math.sin(a)];
 }
 
-/** The one way a tornado ends. `why`: 'expired' | 'clear' | 'load' | 'dispose'. */
+/** The one way a tornado ends. `why`: 'expired' | 'despawn' (the player sent it away) | 'clear' | 'load' | 'dispose'. */
 function endTornado(t, why) {
   const k = S.active.indexOf(t);
   if (k >= 0) S.active.splice(k, 1);
   flushProps();
   // The city rebuilds once the storm is gone: the destroyed lots (zoning kept) go to the front of the growth queue.
   // Not while it is still on the ground, or a starter house would pop up under the funnel.
-  if (S.regrow.length && why === 'expired') modApi('buildings')?.requestRegrowth?.(S.regrow);
+  if (S.regrow.length && (why === 'expired' || why === 'despawn')) modApi('buildings')?.requestRegrowth?.(S.regrow);
   S.regrow.length = 0;
   if (why !== 'load') endStormWeather(); // a load decides the weather itself (see loadState)
   if (why === 'dispose') return;
-  if (why === 'expired') {
+  if (S.visuals && !S.active.length) S.visuals.group.visible = false; // at once: a paused clock draws no dead funnel
+  if (why === 'expired' || why === 'despawn') {
     const n = S.destroyed;
-    uiApi(S.ctx)?.notify?.(`\u{1F32A} Tornado dissipated: ${n} building${n === 1 ? '' : 's'} destroyed`, n ? 'warn' : 'info');
+    uiApi(S.ctx)?.notify?.(`\u{1F32A} Tornado ${why === 'expired' ? 'dissipated' : 'dismissed'}: ${n} building${n === 1 ? '' : 's'} destroyed`, n ? 'warn' : 'info');
   }
   S.ctx.events.emit('disaster:ended', { id: t.id, destroyed: S.destroyed, kind: 'tornado' });
 }
@@ -443,7 +447,8 @@ function stepStorm(gdt) {
 }
 
 // ---- kaiju ---------------------------------------------------------------------------------------------------
-// A giant brick lizard that walks from tall block to tall block. It does three things to the city: a footfall
+// A giant brick monster (one of the variants in kaijuVariants.js; they differ in looks only) that walks from tall
+// block to tall block. It does three things to the city: a footfall
 // tears down what is under it (and shakes what is near), the swinging tail knocks down what it passes, and every
 // K_BREATH_PERIOD seconds it stops and sets up to K_BREATH_MAX buildings ahead of it on fire (simulation's own fire
 // model). Its rampage is a budget of K_LIFE_SEC game seconds that police and fire coverage under it drain faster;
@@ -468,9 +473,11 @@ function groundAt(x, z) {
   return Number.isFinite(y) ? y : S.ctx.world.getHeight(x, z);
 }
 
-function newKaiju(id, x, z, heading) {
+function kaijuVariant(k) { return KAIJU_VARIANTS[k.variant] || KAIJU_VARIANTS[0]; }
+
+function newKaiju(id, x, z, heading, variant = 0) {
   const k = {
-    id, x, z, heading, age: 0, life: K_LIFE_SEC, walked: 0, steps: 0, phase: 'rise', sinkT: 0, leaveT: 0, leaveHeading: null,
+    id, variant, x, z, heading, age: 0, life: K_LIFE_SEC, walked: 0, steps: 0, phase: 'rise', sinkT: 0, leaveT: 0, leaveHeading: null,
     footL: null, footR: null, target: null, retargetIn: 0, wanderIn: 0, wanderHeading: heading, turns: 0,
     nextBreath: K_BREATH_FIRST, breathUntil: 0, drain: 1, warned: false,
   };
@@ -485,12 +492,14 @@ function setFeet(k) {
   if (side > 0) { k.footR = a; k.footL = b; } else { k.footL = a; k.footR = b; }
 }
 
-function spawnKaiju({ x = 0, z = 0, heading } = {}) {
+function spawnKaiju({ x = 0, z = 0, heading, variant } = {}) {
   if (hazardLive()) return null;
   if (!Number.isFinite(x) || !Number.isFinite(z)) return null;
   // faces the middle of the map unless told otherwise
   const h = Number.isFinite(heading) ? wrapAngle(heading) : (Math.hypot(x, z) > 1 ? Math.atan2(-z, -x) : 0);
-  const k = newKaiju(S.nextId++, x, z, h);
+  // which one: the next in the table's order, unless the caller names one (which leaves the order where it was)
+  const v = Number.isInteger(variant) ? Math.min(KAIJU_VARIANT_COUNT - 1, Math.max(0, variant)) : S.kaijuSeq++ % KAIJU_VARIANT_COUNT;
+  const k = newKaiju(S.nextId++, x, z, h, v);
   k.age = K_RISE_SEC * 0.4; // never spawn fully underground: one dropped while the clock is paused must be visible
   S.kaiju = k;
   S.destroyed = 0; S.footfalls = 0; S.breaths = 0; S.ignited = 0;
@@ -498,17 +507,20 @@ function spawnKaiju({ x = 0, z = 0, heading } = {}) {
   return k;
 }
 
-/** The one way a kaiju ends. `why`: 'left' | 'clear' | 'load' | 'dispose'. */
+/** The one way a kaiju ends. `why`: 'left' | 'despawn' (the player sent it away) | 'clear' | 'load' | 'dispose'. */
 function endKaiju(k, why) {
   if (S.kaiju === k) S.kaiju = null;
   flushProps();
-  if (S.regrow.length && why === 'left') modApi('buildings')?.requestRegrowth?.(S.regrow);
+  if (S.regrow.length && (why === 'left' || why === 'despawn')) modApi('buildings')?.requestRegrowth?.(S.regrow);
   S.regrow.length = 0;
   if (S.kaijuVis) S.kaijuVis.group.visible = false;
   if (why === 'dispose') return;
   if (why === 'left') {
     const n = S.destroyed;
     uiApi(S.ctx)?.notify?.(`\u{1F996} The kaiju has left: ${n} building${n === 1 ? '' : 's'} destroyed`, n ? 'warn' : 'info');
+  } else if (why === 'despawn') {
+    const n = S.destroyed;
+    uiApi(S.ctx)?.notify?.(`${kaijuVariant(k).emoji} The kaiju was sent home: ${n} building${n === 1 ? '' : 's'} destroyed`, n ? 'warn' : 'info');
   }
   S.ctx.events.emit('disaster:ended', { id: k.id, destroyed: S.destroyed, kind: 'kaiju' });
 }
@@ -761,7 +773,9 @@ function cleanKaiju(p) {
   const num = (v, d, lo, hi) => clamp(fin(v) ? v : d, lo, hi);
   const id = p.id | 0 || S.nextId;
   S.nextId = Math.max(S.nextId, id + 1);
-  const k = newKaiju(id, clamp(p.x, -half.x - cs, half.x + cs), clamp(p.z, -half.z - cs, half.z + cs), wrapAngle(p.heading));
+  // an older save has no variant: it was the lizard
+  const variant = Number.isInteger(p.variant) && p.variant >= 0 && p.variant < KAIJU_VARIANT_COUNT ? p.variant : 0;
+  const k = newKaiju(id, clamp(p.x, -half.x - cs, half.x + cs), clamp(p.z, -half.z - cs, half.z + cs), wrapAngle(p.heading), variant);
   k.age = num(p.age, 0, 0, K_LIFE_SEC * 4);
   k.life = num(p.life, K_LIFE_SEC, 0, K_LIFE_SEC * 4);
   k.walked = num(p.walked, 0, 0, 1e7);
@@ -802,13 +816,27 @@ const api = {
     return t.id;
   },
   /** Raise a kaiju at (x,z), facing `heading` (radians, atan2(dz, dx); default: toward the middle of the map).
+   * Which kaiju: `variant` (an index into kaijuVariants()), else the next in that order, cycling.
    * Returns its id, or null while any hazard is on the map. */
   spawnKaiju(opts = {}) {
     const k = spawnKaiju(opts);
     if (!k) return null;
-    uiApi(S.ctx)?.notify?.('\u{1F996} Kaiju! A giant lizard is rising in the city', 'warn');
+    const v = kaijuVariant(k);
+    uiApi(S.ctx)?.notify?.(`${v.emoji} Kaiju! ${v.name} is rising in the city`, 'warn');
     hazardSound('roar', 'roarAt', K_ROAR_PER_SEC, k.x, k.z);
     return k.id;
+  },
+  /** The kaiju there are, in the order they rise: [{ id, name }]. */
+  kaijuVariants() { return KAIJU_VARIANTS.map((v) => ({ id: v.id, name: v.name })); },
+  /** Send the live hazard away now (the player's doing). Unlike clear(), what it already did stands: the damage
+   * accrued is still billed, the bricks in the air fall where they will, the emptied lots go to regrowth.
+   * Returns { kind: 'tornado' | 'kaiju', id }, or null when nothing is on the map. */
+  despawn() {
+    const t = S.active[0];
+    if (t) { endTornado(t, 'despawn'); return { kind: 'tornado', id: t.id }; }
+    const k = S.kaiju;
+    if (k) { endKaiju(k, 'despawn'); return { kind: 'kaiju', id: k.id }; }
+    return null;
   },
   /** Tornadoes only: [{ id, x, z, dirX, dirZ, age, life, strength }] — read-only copies. */
   getActive() { return S.active.map((t) => ({ ...t })); },
@@ -840,10 +868,11 @@ const api = {
     out.prevWeather = S.prevWeather ? copyWeather(S.prevWeather) : null;
     const k = S.kaiju;
     out.kaiju = k ? {
-      id: k.id, x: k.x, z: k.z, heading: k.heading, age: k.age, life: k.life, walked: k.walked, steps: k.steps, phase: k.phase,
+      id: k.id, variant: k.variant, x: k.x, z: k.z, heading: k.heading, age: k.age, life: k.life, walked: k.walked, steps: k.steps, phase: k.phase,
       sinkT: k.sinkT, leaveT: k.leaveT, leaveHeading: k.leaveHeading, footL: [...k.footL], footR: [...k.footR],
       target: k.target ? { ...k.target } : null, nextBreath: k.nextBreath, breathUntil: k.breathUntil, turns: k.turns, warned: k.warned,
     } : null;
+    out.kaijuSeq = S.kaijuSeq;
     out.regrow = hazardLive() ? S.regrow.map((c) => ({ i: c.i, j: c.j })) : [];
     return out;
   },
@@ -874,6 +903,8 @@ const api = {
     // one hazard at a time: a save that holds both keeps the tornado
     if (!S.active.length) S.kaiju = cleanKaiju(patch?.kaiju);
     else if (patch?.kaiju) S.ctx.log('[disasters] save holds a tornado and a kaiju: kaiju dropped');
+    // where the order of kaiju had got to; a save without it leaves the session's count alone
+    if (Number.isInteger(patch?.kaijuSeq) && patch.kaijuSeq >= 0 && patch.kaijuSeq <= 1e6) S.kaijuSeq = patch.kaijuSeq;
     if (hazardLive()) {
       // lots the saved hazard had already emptied: still to be handed over for regrowth when it ends
       for (const c of (Array.isArray(patch?.regrow) ? patch.regrow : []).slice(0, 4096)) {
@@ -973,7 +1004,7 @@ export default {
     ctx.scene.add(S.bricks.group);
     S.kaijuVis = createKaijuVisuals(ctx, S.rng.fork('kaiju'));
     ctx.scene.add(S.kaijuVis.group);
-    S.kaiju = null; S.footfalls = 0; S.breaths = 0; S.ignited = 0;
+    S.kaiju = null; S.kaijuSeq = 0; S.footfalls = 0; S.breaths = 0; S.ignited = 0;
     S.shedding.clear(); S.propQueue.length = 0; S.propTaken.clear(); S.regrow.length = 0;
     S.destroyed = 0; S.totalDestroyed = 0; S.propsTaken = 0; S.carsTaken = 0; S.prevWeather = null; S.stormWeather = null;
     // push the accrued insurance cost on every simulation tick (same one-tick pattern as transit upkeep)
@@ -1034,7 +1065,7 @@ export default {
       // K_SHOWCASE_PRESTEP of them), so the frame has it mid-rampage: footfalls behind it, bricks in the air.
       const c = ctx.world.cellToWorld(i0 - 3, j0 + 12);
       S.time = 0;
-      spawnKaiju({ x: c.x, z: c.z, heading: 0 });
+      spawnKaiju({ x: c.x, z: c.z, heading: 0, variant: 0 });
       for (let n = 0; n < K_SHOWCASE_PRESTEP && S.kaiju; n++) {
         stepKaiju(1 / 60);
         S.bricks.update(1 / 60, null, S.time += 1 / 60);
